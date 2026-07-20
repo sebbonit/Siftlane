@@ -25,8 +25,9 @@ import {
   LoaderCircle,
   LockKeyhole,
   LogOut,
-  MoreHorizontal,
   Pause,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -78,6 +79,7 @@ export default function App() {
     local: null,
     remote: null,
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const initialized = useRef(false);
   const observedCompletedTransfers = useRef<Set<UUID>>(new Set());
 
@@ -299,7 +301,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <div
         className="window-drag-region"
         data-tauri-drag-region
@@ -313,14 +315,17 @@ export default function App() {
         profiles={profiles}
         activeProfileId={activeTab?.profileId ?? null}
         connectingId={connectingId}
+        collapsed={sidebarCollapsed}
         onProfileClick={handleProfileClick}
         onToggleFavorite={toggleFavorite}
+        onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
         onNew={() => setConnectionDialog("new")}
         onSettings={() => setSettingsOpen(true)}
       />
       <main className="workspace">
         <SessionTabs
           tabs={tabs}
+          visible={tabs.length > 0}
           activeId={activeTabId}
           onSelect={setActiveTab}
           onClose={closeSession}
@@ -448,26 +453,33 @@ function Sidebar({
   profiles,
   activeProfileId,
   connectingId,
+  collapsed,
   onProfileClick,
   onToggleFavorite,
+  onToggleCollapsed,
   onNew,
   onSettings,
 }: {
   profiles: ConnectionProfile[];
   activeProfileId: UUID | null;
   connectingId: UUID | null;
+  collapsed: boolean;
   onProfileClick: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
+  onToggleCollapsed: () => void;
   onNew: () => void;
   onSettings: () => void;
 }) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="brand">
         <img src={appIcon} alt="" />
         <div><strong>Siftlane</strong><span>Secure file transfer</span></div>
       </div>
-      <button className="primary-action" onClick={onNew}><Plus size={17} /> New Connection</button>
+      <button className="primary-action" title="New connection" onClick={onNew}><Plus size={17} /><span>New Connection</span></button>
+      {collapsed && <nav className="collapsed-favorites" aria-label="Favorite connections">
+        {profiles.filter((profile) => profile.favorite).map((profile) => <button key={profile.id} className={activeProfileId === profile.id ? "active" : ""} aria-label={`Open favorite ${profile.label}`} title={profile.label} onClick={() => onProfileClick(profile)}>{connectingId === profile.id ? <LoaderCircle className="spin" size={16} /> : <><span>{profileInitials(profile.label)}</span><Star size={10} fill="currentColor" /></>}</button>)}
+      </nav>}
       <SidebarSection title="Connections" icon={<Server size={14} />}>
         {profiles.length === 0 && <p className="empty-note">No saved connections</p>}
         {profiles.map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} />)}
@@ -482,7 +494,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <button aria-label="Settings" onClick={onSettings}><Settings size={16} /></button>
         <span><i /> Local only</span>
-        <button aria-label="More options"><MoreHorizontal size={17} /></button>
+        <button aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onToggleCollapsed}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button>
       </div>
     </aside>
   );
@@ -516,15 +528,16 @@ function SidebarSection({ title, icon, children }: { title: string; icon: ReactN
   );
 }
 
-function SessionTabs({ tabs, activeId, onSelect, onClose, onNew }: {
+function SessionTabs({ tabs, visible, activeId, onSelect, onClose, onNew }: {
   tabs: SessionTab[];
+  visible: boolean;
   activeId: UUID | null;
   onSelect: (id: UUID) => void;
   onClose: (tab: SessionTab) => void;
   onNew: () => void;
 }) {
   return (
-    <div className="session-tabs">
+    <div className={`session-tabs ${visible ? "visible" : "empty"}`} aria-hidden={!visible}>
       {tabs.map((tab) => (
         <button key={tab.id} className={`session-tab ${activeId === tab.id ? "active" : ""}`} onClick={() => onSelect(tab.id)}>
           <i className={tab.connected ? "online" : ""} />
@@ -819,6 +832,15 @@ function orderProfiles(profiles: ConnectionProfile[]) {
   return [...profiles].sort(
     (left, right) => Number(right.favorite) - Number(left.favorite) || left.label.localeCompare(right.label),
   );
+}
+
+function profileInitials(label: string) {
+  return label
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "S";
 }
 
 function countTransferFilter(transfers: TransferJob[], filter: "active" | "completed" | "failed") {

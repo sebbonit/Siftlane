@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App from "./App";
@@ -7,7 +7,11 @@ describe("Siftlane shell", () => {
   it("opens the connection dialog from the empty shell", async () => {
     render(<App />);
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
+    expect(document.querySelector(".session-tabs")).toHaveClass("empty");
     expect(screen.queryByText("sftp.example.com")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     const buttons = await screen.findAllByRole("button", { name: /new connection/i });
     const button = buttons[0];
     expect(button).toBeDefined();
@@ -28,6 +32,7 @@ describe("Siftlane shell", () => {
     await userEvent.type(screen.getByLabelText(/username/i), "deploy");
     await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
     await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
+    await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
 
     const addFavorite = await screen.findByRole("button", {
       name: "Add Demo server to favorites",
@@ -36,6 +41,9 @@ describe("Siftlane shell", () => {
     expect(
       await screen.findAllByRole("button", { name: "Remove Demo server from favorites" }),
     ).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.getByRole("button", { name: "Open favorite Demo server" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
 
     const closeTab = document.querySelector(".session-tab svg");
     expect(closeTab).not.toBeNull();
@@ -47,5 +55,6 @@ describe("Siftlane shell", () => {
     expect(screen.queryByRole("dialog", { name: /connect to demo server/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
+    expect(document.querySelector(".session-tabs")).toHaveClass("empty");
   });
 });
