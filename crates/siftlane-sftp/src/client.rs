@@ -279,12 +279,16 @@ async fn authenticate_with_agent(
     ssh: &mut Handle<ClientHandler>,
     username: &str,
 ) -> Result<AuthResult, AppError> {
-    if let Ok(mut agent) = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
-        if let Ok(result) = try_agent_identities(ssh, username, &mut agent).await {
-            if result.success() {
-                return Ok(result);
-            }
-        }
+    let openssh_result = async {
+        let mut agent = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
+            .await
+            .ok()?;
+        let result = try_agent_identities(ssh, username, &mut agent).await.ok()?;
+        result.success().then_some(result)
+    }
+    .await;
+    if let Some(result) = openssh_result {
+        return Ok(result);
     }
     let mut agent = AgentClient::connect_pageant()
         .await
