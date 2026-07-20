@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+  "src-tauri",
+  "crates/siftlane-core",
+  "crates/siftlane-sftp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sebbonit/Siftlane"
+
+[workspace.dependencies]
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", features = ["serde"] }
+russh = { version = "0.62.2", default-features = false, features = ["ring"] }
+russh-sftp = "2.3.0"
+secrecy = { version = "0.10.3", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+zeroize = { version = "1.8.1", features = ["derive"] }

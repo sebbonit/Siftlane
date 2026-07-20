@@ -1,0 +1,671 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use chrono::{DateTime, Utc};
+use secrecy::SecretString;
+use serde::Deserialize;
+use siftlane_core::{
+    AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
+    FileEntry, HostKeyChallenge, Preferences, RemoteFilesystem, TransferDirection, TransferJob,
+    TransferState,
+};
+use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
+use tauri::{AppHandle, Manager, State};
+use uuid::Uuid;
+
+use crate::{
+    secrets::SecretKind,
+    state::{AppState, PendingHostKey, SessionRecord, StoredKeyVerifier},
+    storage::StoredHostKey,
+};
+
+#[tauri::command]
+pub fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ConnectionProfile>, AppError> {
+    state.storage.list_profiles()
+}
+
+#[tauri::command]
+pub fn save_profile(
+    state: State<'_, AppState>,
+    mut profile: ConnectionProfile,
+) -> Result<ConnectionProfile, AppError> {
+    profile.label = profile.label.trim().to_string();
+    profile.host = profile.host.trim().to_string();
+    profile.username = profile.username.trim().to_string();
+    profile.initial_remote_path = normalize_remote_path(&profile.initial_remote_path)?;
+    if profile.label.is_empty() || profile.host.is_empty() || profile.username.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Name, host, and username are required",
+        ));
+    }
+    if profile.port == 0 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Port must be between 1 and 65535",
+        ));
+    }
+    profile.updated_at = Utc::now();
+    state.storage.save_profile(&profile)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub async fn delete_profile(state: State<'_, AppState>, profile_id: Uuid) -> Result<(), AppError> {
+    state.storage.delete_profile(profile_id)?;
+    state.secrets.delete_profile(profile_id);
+    let sessions_to_remove: Vec<Uuid> = state
+        .sessions
+        .read()
+        .await
+        .iter()
+        .filter_map(|(id, session)| (session.profile_id == profile_id).then_some(*id))
+        .collect();
+    let mut sessions = state.sessions.write().await;
+    for id in sessions_to_remove {
+        sessions.remove(&id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn connect_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: Uuid,
+    credential: Option<String>,
+) -> Result<ConnectResult, AppError> {
+    let profile = state.storage.get_profile(profile_id)?;
+    let (auth, supplied_secret) = resolve_auth(&state, &profile, credential)?;
+    let known_keys = state.storage.host_keys(&profile.host, profile.port)?;
+    let verifier = Arc::new(StoredKeyVerifier::new(known_keys));
+    let preferences = state.storage.load_preferences()?;
+    let options = SftpConnectOptions {
+        host: profile.host.clone(),
+        port: profile.port,
+        username: profile.username.clone(),
+        auth,
+        connect_timeout: std::time::Duration::from_secs(preferences.connect_timeout_seconds),
+        response_timeout: std::time::Duration::from_secs(preferences.response_timeout_seconds),
+        keepalive_interval: std::time::Duration::from_secs(preferences.keepalive_seconds),
+    };
+    match SftpClient::connect(options, verifier).await {
+        Ok(client) => {
+            persist_supplied_secret(&state, &profile, supplied_secret)?;
+            let session_id = Uuid::new_v4();
+            state.sessions.write().await.insert(
+                session_id,
+                SessionRecord {
+                    profile_id,
+                    client: Arc::new(client),
+                },
+            );
+            resume_profile_transfers(&app, state.inner(), profile_id).await?;
+            Ok(ConnectResult::Connected { session_id })
+        }
+        Err(connect_error) => {
+            if let Some(key) = connect_error.host_key {
+                let challenge_id = Uuid::new_v4();
+                let changed = connect_error.error.code == ErrorCode::HostKeyChanged;
+                state
+                    .pending_host_keys
+                    .lock()
+                    .await
+                    .insert(challenge_id, PendingHostKey { key: key.clone() });
+                Ok(ConnectResult::NeedsHostTrust {
+                    challenge: HostKeyChallenge {
+                        challenge_id,
+                        host: key.host,
+                        port: key.port,
+                        algorithm: key.algorithm,
+                        fingerprint_sha256: key.fingerprint_sha256,
+                        changed,
+                    },
+                })
+            } else {
+                Err(connect_error.error)
+            }
+        }
+    }
+}
+
+async fn resume_profile_transfers(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: Uuid,
+) -> Result<(), AppError> {
+    let ids = {
+        let mut queue = state.transfers.lock().await;
+        let ids: Vec<_> = queue
+            .list()
+            .into_iter()
+            .filter(|job| {
+                job.profile_id == profile_id
+                    && matches!(
+                        job.state,
+                        TransferState::Interrupted | TransferState::WaitingForAuthentication
+                    )
+            })
+            .map(|job| job.id)
+            .collect();
+        for id in &ids {
+            queue.transition(*id, TransferState::Queued)?;
+            state
+                .storage
+                .save_transfer(queue.get(*id).expect("transfer exists"))?;
+        }
+        ids
+    };
+    for id in ids {
+        crate::transfers::spawn(app.clone(), state.clone(), id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn trust_host_key(
+    state: State<'_, AppState>,
+    challenge_id: Uuid,
+    accept: bool,
+) -> Result<(), AppError> {
+    let pending = state
+        .pending_host_keys
+        .lock()
+        .await
+        .remove(&challenge_id)
+        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Host-key challenge expired"))?;
+    if !accept {
+        return Ok(());
+    }
+    state.storage.trust_host_key(&StoredHostKey {
+        host: pending.key.host,
+        port: pending.key.port,
+        algorithm: pending.key.algorithm,
+        fingerprint: pending.key.fingerprint_sha256,
+    })
+}
+
+#[tauri::command]
+pub async fn disconnect_session(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+) -> Result<(), AppError> {
+    let session = state
+        .sessions
+        .write()
+        .await
+        .remove(&session_id)
+        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Session not found"))?;
+    session.client.disconnect().await
+}
+
+#[tauri::command]
+pub async fn list_remote_directory(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+) -> Result<Vec<FileEntry>, AppError> {
+    session_client(&state, session_id)
+        .await?
+        .list_directory(&normalize_remote_path(&path)?)
+        .await
+}
+
+#[tauri::command]
+pub fn get_default_local_path(app: AppHandle) -> Result<String, AppError> {
+    app.path()
+        .home_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|source| {
+            AppError::new(ErrorCode::Io, "Could not locate the home directory")
+                .with_detail(source.to_string())
+        })
+}
+
+#[tauri::command]
+pub fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
+    let mut entries = Vec::new();
+    for item in std::fs::read_dir(&path).map_err(local_io_error)? {
+        let item = item.map_err(local_io_error)?;
+        let metadata = std::fs::symlink_metadata(item.path()).map_err(local_io_error)?;
+        let kind = if metadata.file_type().is_symlink() {
+            EntryKind::Symlink
+        } else if metadata.is_dir() {
+            EntryKind::Directory
+        } else if metadata.is_file() {
+            EntryKind::File
+        } else {
+            EntryKind::Other
+        };
+        let name = item.file_name().to_string_lossy().to_string();
+        entries.push(FileEntry {
+            path: item.path().to_string_lossy().to_string(),
+            name: name.clone(),
+            kind,
+            size: metadata.is_file().then_some(metadata.len()),
+            modified_at: metadata.modified().ok().map(DateTime::<Utc>::from),
+            permissions: local_permissions(&metadata),
+            symlink_target: metadata
+                .file_type()
+                .is_symlink()
+                .then(|| {
+                    std::fs::read_link(item.path())
+                        .ok()
+                        .map(|path| path.to_string_lossy().to_string())
+                })
+                .flatten(),
+            hidden: name.starts_with('.'),
+        });
+    }
+    entries.sort_by(|left, right| {
+        let left_dir = left.kind == EntryKind::Directory;
+        let right_dir = right.kind == EntryKind::Directory;
+        right_dir
+            .cmp(&left_dir)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn create_local_entry(
+    parent_path: String,
+    name: String,
+    directory: bool,
+) -> Result<(), AppError> {
+    validate_entry_name(&name)?;
+    let path = Path::new(&parent_path).join(name);
+    if directory {
+        std::fs::create_dir(&path).map_err(local_io_error)
+    } else {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map(|_| ())
+            .map_err(local_io_error)
+    }
+}
+
+#[tauri::command]
+pub fn delete_local_entry(path: String, directory: bool) -> Result<(), AppError> {
+    if directory {
+        std::fs::remove_dir(path).map_err(local_io_error)
+    } else {
+        std::fs::remove_file(path).map_err(local_io_error)
+    }
+}
+
+#[tauri::command]
+pub async fn create_remote_entry(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    parent_path: String,
+    name: String,
+    directory: bool,
+) -> Result<(), AppError> {
+    validate_entry_name(&name)?;
+    let parent = normalize_remote_path(&parent_path)?;
+    let path = normalize_remote_path(&format!("{}/{}", parent.trim_end_matches('/'), name))?;
+    let client = session_client(&state, session_id).await?;
+    if client.metadata(&path).await?.is_some() {
+        return Err(AppError::new(
+            ErrorCode::AlreadyExists,
+            "An entry with that name already exists",
+        ));
+    }
+    if directory {
+        client.create_directory(&path).await
+    } else {
+        client.write_chunk(&path, 0, &[]).await
+    }
+}
+
+#[tauri::command]
+pub async fn rename_remote_entry(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    from: String,
+    to: String,
+) -> Result<(), AppError> {
+    session_client(&state, session_id)
+        .await?
+        .rename(&normalize_remote_path(&from)?, &normalize_remote_path(&to)?)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_remote_entry(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+    directory: bool,
+) -> Result<(), AppError> {
+    let client = session_client(&state, session_id).await?;
+    let path = normalize_remote_path(&path)?;
+    if directory {
+        client.remove_directory(&path).await
+    } else {
+        client.remove_file(&path).await
+    }
+}
+
+#[tauri::command]
+pub async fn set_remote_permissions(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+    permissions: u32,
+) -> Result<(), AppError> {
+    if permissions > 0o7777 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Invalid POSIX permissions",
+        ));
+    }
+    session_client(&state, session_id)
+        .await?
+        .set_permissions(&normalize_remote_path(&path)?, permissions)
+        .await
+}
+
+#[tauri::command]
+pub fn get_preferences(state: State<'_, AppState>) -> Result<Preferences, AppError> {
+    state.storage.load_preferences()
+}
+
+#[tauri::command]
+pub fn save_preferences(
+    state: State<'_, AppState>,
+    preferences: Preferences,
+) -> Result<(), AppError> {
+    if preferences.global_parallel_transfers == 0 || preferences.per_host_parallel_transfers == 0 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Transfer concurrency must be at least one",
+        ));
+    }
+    state.storage.save_preferences(&preferences)
+}
+
+#[tauri::command]
+pub async fn list_transfers(state: State<'_, AppState>) -> Result<Vec<TransferJob>, AppError> {
+    Ok(state.transfers.lock().await.list())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferDraft {
+    pub profile_id: Uuid,
+    pub direction: TransferDirection,
+    pub source_path: String,
+    pub destination_path: String,
+    pub conflict_policy: Option<ConflictPolicy>,
+}
+
+#[tauri::command]
+pub async fn enqueue_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: TransferDraft,
+) -> Result<TransferJob, AppError> {
+    if draft.source_path.is_empty() || draft.destination_path.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Source and destination are required",
+        ));
+    }
+    let mut job = TransferJob::new(
+        draft.profile_id,
+        draft.direction,
+        draft.source_path,
+        draft.destination_path,
+        None,
+    );
+    if let Some(policy) = draft.conflict_policy {
+        job.conflict_policy = policy;
+    }
+    {
+        let mut queue = state.transfers.lock().await;
+        queue.enqueue(job.clone());
+        state.storage.save_transfer(&job)?;
+    }
+    crate::transfers::spawn(app, state.inner().clone(), job.id);
+    Ok(job)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferAction {
+    Pause,
+    Resume,
+    Cancel,
+    Retry,
+}
+
+#[tauri::command]
+pub async fn control_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: Uuid,
+    action: TransferAction,
+) -> Result<TransferJob, AppError> {
+    let should_spawn = {
+        let mut queue = state.transfers.lock().await;
+        let next = match action {
+            TransferAction::Pause => TransferState::Paused,
+            TransferAction::Cancel => TransferState::Cancelled,
+            TransferAction::Resume | TransferAction::Retry => TransferState::Queued,
+        };
+        queue.transition(transfer_id, next)?;
+        queue.set_error(transfer_id, None)?;
+        let job = queue.get(transfer_id).cloned().expect("transfer exists");
+        state.storage.save_transfer(&job)?;
+        matches!(action, TransferAction::Resume | TransferAction::Retry)
+    };
+    if should_spawn {
+        crate::transfers::spawn(app, state.inner().clone(), transfer_id);
+    }
+    state
+        .transfers
+        .lock()
+        .await
+        .get(transfer_id)
+        .cloned()
+        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Transfer not found"))
+}
+
+#[tauri::command]
+pub async fn resolve_transfer_conflict(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transfer_id: Uuid,
+    policy: ConflictPolicy,
+) -> Result<TransferJob, AppError> {
+    if matches!(policy, ConflictPolicy::Ask | ConflictPolicy::Rename) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Resolve the conflict with skip or overwrite",
+        ));
+    }
+    {
+        let mut queue = state.transfers.lock().await;
+        queue.update_conflict_policy(transfer_id, policy)?;
+        queue.transition(transfer_id, TransferState::Queued)?;
+        state
+            .storage
+            .save_transfer(queue.get(transfer_id).expect("transfer exists"))?;
+    }
+    crate::transfers::spawn(app, state.inner().clone(), transfer_id);
+    state
+        .transfers
+        .lock()
+        .await
+        .get(transfer_id)
+        .cloned()
+        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Transfer not found"))
+}
+
+async fn session_client(state: &AppState, session_id: Uuid) -> Result<Arc<SftpClient>, AppError> {
+    state
+        .sessions
+        .read()
+        .await
+        .get(&session_id)
+        .map(|session| session.client.clone())
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCode::ConnectionClosed,
+                "The SFTP session is not connected",
+            )
+        })
+}
+
+fn resolve_auth(
+    state: &AppState,
+    profile: &ConnectionProfile,
+    credential: Option<String>,
+) -> Result<(SftpAuth, Option<(SecretKind, String)>), AppError> {
+    match &profile.auth {
+        AuthRef::Password { .. } => {
+            let supplied = credential.map(|value| (SecretKind::Password, value));
+            let secret = supplied
+                .as_ref()
+                .map(|(_, value)| SecretString::from(value.clone()))
+                .or(state.secrets.get(profile.id, SecretKind::Password)?)
+                .ok_or_else(|| {
+                    AppError::new(ErrorCode::AuthenticationFailed, "A password is required")
+                })?;
+            Ok((SftpAuth::Password(secret), supplied))
+        }
+        AuthRef::PrivateKey { path, .. } => {
+            let key_path = expand_home_path(path);
+            if !key_path.is_file() {
+                return Err(AppError::new(
+                    ErrorCode::NotFound,
+                    "Private key file was not found. Choose it again in the connection settings.",
+                )
+                .with_detail(key_path.to_string_lossy()));
+            }
+            let supplied = credential.map(|value| (SecretKind::PrivateKeyPassphrase, value));
+            let passphrase = supplied
+                .as_ref()
+                .map(|(_, value)| SecretString::from(value.clone()))
+                .or(state
+                    .secrets
+                    .get(profile.id, SecretKind::PrivateKeyPassphrase)?);
+            Ok((
+                SftpAuth::PrivateKey {
+                    path: key_path,
+                    passphrase,
+                },
+                supplied,
+            ))
+        }
+        AuthRef::Agent => Ok((SftpAuth::Agent, None)),
+    }
+}
+
+fn expand_home_path(path: &str) -> PathBuf {
+    let Some(relative) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) else {
+        return Path::new(path).to_path_buf();
+    };
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .map(|home| home.join(relative))
+        .unwrap_or_else(|| Path::new(path).to_path_buf())
+}
+
+fn persist_supplied_secret(
+    state: &AppState,
+    profile: &ConnectionProfile,
+    supplied: Option<(SecretKind, String)>,
+) -> Result<(), AppError> {
+    let Some((kind, value)) = supplied else {
+        return Ok(());
+    };
+    let remember = match profile.auth {
+        AuthRef::Password { remember } => remember,
+        AuthRef::PrivateKey {
+            remember_passphrase,
+            ..
+        } => remember_passphrase,
+        AuthRef::Agent => false,
+    };
+    if remember {
+        state.secrets.set(profile.id, kind, &value)?;
+    }
+    Ok(())
+}
+
+fn normalize_remote_path(path: &str) -> Result<String, AppError> {
+    if path.contains('\0') {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Remote path contains a null byte",
+        ));
+    }
+    let absolute = if path.trim().is_empty() {
+        "/"
+    } else {
+        path.trim()
+    };
+    let mut segments = Vec::new();
+    for segment in absolute.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            value => segments.push(value),
+        }
+    }
+    Ok(format!("/{}", segments.join("/")))
+}
+
+fn validate_entry_name(name: &str) -> Result<(), AppError> {
+    if name.trim().is_empty() || matches!(name, "." | "..") || name.contains(['/', '\\', '\0']) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Enter a single valid file or folder name",
+        ));
+    }
+    Ok(())
+}
+
+fn local_io_error(source: std::io::Error) -> AppError {
+    let code = match source.kind() {
+        std::io::ErrorKind::NotFound => ErrorCode::NotFound,
+        std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+        _ => ErrorCode::Io,
+    };
+    AppError::new(code, "The local directory could not be read").with_detail(source.to_string())
+}
+
+#[cfg(unix)]
+fn local_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(metadata.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn local_permissions(_: &std::fs::Metadata) -> Option<u32> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_remote_path;
+
+    #[test]
+    fn remote_paths_are_absolute_and_normalized() {
+        assert_eq!(
+            normalize_remote_path("/var/www/../html").unwrap(),
+            "/var/html"
+        );
+        assert_eq!(normalize_remote_path("").unwrap(), "/");
+    }
+}
