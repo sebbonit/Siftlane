@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App from "./App";
@@ -17,5 +17,35 @@ describe("Siftlane shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Private key" }));
     expect(screen.getByRole("button", { name: /browse/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/choose an ssh private key/i)).toBeRequired();
+  });
+
+  it("persists a starred connection in the favorites section", async () => {
+    render(<App />);
+    const newButtons = await screen.findAllByRole("button", { name: /new connection/i });
+    await userEvent.click(newButtons[0]!);
+    await userEvent.type(screen.getByLabelText(/display name/i), "Demo server");
+    await userEvent.type(screen.getByLabelText(/^host$/i), "demo.example.com");
+    await userEvent.type(screen.getByLabelText(/username/i), "deploy");
+    await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
+    await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
+
+    const addFavorite = await screen.findByRole("button", {
+      name: "Add Demo server to favorites",
+    });
+    await userEvent.click(addFavorite);
+    expect(
+      await screen.findAllByRole("button", { name: "Remove Demo server from favorites" }),
+    ).toHaveLength(2);
+
+    const closeTab = document.querySelector(".session-tab svg");
+    expect(closeTab).not.toBeNull();
+    await userEvent.click(closeTab!);
+    const favorites = screen.getByRole("button", { name: "Favorites" }).closest("section");
+    expect(favorites).not.toBeNull();
+    await userEvent.click(within(favorites!).getByRole("button", { name: "Demo server" }));
+    expect(await screen.findByText("Connected securely")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /connect to demo server/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
   });
 });

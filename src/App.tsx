@@ -24,6 +24,7 @@ import {
   ListFilter,
   LoaderCircle,
   LockKeyhole,
+  LogOut,
   MoreHorizontal,
   Pause,
   Play,
@@ -268,8 +269,24 @@ export default function App() {
       setActiveTab(existing.id);
       return;
     }
-    if (profile.auth.kind === "agent") await connect(profile);
-    else setConnectionDialog(profile);
+    await connect(profile);
+  }
+
+  async function toggleFavorite(profile: ConnectionProfile) {
+    setError(null);
+    try {
+      const saved = await api.saveProfile({
+        ...profile,
+        favorite: !profile.favorite,
+        updated_at: new Date().toISOString(),
+      });
+      setProfiles((items) => orderProfiles([
+        ...items.filter((item) => item.id !== saved.id),
+        saved,
+      ]));
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
   }
 
   async function closeSession(tab: SessionTab) {
@@ -297,6 +314,7 @@ export default function App() {
         activeProfileId={activeTab?.profileId ?? null}
         connectingId={connectingId}
         onProfileClick={handleProfileClick}
+        onToggleFavorite={toggleFavorite}
         onNew={() => setConnectionDialog("new")}
         onSettings={() => setSettingsOpen(true)}
       />
@@ -319,6 +337,7 @@ export default function App() {
           <>
             <ConnectionHeader
               tab={activeTab}
+              onDisconnect={() => void closeSession(activeTab)}
               onToggleLayout={() =>
                 updateTab(activeTab.id, {
                   layout: activeTab.layout === "dual_pane" ? "remote_focused" : "dual_pane",
@@ -392,7 +411,7 @@ export default function App() {
           onClose={() => setConnectionDialog(null)}
           onSubmit={async (profile, credential) => {
             const saved = await api.saveProfile(profile);
-            setProfiles((items) => [...items.filter((item) => item.id !== saved.id), saved]);
+            setProfiles((items) => orderProfiles([...items.filter((item) => item.id !== saved.id), saved]));
             await connect(saved, credential || undefined);
           }}
         />
@@ -430,6 +449,7 @@ function Sidebar({
   activeProfileId,
   connectingId,
   onProfileClick,
+  onToggleFavorite,
   onNew,
   onSettings,
 }: {
@@ -437,6 +457,7 @@ function Sidebar({
   activeProfileId: UUID | null;
   connectingId: UUID | null;
   onProfileClick: (profile: ConnectionProfile) => void;
+  onToggleFavorite: (profile: ConnectionProfile) => void;
   onNew: () => void;
   onSettings: () => void;
 }) {
@@ -449,22 +470,11 @@ function Sidebar({
       <button className="primary-action" onClick={onNew}><Plus size={17} /> New Connection</button>
       <SidebarSection title="Connections" icon={<Server size={14} />}>
         {profiles.length === 0 && <p className="empty-note">No saved connections</p>}
-        {profiles.map((profile) => (
-          <button
-            key={profile.id}
-            className={`connection-item ${activeProfileId === profile.id ? "active" : ""}`}
-            onClick={() => onProfileClick(profile)}
-          >
-            <span className="server-icon"><Server size={15} /></span>
-            <span className="connection-copy"><strong>{profile.label}</strong><small>{profile.username}@{profile.host}</small></span>
-            {connectingId === profile.id ? <LoaderCircle className="spin" size={14} /> : profile.favorite ? <Star size={13} fill="currentColor" /> : null}
-          </button>
-        ))}
+        {profiles.map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} />)}
       </SidebarSection>
       <SidebarSection title="Favorites" icon={<FolderHeart size={14} />}>
-        <button className="nav-item"><Folder size={15} /> My Website</button>
-        <button className="nav-item"><Folder size={15} /> Deployments</button>
-        <button className="nav-item"><Folder size={15} /> Log Archives</button>
+        {profiles.every((profile) => !profile.favorite) && <p className="empty-note">Star a connection to keep it here</p>}
+        {profiles.filter((profile) => profile.favorite).map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} compact />)}
       </SidebarSection>
       <SidebarSection title="Recent" icon={<FolderClock size={14} />}>
         {profiles.slice(0, 3).map((profile) => <button key={profile.id} className="nav-item" onClick={() => onProfileClick(profile)}><Clock3 size={14} /> {profile.label}</button>)}
@@ -476,6 +486,24 @@ function Sidebar({
       </div>
     </aside>
   );
+}
+
+function ConnectionItem({ profile, active, connecting, compact = false, onOpen, onToggleFavorite }: {
+  profile: ConnectionProfile;
+  active: boolean;
+  connecting: boolean;
+  compact?: boolean;
+  onOpen: (profile: ConnectionProfile) => void;
+  onToggleFavorite: (profile: ConnectionProfile) => void;
+}) {
+  return <div className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}>
+    <button className="connection-open" onClick={() => onOpen(profile)}>
+      <span className="server-icon"><Server size={15} /></span>
+      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small>{profile.username}@{profile.host}</small>}</span>
+      {connecting && <LoaderCircle className="spin" size={14} />}
+    </button>
+    <button className="favorite-toggle" aria-label={profile.favorite ? `Remove ${profile.label} from favorites` : `Add ${profile.label} to favorites`} title={profile.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => onToggleFavorite(profile)}><Star size={14} fill={profile.favorite ? "currentColor" : "none"} /></button>
+  </div>;
 }
 
 function SidebarSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
@@ -509,7 +537,7 @@ function SessionTabs({ tabs, activeId, onSelect, onClose, onNew }: {
   );
 }
 
-function ConnectionHeader({ tab, onToggleLayout }: { tab: SessionTab; onToggleLayout: () => void }) {
+function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionTab; onToggleLayout: () => void; onDisconnect: () => void }) {
   return (
     <header className="connection-header">
       <div className="secure-status"><span className="lock-circle"><LockKeyhole size={16} /></span><div><strong>{tab.host}</strong><small><i /> Connected securely</small></div></div>
@@ -517,6 +545,7 @@ function ConnectionHeader({ tab, onToggleLayout }: { tab: SessionTab; onToggleLa
         <button className="search-trigger"><Search size={15} /><span>Search</span><kbd>⌘F</kbd></button>
         <button title="Toggle layout" onClick={onToggleLayout}><LayoutPanelLeft size={17} /></button>
         <button title="Connection settings"><Settings size={17} /></button>
+        <button className="disconnect-action" title="Disconnect this session" onClick={onDisconnect}><LogOut size={16} /><span>Disconnect</span></button>
       </div>
     </header>
   );
@@ -784,6 +813,12 @@ function formatPermissions(value: number | null) {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function orderProfiles(profiles: ConnectionProfile[]) {
+  return [...profiles].sort(
+    (left, right) => Number(right.favorite) - Number(left.favorite) || left.label.localeCompare(right.label),
+  );
 }
 
 function countTransferFilter(transfers: TransferJob[], filter: "active" | "completed" | "failed") {
