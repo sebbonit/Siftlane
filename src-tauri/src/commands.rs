@@ -1,5 +1,7 @@
 use std::{
+    io::Write,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Arc,
 };
 
@@ -267,6 +269,106 @@ pub fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
     Ok(entries)
+}
+
+#[derive(serde::Serialize)]
+pub struct EditableFile {
+    pub path: String,
+    pub name: String,
+    pub content: String,
+    pub language: String,
+    pub size: usize,
+}
+
+const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+#[tauri::command]
+pub fn read_local_file(path: String) -> Result<EditableFile, AppError> {
+    let bytes = std::fs::read(&path).map_err(local_io_error)?;
+    editable_file(path, bytes)
+}
+
+#[tauri::command]
+pub fn save_local_file(path: String, content: String) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(ErrorCode::InvalidInput, "Files larger than 4 MB cannot be edited in Siftlane"));
+    }
+    std::fs::write(path, content).map_err(local_io_error)
+}
+
+#[tauri::command]
+pub fn format_rust(content: String) -> Result<String, AppError> {
+    let mut child = Command::new("rustfmt")
+        .args(["--emit", "stdout", "--edition", "2024"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| AppError::new(ErrorCode::Unsupported, "rustfmt is not installed on this computer").with_detail(error.to_string()))?;
+    child.stdin.take().ok_or_else(|| AppError::new(ErrorCode::Internal, "Could not start rustfmt"))?.write_all(content.as_bytes()).map_err(|error| AppError::new(ErrorCode::Io, "Could not send the file to rustfmt").with_detail(error.to_string()))?;
+    let output = child.wait_with_output().map_err(|error| AppError::new(ErrorCode::Io, "rustfmt could not finish").with_detail(error.to_string()))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::new(ErrorCode::InvalidInput, "rustfmt could not format this file").with_detail(detail));
+    }
+    String::from_utf8(output.stdout).map_err(|error| AppError::new(ErrorCode::Internal, "rustfmt returned invalid text").with_detail(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn read_remote_file(state: State<'_, AppState>, session_id: Uuid, path: String) -> Result<EditableFile, AppError> {
+    let path = normalize_remote_path(&path)?;
+    let client = session_client(&state, session_id).await?;
+    let metadata = client.metadata(&path).await?.ok_or_else(|| AppError::new(ErrorCode::NotFound, "The remote file no longer exists"))?;
+    let size = metadata.size.unwrap_or(0);
+    if size > MAX_EDITABLE_FILE_BYTES { return Err(AppError::new(ErrorCode::InvalidInput, "Files larger than 4 MB cannot be edited in Siftlane")); }
+    let mut bytes = Vec::with_capacity(size as usize);
+    let mut offset = 0;
+    while offset < size {
+        let chunk = client.read_chunk(&path, offset, 64 * 1024).await?;
+        if chunk.is_empty() { break; }
+        offset += chunk.len() as u64;
+        bytes.extend_from_slice(&chunk);
+    }
+    editable_file(path, bytes)
+}
+
+#[tauri::command]
+pub async fn save_remote_file(state: State<'_, AppState>, session_id: Uuid, path: String, content: String) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES { return Err(AppError::new(ErrorCode::InvalidInput, "Files larger than 4 MB cannot be edited in Siftlane")); }
+    let path = normalize_remote_path(&path)?;
+    let client = session_client(&state, session_id).await?;
+    let parent = path.rsplit_once('/').map(|(parent, _)| if parent.is_empty() { "/" } else { parent }).unwrap_or("/");
+    let name = path.rsplit('/').next().unwrap_or("file");
+    let temp = normalize_remote_path(&format!("{}/.siftlane-edit-{}-{}", parent.trim_end_matches('/'), Uuid::new_v4(), name))?;
+    if content.is_empty() {
+        client.write_chunk(&temp, 0, &[]).await?;
+    } else {
+        for (offset, chunk) in content.as_bytes().chunks(64 * 1024).enumerate() {
+            client.write_chunk(&temp, (offset * 64 * 1024) as u64, chunk).await?;
+        }
+    }
+    client.sync_file(&temp).await?;
+    let backup = normalize_remote_path(&format!("{}/.siftlane-backup-{}-{}", parent.trim_end_matches('/'), Uuid::new_v4(), name))?;
+    client.rename(&path, &backup).await?;
+    if let Err(error) = client.rename(&temp, &path).await {
+        let _ = client.rename(&backup, &path).await;
+        let _ = client.remove_file(&temp).await;
+        return Err(error);
+    }
+    client.remove_file(&backup).await
+}
+
+fn editable_file(path: String, bytes: Vec<u8>) -> Result<EditableFile, AppError> {
+    let name = Path::new(&path).file_name().and_then(|value| value.to_str()).unwrap_or("file.txt").to_string();
+    let content = String::from_utf8(bytes).map_err(|_| AppError::new(ErrorCode::InvalidInput, "This file is binary and cannot be edited as text"))?;
+    let size = content.len();
+    Ok(EditableFile { language: language_for(&name).to_string(), path, name, content, size })
+}
+
+fn language_for(name: &str) -> &'static str {
+    match Path::new(name).extension().and_then(|value| value.to_str()).unwrap_or("").to_lowercase().as_str() {
+        "html" | "htm" => "HTML", "css" => "CSS", "ts" | "tsx" => "TypeScript", "js" | "jsx" => "JavaScript", "json" => "JSON", "md" => "Markdown", "rs" => "Rust", _ => "Plain text",
+    }
 }
 
 #[tauri::command]

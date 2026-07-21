@@ -1,4 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import prettier from "prettier/standalone";
+import * as babelPlugin from "prettier/plugins/babel";
+import * as cssPlugin from "prettier/plugins/postcss";
+import * as estreePlugin from "prettier/plugins/estree";
+import * as htmlPlugin from "prettier/plugins/html";
+import * as markdownPlugin from "prettier/plugins/markdown";
+import * as typescriptPlugin from "prettier/plugins/typescript";
+import { EditorState, type Extension } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { rust } from "@codemirror/lang-rust";
+import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowDownToLine,
@@ -13,6 +31,7 @@ import {
   EyeOff,
   File,
   FileCode2,
+  FileEdit,
   FileKey2,
   FilePlus2,
   Folder,
@@ -51,11 +70,33 @@ import type {
   SessionTab,
   TransferJob,
   UUID,
+  EditableFile,
 } from "./types";
 import appIcon from "../src-tauri/icons/128x128.png";
 
 type PaneSide = "local" | "remote";
 type EntryCreation = { side: PaneSide; directory: boolean };
+
+const editorTheme = EditorView.theme({
+  "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
+  ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: "12px", lineHeight: "1.65" },
+  ".cm-content": { padding: "14px 0 18px", caretColor: "var(--teal)" },
+  ".cm-line": { padding: "0 18px" },
+  ".cm-gutters": { color: "var(--faint)", backgroundColor: "var(--surface-soft)", borderRight: "1px solid var(--border)" },
+  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--teal-soft) 45%, transparent)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--teal-soft)", color: "var(--teal)" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--teal) 30%, transparent)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--teal)" },
+});
+
+const editorHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: "#087d7b" },
+  { tag: [tags.string, tags.special(tags.string)], color: "#b26a2d" },
+  { tag: [tags.number, tags.bool, tags.null], color: "#8d55a6" },
+  { tag: [tags.comment, tags.docComment], color: "#7c8782", fontStyle: "italic" },
+  { tag: [tags.tagName, tags.typeName, tags.className], color: "#156c98" },
+  { tag: [tags.propertyName, tags.attributeName], color: "#926225" },
+]);
 
 export default function App() {
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -74,6 +115,10 @@ export default function App() {
   const [loadingPane, setLoadingPane] = useState<PaneSide | null>(null);
   const [connectingId, setConnectingId] = useState<UUID | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editorFile, setEditorFile] = useState<EditableFile | null>(null);
+  const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorSaving, setEditorSaving] = useState(false);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
@@ -265,6 +310,30 @@ export default function App() {
     }
   }
 
+  async function openEditor(entry: FileEntry, side: PaneSide) {
+    if (!activeTab || entry.kind !== "file") return;
+    setError(null);
+    try {
+      const file = side === "remote" ? await api.readRemoteFile(activeTab.id, entry.path) : await api.readLocalFile(entry.path);
+      setEditorFile(file);
+      setEditorSide(side);
+      setEditorOpen(true);
+    } catch (reason) { setError(errorMessage(reason)); }
+  }
+
+  async function saveEditor(content: string) {
+    if (!activeTab || !editorFile) return;
+    setEditorSaving(true);
+    try {
+      if (editorSide === "remote") await api.saveRemoteFile(activeTab.id, editorFile.path, content);
+      else await api.saveLocalFile(editorFile.path, content);
+      setEditorFile({ ...editorFile, content, size: new TextEncoder().encode(content).length });
+      setEditorOpen(false);
+      await loadPane(editorSide ?? "remote", editorSide === "remote" ? activeTab.remotePath : activeTab.localPath);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setEditorSaving(false); }
+  }
+
   async function handleProfileClick(profile: ConnectionProfile) {
     const existing = tabs.find((tab) => tab.profileId === profile.id);
     if (existing) {
@@ -366,6 +435,7 @@ export default function App() {
                   onCreateFile={() => setEntryCreation({ side: "local", directory: false })}
                   onCreateDirectory={() => setEntryCreation({ side: "local", directory: true })}
                   onRemove={() => void removeSelected("local")}
+                  onOpenFile={(entry) => void openEditor(entry, "local")}
                 />
               )}
               {activeTab.layout === "dual_pane" && (
@@ -394,6 +464,7 @@ export default function App() {
                 onCreateFile={() => setEntryCreation({ side: "remote", directory: false })}
                 onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true })}
                 onRemove={() => void removeSelected("remote")}
+                onOpenFile={(entry) => void openEditor(entry, "remote")}
               />
             </section>
             <TransferPanel />
@@ -445,6 +516,7 @@ export default function App() {
           }}
         />
       )}
+      {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
     </div>
   );
 }
@@ -563,7 +635,7 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
   );
 }
 
-function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onRemove }: {
+function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onRemove, onOpenFile }: {
   title: string;
   subtitle?: string;
   side: PaneSide;
@@ -579,6 +651,7 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
   onCreateFile: () => void;
   onCreateDirectory: () => void;
   onRemove: () => void;
+  onOpenFile: (entry: FileEntry) => void;
 }) {
   const [query, setQuery] = useState("");
   const visible = useMemo(() => entries.filter((entry) => (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(query.toLowerCase())), [entries, query, showHidden]);
@@ -598,7 +671,7 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
               key={entry.path}
               className={`file-row ${selected?.path === entry.path ? "selected" : ""}`}
               onClick={() => onSelect(entry)}
-              onDoubleClick={() => entry.kind === "directory" && onNavigate(entry.path)}
+              onDoubleClick={() => entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)}
               role="row"
             >
               <span className="file-name">{fileIcon(entry)}<span>{entry.name}</span>{entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}</span>
@@ -613,6 +686,122 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
       <footer className="pane-footer"><span>{visible.length} items</span><span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span></footer>
     </section>
   );
+}
+
+function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; saving: boolean; onClose: () => void; onSave: (content: string) => Promise<void> }) {
+  const [content, setContent] = useState(file.content);
+  const [discardPrompt, setDiscardPrompt] = useState(false);
+  const [formatting, setFormatting] = useState(false);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const dirty = content !== file.content;
+  function close() {
+    if (dirty) setDiscardPrompt(true);
+    else onClose();
+  }
+  const canFormat = ["HTML", "CSS", "JavaScript", "JSON", "Markdown", "Rust"].includes(file.language);
+  async function formatContent() {
+    setFormatting(true);
+    setFormatError(null);
+    try {
+      const formatted = file.language === "Rust" ? await api.formatRust(content) : await prettier.format(content, prettierOptions(file.language));
+      setContent(formatted);
+    } catch (reason) {
+      setFormatError(errorMessage(reason));
+    } finally { setFormatting(false); }
+  }
+  return <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={`Edit ${file.name}`}>
+    <section className="editor-dialog">
+      <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon"><FileEdit size={16} /></span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span><span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
+      <div className="editor-toolbar"><span>Text editor</span><div className="editor-toolbar-actions"><span className="editor-hint">Syntax colors enabled</span>{canFormat && <button className="format-button" title="Format document" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}</div></div>
+      {formatError && <div className="format-error"><CircleAlert size={14} /><span>{formatError}</span><button aria-label="Dismiss formatting error" onClick={() => setFormatError(null)}><X size={14} /></button></div>}
+      <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} />
+      <footer className="editor-footer"><span>{content.split("\n").length} lines · {new TextEncoder().encode(content).length} bytes</span><div className="dialog-actions"><button className="secondary" onClick={close}>Cancel</button><button className="primary" disabled={!dirty || saving} onClick={() => void onSave(content)}>{saving ? <LoaderCircle className="spin" size={15} /> : <FileEdit size={15} />}Save file</button></div></footer>
+      {discardPrompt && <div className="discard-overlay"><section className="discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-title"><div className="discard-icon"><CircleAlert size={20} /></div><div><h2 id="discard-title">Discard unsaved changes?</h2><p>Your changes to <strong>{file.name}</strong> have not been saved.</p></div><div className="dialog-actions"><button className="secondary" onClick={() => setDiscardPrompt(false)}>Keep editing</button><button className="danger-button" onClick={onClose}>Discard changes</button></div></section></div>}
+    </section>
+  </div>;
+}
+
+function prettierOptions(language: string) {
+  const common = { tabWidth: 2, printWidth: 100, singleQuote: true } as const;
+  if (language === "HTML") return { ...common, parser: "html" as const, plugins: [htmlPlugin] };
+  if (language === "CSS") return { ...common, parser: "css" as const, plugins: [cssPlugin] };
+  if (language === "Markdown") return { ...common, parser: "markdown" as const, plugins: [markdownPlugin] };
+  if (language === "TypeScript") return { ...common, parser: "typescript" as const, plugins: [typescriptPlugin, estreePlugin] };
+  return { ...common, parser: "babel" as const, plugins: [babelPlugin, estreePlugin] };
+}
+
+function CodeEditor({ value, language, onChange, onFormat }: { value: string; language: string; onChange: (value: string) => void; onFormat?: () => Promise<void> }) {
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  const changeHandler = useRef(onChange);
+  const formatHandler = useRef(onFormat);
+  changeHandler.current = onChange;
+  formatHandler.current = onFormat;
+
+  useEffect(() => {
+    if (!host.current) return;
+    const editor = new EditorView({
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          history(),
+          foldGutter(),
+          drawSelection(),
+          dropCursor(),
+          indentOnInput(),
+          bracketMatching(),
+          highlightActiveLine(),
+          syntaxHighlighting(editorHighlight),
+          getLanguageExtension(language),
+          editorTheme,
+          keymap.of([
+            ...defaultKeymap,
+            ...historyKeymap,
+            indentWithTab,
+            {
+              key: "Shift-Alt-f",
+              run: () => {
+                if (!formatHandler.current) return false;
+                void formatHandler.current();
+                return true;
+              },
+            },
+          ]),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) changeHandler.current(update.state.doc.toString());
+          }),
+        ],
+      }),
+      parent: host.current,
+    });
+    view.current = editor;
+    editor.focus();
+    return () => {
+      editor.destroy();
+      view.current = null;
+    };
+  }, [language]);
+
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || editor.state.doc.toString() === value) return;
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
+  }, [value]);
+
+  return <div className="editor-code-wrap" ref={host} aria-label="File contents" />;
+}
+
+function getLanguageExtension(language: string): Extension {
+  if (language === "HTML") return html();
+  if (language === "CSS") return css();
+  if (language === "JavaScript") return javascript({ jsx: true });
+  if (language === "TypeScript") return javascript({ jsx: true, typescript: true });
+  if (language === "JSON") return json();
+  if (language === "Markdown") return markdown();
+  if (language === "Rust") return rust();
+  return [];
 }
 
 function TransferPanel() {

@@ -8,6 +8,7 @@ import type {
   ConnectResult,
   ConnectionProfile,
   FileEntry,
+  EditableFile,
   Preferences,
   TransferDirection,
   TransferJob,
@@ -184,6 +185,24 @@ export const api = {
         ? remoteDemo
         : [];
   },
+  async readLocalFile(path: string) {
+    if (desktop) return call<EditableFile>("read_local_file", { path });
+    return demoFile(path);
+  },
+  async readRemoteFile(sessionId: UUID, path: string) {
+    if (desktop) return call<EditableFile>("read_remote_file", { sessionId, path });
+    return demoFile(path);
+  },
+  async saveLocalFile(path: string, content: string) {
+    if (desktop) return call<void>("save_local_file", { path, content });
+  },
+  async saveRemoteFile(sessionId: UUID, path: string, content: string) {
+    if (desktop) return call<void>("save_remote_file", { sessionId, path, content });
+  },
+  async formatRust(content: string) {
+    if (desktop) return call<string>("format_rust", { content });
+    return content;
+  },
   async createLocalEntry(parentPath: string, name: string, directory: boolean) {
     if (desktop) return call<void>("create_local_entry", { parentPath, name, directory });
     if (demoMode) localDemo = [...localDemo, browserEntry(parentPath, name, directory)];
@@ -258,6 +277,19 @@ export const api = {
     return listen<TransferProgress>("transfer-progress", ({ payload }) => callback(payload));
   },
 };
+
+function demoFile(path: string): EditableFile {
+  const name = path.split(/[\\/]/).pop() ?? "file.txt";
+  const content = name.endsWith(".html")
+    ? `<!doctype html>\n<html>\n  <head><title>Preview</title></head>\n  <body>\n    <h1>Edit this remote file</h1>\n  </body>\n</html>\n`
+    : name.endsWith(".css") ? `body {\n  color: #202827;\n}\n` : `# ${name}\n\nEdit this file and save it back to the server.\n`;
+  return { path, name, content, language: languageFor(name), size: new TextEncoder().encode(content).length };
+}
+
+function languageFor(name: string) {
+  const extension = name.split(".").pop()?.toLowerCase();
+  return extension === "html" || extension === "htm" ? "HTML" : extension === "css" ? "CSS" : extension === "ts" || extension === "tsx" ? "TypeScript" : extension === "js" || extension === "jsx" ? "JavaScript" : extension === "json" ? "JSON" : extension === "md" ? "Markdown" : extension === "rs" ? "Rust" : "Plain text";
+}
 
 function browserEntry(parentPath: string, name: string, directory: boolean): FileEntry {
   return {

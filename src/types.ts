@@ -32,6 +32,14 @@ export interface FileEntry {
   hidden: boolean;
 }
 
+export interface EditableFile {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  size: number;
+}
+
 export interface HostKeyChallenge {
   challenge_id: UUID;
   host: string;
