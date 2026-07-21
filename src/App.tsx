@@ -224,6 +224,7 @@ export default function App() {
       };
       addTab(tab);
       setConnectionDialog(null);
+      setSidebarCollapsed(true);
     } catch (reason) {
       const appError = reason as AppError;
       if (
@@ -742,6 +743,7 @@ export default function App() {
               connected: true,
             });
             setConnectionDialog(null);
+            setSidebarCollapsed(true);
           }}
         />
       )}
