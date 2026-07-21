@@ -220,6 +220,15 @@ button:disabled { cursor: default; opacity: .38; }
 .editor-code-wrap .cm-searchMatch { background: color-mix(in srgb, #e7c44b 58%, transparent); outline: 1px solid color-mix(in srgb, #bd9820 60%, transparent); }
 .editor-code-wrap .cm-searchMatch-selected { background: color-mix(in srgb, var(--teal) 54%, transparent); outline-color: var(--teal); }
 .editor-footer { min-height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; color: var(--faint); border-top: 1px solid var(--border); font-size: 10px; }
+.sudo-dialog { display: grid; gap: 14px; }
+.sudo-password-field { display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
+.sudo-password-field input { min-width: 280px; height: 34px; padding: 0 9px; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); outline: 0; }
+.sudo-password-field input:focus { border-color: var(--teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 16%, transparent); }
+.file-context-menu { position: fixed; z-index: 30; display: grid; min-width: 190px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.file-context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; color: var(--text); border-radius: 5px; text-align: left; font-size: 11px; }
+.file-context-menu button:hover { background: var(--surface-soft); }
+.file-context-menu button.danger { color: var(--red); }
+.file-context-menu i { height: 1px; margin: 4px; background: var(--border); }
 .discard-overlay { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--surface) 62%, transparent); backdrop-filter: blur(2px); }
 .discard-dialog { width: min(410px, 100%); display: grid; grid-template-columns: 38px 1fr; gap: 4px 12px; padding: 19px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
 .discard-icon { width: 34px; height: 34px; display: grid; place-items: center; color: var(--red); border-radius: 50%; background: var(--red-soft); }

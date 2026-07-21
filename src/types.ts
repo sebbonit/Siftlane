@@ -39,6 +39,7 @@ export interface EditableFile {
   content: string;
   language: string;
   size: number;
+  privileged?: boolean;
 }
 
 export interface HostKeyChallenge {

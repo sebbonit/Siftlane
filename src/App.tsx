@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import prettier from "prettier/standalone";
 import * as babelPlugin from "prettier/plugins/babel";
 import * as cssPlugin from "prettier/plugins/postcss";
@@ -76,7 +76,8 @@ import type {
 import appIcon from "../src-tauri/icons/128x128.png";
 
 type PaneSide = "local" | "remote";
-type EntryCreation = { side: PaneSide; directory: boolean };
+type EntryCreation = { side: PaneSide; directory: boolean; privileged: boolean };
+type SudoPrompt = { path: string; resolve: (password: string | null) => void };
 
 const editorTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
@@ -120,6 +121,7 @@ export default function App() {
   const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
+  const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
@@ -279,31 +281,60 @@ export default function App() {
 
   async function createEntry(name: string) {
     if (!activeTab || !entryCreation) return;
-    const { side, directory } = entryCreation;
+    const { side, directory, privileged } = entryCreation;
     const parentPath = side === "local" ? activeTab.localPath : activeTab.remotePath;
-    if (side === "local") {
-      await api.createLocalEntry(parentPath, name, directory);
-    } else {
-      await api.createRemoteEntry(activeTab.id, parentPath, name, directory);
+    const create = (password?: string) => {
+      if (privileged) {
+        return side === "local"
+          ? api.createLocalEntryPrivileged(parentPath, name, directory, password)
+          : api.createRemoteEntryPrivileged(activeTab.id, parentPath, name, directory, password);
+      }
+      return side === "local"
+        ? api.createLocalEntry(parentPath, name, directory)
+        : api.createRemoteEntry(activeTab.id, parentPath, name, directory);
+    };
+    try {
+      await create();
+    } catch (reason) {
+      if (!privileged || (reason as AppError)?.code !== "authentication_failed") throw reason;
+      const password = await requestSudoPassword(`${parentPath}/${name}`);
+      if (password == null) return;
+      await create(password);
     }
     setEntryCreation(null);
     await loadPane(side, parentPath);
   }
 
-  async function removeSelected(side: PaneSide) {
+  async function removeSelected(side: PaneSide, privileged = false, entry?: FileEntry) {
     if (!activeTab) return;
-    const selected = side === "local" ? selectedLocal : selectedRemote;
+    const selected = entry ?? (side === "local" ? selectedLocal : selectedRemote);
     if (!selected) return;
     const directory = selected.kind === "directory";
     if (!(await api.confirmDelete(selected.name, directory))) return;
     setError(null);
     try {
+      const remove = (password?: string) => {
+        if (privileged) {
+          return side === "local"
+            ? api.deleteLocalEntryPrivileged(selected.path, directory, password)
+            : api.deleteRemoteEntryPrivileged(activeTab.id, selected.path, directory, password);
+        }
+        return side === "local"
+          ? api.deleteLocalEntry(selected.path, directory)
+          : api.deleteRemoteEntry(activeTab.id, selected.path, directory);
+      };
+      try {
+        await remove();
+      } catch (reason) {
+        if (!privileged || (reason as AppError)?.code !== "authentication_failed") throw reason;
+        const password = await requestSudoPassword(selected.path);
+        if (password == null) return;
+        await remove(password);
+      }
       if (side === "local") {
-        await api.deleteLocalEntry(selected.path, directory);
         setSelectedLocal(null);
         await loadPane("local", activeTab.localPath);
       } else {
-        await api.deleteRemoteEntry(activeTab.id, selected.path, directory);
         setSelectedRemote(null);
         await loadPane("remote", activeTab.remotePath);
       }
@@ -323,11 +354,49 @@ export default function App() {
     } catch (reason) { setError(errorMessage(reason)); }
   }
 
+  function requestSudoPassword(path: string): Promise<string | null> {
+    return new Promise((resolve) => setSudoPrompt({ path, resolve }));
+  }
+
+  async function openPrivilegedEditor(entry: FileEntry, side: PaneSide) {
+    if (!activeTab || entry.kind !== "file") return;
+    setError(null);
+    try {
+      const read = (password?: string) => side === "remote"
+        ? api.readRemoteFilePrivileged(activeTab.id, entry.path, password)
+        : api.readLocalFilePrivileged(entry.path, password);
+      let file: EditableFile;
+      try {
+        file = await read();
+      } catch (reason) {
+        if ((reason as AppError)?.code !== "authentication_failed") throw reason;
+        const password = await requestSudoPassword(entry.path);
+        if (password == null) return;
+        file = await read(password);
+      }
+      setEditorFile({ ...file, privileged: true });
+      setEditorSide(side);
+      setEditorOpen(true);
+    } catch (reason) { setError(errorMessage(reason)); }
+  }
+
   async function saveEditor(content: string) {
     if (!activeTab || !editorFile) return;
     setEditorSaving(true);
     try {
-      if (editorSide === "remote") await api.saveRemoteFile(activeTab.id, editorFile.path, content);
+      if (editorFile.privileged) {
+        const save = (password?: string) => editorSide === "remote"
+          ? api.saveRemoteFilePrivileged(activeTab.id, editorFile.path, content, password)
+          : api.saveLocalFilePrivileged(editorFile.path, content, password);
+        try {
+          await save();
+        } catch (reason) {
+          if ((reason as AppError)?.code !== "authentication_failed") throw reason;
+          const password = await requestSudoPassword(editorFile.path);
+          if (password == null) return;
+          await save(password);
+        }
+      } else if (editorSide === "remote") await api.saveRemoteFile(activeTab.id, editorFile.path, content);
       else await api.saveLocalFile(editorFile.path, content);
       setEditorFile({ ...editorFile, content, size: new TextEncoder().encode(content).length });
       setEditorOpen(false);
@@ -434,10 +503,14 @@ export default function App() {
                   onNavigate={(path) => navigate("local", path)}
                   onRefresh={() => loadPane("local", activeTab.localPath)}
                   onToggleHidden={() => setPaneHidden((value) => ({ ...value, local: !(value.local ?? preferences?.show_hidden_files ?? true) }))}
-                  onCreateFile={() => setEntryCreation({ side: "local", directory: false })}
-                  onCreateDirectory={() => setEntryCreation({ side: "local", directory: true })}
-                  onRemove={() => void removeSelected("local")}
+                  onCreateFile={() => setEntryCreation({ side: "local", directory: false, privileged: false })}
+                  onCreateDirectory={() => setEntryCreation({ side: "local", directory: true, privileged: false })}
+                  onCreateFilePrivileged={() => setEntryCreation({ side: "local", directory: false, privileged: true })}
+                  onCreateDirectoryPrivileged={() => setEntryCreation({ side: "local", directory: true, privileged: true })}
+                  onRemove={(entry) => void removeSelected("local", false, entry)}
+                  onRemovePrivileged={(entry) => void removeSelected("local", true, entry)}
                   onOpenFile={(entry) => void openEditor(entry, "local")}
+                  onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
                 />
               )}
               {activeTab.layout === "dual_pane" && (
@@ -463,10 +536,14 @@ export default function App() {
                 onNavigate={(path) => navigate("remote", path)}
                 onRefresh={() => loadPane("remote", activeTab.remotePath)}
                 onToggleHidden={() => setPaneHidden((value) => ({ ...value, remote: !(value.remote ?? preferences?.show_hidden_files ?? true) }))}
-                onCreateFile={() => setEntryCreation({ side: "remote", directory: false })}
-                onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true })}
-                onRemove={() => void removeSelected("remote")}
+                onCreateFile={() => setEntryCreation({ side: "remote", directory: false, privileged: false })}
+                onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true, privileged: false })}
+                onCreateFilePrivileged={() => setEntryCreation({ side: "remote", directory: false, privileged: true })}
+                onCreateDirectoryPrivileged={() => setEntryCreation({ side: "remote", directory: true, privileged: true })}
+                onRemove={(entry) => void removeSelected("remote", false, entry)}
+                onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
                 onOpenFile={(entry) => void openEditor(entry, "remote")}
+                onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
               />
             </section>
             <TransferPanel />
@@ -479,6 +556,7 @@ export default function App() {
         <NewEntryDialog
           directory={entryCreation.directory}
           side={entryCreation.side}
+          privileged={entryCreation.privileged}
           onClose={() => setEntryCreation(null)}
           onSubmit={createEntry}
         />
@@ -519,6 +597,7 @@ export default function App() {
         />
       )}
       {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {sudoPrompt && <SudoPasswordDialog prompt={sudoPrompt} onClose={() => { sudoPrompt.resolve(null); setSudoPrompt(null); }} onSubmit={(password) => { sudoPrompt.resolve(password); setSudoPrompt(null); }} />}
     </div>
   );
 }
@@ -638,7 +717,7 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
   );
 }
 
-function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onRemove, onOpenFile }: {
+function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onCreateFilePrivileged, onCreateDirectoryPrivileged, onRemove, onRemovePrivileged, onOpenFile, onOpenPrivileged }: {
   title: string;
   subtitle?: string;
   side: PaneSide;
@@ -653,14 +732,27 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
   onToggleHidden: () => void;
   onCreateFile: () => void;
   onCreateDirectory: () => void;
-  onRemove: () => void;
+  onCreateFilePrivileged: () => void;
+  onCreateDirectoryPrivileged: () => void;
+  onRemove: (entry: FileEntry) => void;
+  onRemovePrivileged: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
+  onOpenPrivileged: (entry: FileEntry) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: FileEntry | null } | null>(null);
   const visible = useMemo(() => entries.filter((entry) => (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(query.toLowerCase())), [entries, query, showHidden]);
+  function openContextMenu(event: ReactMouseEvent, entry: FileEntry | null) {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, entry });
+  }
+  function closeContextMenu(action?: () => void) {
+    setContextMenu(null);
+    action?.();
+  }
   return (
-    <section className="file-pane" aria-label={`${title} files`}>
-      <div className="pane-title"><div><strong>{title}</strong>{subtitle && <span>{subtitle}</span>}</div><div className="pane-actions"><button title={showHidden ? "Hide hidden files" : "Show hidden files"} onClick={onToggleHidden}>{showHidden ? <EyeOff size={15} /> : <Eye size={15} />}</button><button title="New file" onClick={onCreateFile}><FilePlus2 size={15} /></button><button title="New folder" onClick={onCreateDirectory}><FolderPlus size={15} /></button><button title="Delete selected" onClick={onRemove} disabled={!selected}><Trash2 size={15} /></button><button title="Refresh" onClick={onRefresh}><RefreshCw className={loading ? "spin" : ""} size={15} /></button></div></div>
+    <section className="file-pane" aria-label={`${title} files`} onClick={() => setContextMenu(null)} onContextMenu={(event) => openContextMenu(event, null)}>
+      <div className="pane-title"><div><strong>{title}</strong>{subtitle && <span>{subtitle}</span>}</div><div className="pane-actions"><button title={showHidden ? "Hide hidden files" : "Show hidden files"} onClick={onToggleHidden}>{showHidden ? <EyeOff size={15} /> : <Eye size={15} />}</button><button title="Refresh" onClick={onRefresh}><RefreshCw className={loading ? "spin" : ""} size={15} /></button></div></div>
       <div className="path-toolbar">
         <button title="Parent folder" onClick={() => onNavigate(parentPath(path, side === "remote"))}><ArrowLeft size={15} /></button>
         <div className="path-field"><Folder size={15} /><span>{path}</span></div>
@@ -675,6 +767,7 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
               className={`file-row ${selected?.path === entry.path ? "selected" : ""}`}
               onClick={() => onSelect(entry)}
               onDoubleClick={() => entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)}
+              onContextMenu={(event) => { event.stopPropagation(); onSelect(entry); openContextMenu(event, entry); }}
               role="row"
             >
               <span className="file-name">{fileIcon(entry)}<span>{entry.name}</span>{entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}</span>
@@ -687,8 +780,28 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
         </div>
       </div>
       <footer className="pane-footer"><span>{visible.length} items</span><span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span></footer>
+      {contextMenu && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+        {contextMenu.entry?.kind === "file" && <><button onClick={() => closeContextMenu(() => onOpenFile(contextMenu.entry!))}><FileEdit size={14} />Edit file</button><button onClick={() => closeContextMenu(() => onOpenPrivileged(contextMenu.entry!))}><LockKeyhole size={14} />Edit with sudo</button><i /></>}
+        <button onClick={() => closeContextMenu(onCreateFile)}><FilePlus2 size={14} />New file</button>
+        <button onClick={() => closeContextMenu(onCreateFilePrivileged)}><LockKeyhole size={14} />New file with sudo</button>
+        <button onClick={() => closeContextMenu(onCreateDirectory)}><FolderPlus size={14} />New folder</button>
+        <button onClick={() => closeContextMenu(onCreateDirectoryPrivileged)}><LockKeyhole size={14} />New folder with sudo</button>
+        {contextMenu.entry && <><i /><button onClick={() => closeContextMenu(() => onRemove(contextMenu.entry!))}><Trash2 size={14} />Delete</button><button className="danger" onClick={() => closeContextMenu(() => onRemovePrivileged(contextMenu.entry!))}><LockKeyhole size={14} />Delete with sudo</button></>}
+      </div>}
     </section>
   );
+}
+
+function SudoPasswordDialog({ prompt, onClose, onSubmit }: { prompt: SudoPrompt; onClose: () => void; onSubmit: (password: string) => void }) {
+  const [password, setPassword] = useState("");
+  return <div className="discard-overlay" role="dialog" aria-modal="true" aria-label="Sudo authentication">
+    <section className="discard-dialog sudo-dialog">
+      <div className="discard-icon"><LockKeyhole size={20} /></div>
+      <div><h2>Authenticate with sudo</h2><p>Enter the sudo password to edit <strong>{prompt.path}</strong>. It will not be saved.</p></div>
+      <label className="sudo-password-field">Sudo password<input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && password) onSubmit(password); }} /></label>
+      <div className="dialog-actions"><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!password} onClick={() => onSubmit(password)}>Authenticate</button></div>
+    </section>
+  </div>;
 }
 
 function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; saving: boolean; onClose: () => void; onSave: (content: string) => Promise<void> }) {
@@ -715,7 +828,7 @@ function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; sav
   }
   return <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={`Edit ${file.name}`}>
     <section className="editor-dialog">
-      <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon"><FileEdit size={16} /></span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span><span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
+      <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon">{file.privileged ? <LockKeyhole size={16} /> : <FileEdit size={16} />}</span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span>{file.privileged && <span>sudo</span>}<span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
       <div className="editor-toolbar"><span>Text editor</span><div className="editor-toolbar-actions"><button className="editor-search-button" title="Find and replace (⌘F)" onClick={() => editorView.current && openSearchPanel(editorView.current)}><Search size={12} />Find</button>{canFormat && <button className="format-button" title="Format document (Shift+Alt+F)" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}</div></div>
       {formatError && <div className="format-error"><CircleAlert size={14} /><span>{formatError}</span><button aria-label="Dismiss formatting error" onClick={() => setFormatError(null)}><X size={14} /></button></div>}
       <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} onViewReady={(view) => { editorView.current = view; }} />
@@ -856,9 +969,10 @@ function TransferPanel() {
   );
 }
 
-function NewEntryDialog({ directory, side, onClose, onSubmit }: {
+function NewEntryDialog({ directory, side, privileged, onClose, onSubmit }: {
   directory: boolean;
   side: PaneSide;
+  privileged: boolean;
   onClose: () => void;
   onSubmit: (name: string) => Promise<void>;
 }) {
@@ -878,11 +992,11 @@ function NewEntryDialog({ directory, side, onClose, onSubmit }: {
     }
   }
   const kind = directory ? "folder" : "file";
-  return <Dialog title={`New ${kind}`} subtitle={`Create in the ${side} pane`} onClose={onClose}>
+  return <Dialog title={`New ${kind}${privileged ? " with sudo" : ""}`} subtitle={`Create in the ${side} pane`} onClose={onClose}>
     <form className="new-entry-form" onSubmit={submit}>
       <label>{directory ? "Folder name" : "File name"}<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={directory ? "new-folder" : "new-file.txt"} required /></label>
       {entryError && <p className="dialog-error"><CircleAlert size={14} />{entryError}</p>}
-      <div className="dialog-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={saving || !name.trim()}>{saving && <LoaderCircle className="spin" size={15} />}Create {kind}</button></div>
+      <div className="dialog-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={saving || !name.trim()}>{saving && <LoaderCircle className="spin" size={15} />}{privileged ? "Create with sudo" : `Create ${kind}`}</button></div>
     </form>
   </Dialog>;
 }
@@ -995,7 +1109,10 @@ function fileIcon(entry: FileEntry) {
 }
 
 function errorMessage(reason: unknown) {
-  if (typeof reason === "object" && reason && "message" in reason) return String(reason.message);
+  if (typeof reason === "object" && reason && "message" in reason) {
+    const detail = "detail" in reason && reason.detail ? `: ${String(reason.detail)}` : "";
+    return `${String(reason.message)}${detail}`;
+  }
   return String(reason);
 }
 

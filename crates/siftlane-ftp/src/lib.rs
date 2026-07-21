@@ -230,6 +230,53 @@ impl RemoteFilesystem for FtpClient {
     async fn sync_file(&self, _path: &str) -> Result<(), AppError> {
         Ok(())
     }
+
+    async fn read_privileged(
+        &self,
+        _path: &str,
+        _password: Option<&SecretString>,
+    ) -> Result<Vec<u8>, AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "FTP connections do not support sudo editing",
+        ))
+    }
+
+    async fn write_privileged(
+        &self,
+        _path: &str,
+        _content: &[u8],
+        _password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "FTP connections do not support sudo editing",
+        ))
+    }
+
+    async fn create_privileged(
+        &self,
+        _path: &str,
+        _directory: bool,
+        _password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "FTP connections do not support sudo file operations",
+        ))
+    }
+
+    async fn delete_privileged(
+        &self,
+        _path: &str,
+        _directory: bool,
+        _password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "FTP connections do not support sudo file operations",
+        ))
+    }
 }
 
 async fn read_chunk<T: suppaftp::tokio::TokioTlsStream + Send>(

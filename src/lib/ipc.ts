@@ -202,15 +202,29 @@ export const api = {
     if (desktop) return call<EditableFile>("read_local_file", { path });
     return demoFile(path);
   },
+  async readLocalFilePrivileged(path: string, sudoPassword?: string) {
+    if (desktop) return call<EditableFile>("read_local_file_privileged", { path, sudoPassword });
+    return { ...demoFile(path), privileged: true };
+  },
   async readRemoteFile(sessionId: UUID, path: string) {
     if (desktop) return call<EditableFile>("read_remote_file", { sessionId, path });
     return demoFile(path);
   },
+  async readRemoteFilePrivileged(sessionId: UUID, path: string, sudoPassword?: string) {
+    if (desktop) return call<EditableFile>("read_remote_file_privileged", { sessionId, path, sudoPassword });
+    return { ...demoFile(path), privileged: true };
+  },
   async saveLocalFile(path: string, content: string) {
     if (desktop) return call<void>("save_local_file", { path, content });
   },
+  async saveLocalFilePrivileged(path: string, content: string, sudoPassword?: string) {
+    if (desktop) return call<void>("save_local_file_privileged", { path, content, sudoPassword });
+  },
   async saveRemoteFile(sessionId: UUID, path: string, content: string) {
     if (desktop) return call<void>("save_remote_file", { sessionId, path, content });
+  },
+  async saveRemoteFilePrivileged(sessionId: UUID, path: string, content: string, sudoPassword?: string) {
+    if (desktop) return call<void>("save_remote_file_privileged", { sessionId, path, content, sudoPassword });
   },
   async formatRust(content: string) {
     if (desktop) return call<string>("format_rust", { content });
@@ -220,8 +234,16 @@ export const api = {
     if (desktop) return call<void>("create_local_entry", { parentPath, name, directory });
     if (demoMode) localDemo = [...localDemo, browserEntry(parentPath, name, directory)];
   },
+  async createLocalEntryPrivileged(parentPath: string, name: string, directory: boolean, sudoPassword?: string) {
+    if (desktop) return call<void>("create_local_entry_privileged", { parentPath, name, directory, sudoPassword });
+    if (demoMode) localDemo = [...localDemo, browserEntry(parentPath, name, directory)];
+  },
   async deleteLocalEntry(path: string, directory: boolean) {
     if (desktop) return call<void>("delete_local_entry", { path, directory });
+    localDemo = localDemo.filter((entry) => entry.path !== path);
+  },
+  async deleteLocalEntryPrivileged(path: string, directory: boolean, sudoPassword?: string) {
+    if (desktop) return call<void>("delete_local_entry_privileged", { path, directory, sudoPassword });
     localDemo = localDemo.filter((entry) => entry.path !== path);
   },
   async createRemoteEntry(
@@ -235,8 +257,16 @@ export const api = {
     }
     if (demoMode) remoteDemo = [...remoteDemo, browserEntry(parentPath, name, directory)];
   },
+  async createRemoteEntryPrivileged(sessionId: UUID, parentPath: string, name: string, directory: boolean, sudoPassword?: string) {
+    if (desktop) return call<void>("create_remote_entry_privileged", { sessionId, parentPath, name, directory, sudoPassword });
+    if (demoMode) remoteDemo = [...remoteDemo, browserEntry(parentPath, name, directory)];
+  },
   async deleteRemoteEntry(sessionId: UUID, path: string, directory: boolean) {
     if (desktop) return call<void>("delete_remote_entry", { sessionId, path, directory });
+    remoteDemo = remoteDemo.filter((entry) => entry.path !== path);
+  },
+  async deleteRemoteEntryPrivileged(sessionId: UUID, path: string, directory: boolean, sudoPassword?: string) {
+    if (desktop) return call<void>("delete_remote_entry_privileged", { sessionId, path, directory, sudoPassword });
     remoteDemo = remoteDemo.filter((entry) => entry.path !== path);
   },
   async confirmDelete(name: string, directory: boolean) {
@@ -296,7 +326,7 @@ function demoFile(path: string): EditableFile {
   const content = name.endsWith(".html")
     ? `<!doctype html>\n<html>\n  <head><title>Preview</title></head>\n  <body>\n    <h1>Edit this remote file</h1>\n  </body>\n</html>\n`
     : name.endsWith(".css") ? `body {\n  color: #202827;\n}\n` : `# ${name}\n\nEdit this file and save it back to the server.\n`;
-  return { path, name, content, language: languageFor(name), size: new TextEncoder().encode(content).length };
+  return { path, name, content, language: languageFor(name), size: new TextEncoder().encode(content).length, privileged: false };
 }
 
 function languageFor(name: string) {
