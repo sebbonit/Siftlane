@@ -493,7 +493,6 @@ function Sidebar({
       </SidebarSection>
       <div className="sidebar-footer">
         <button aria-label="Settings" onClick={onSettings}><Settings size={16} /></button>
-        <span><i /> Local only</span>
         <button aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onToggleCollapsed}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button>
       </div>
     </aside>
