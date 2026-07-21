@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+async-native-tls = { version = "0.6.0", default-features = false, features = ["runtime-tokio"] }
 chrono.workspace = true
 secrecy.workspace = true
 siftlane-core = { path = "../siftlane-core" }

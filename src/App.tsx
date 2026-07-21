@@ -208,6 +208,7 @@ export default function App() {
         profileId: profile.id,
         label: profile.label,
         host: profile.host,
+        protocol: profile.protocol,
         localPath,
         remotePath: profile.initial_remote_path,
         layout: preferences?.default_layout ?? "dual_pane",
@@ -583,7 +584,7 @@ function ConnectionItem({ profile, active, connecting, compact = false, onOpen, 
   return <div className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}>
     <button className="connection-open" onClick={() => onOpen(profile)}>
       <span className="server-icon"><Server size={15} /></span>
-      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small>{profile.username}@{profile.host}</small>}</span>
+      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small><span className="protocol-badge">{profile.protocol.toUpperCase()}</span>{profile.username}@{profile.host}</small>}</span>
       {connecting && <LoaderCircle className="spin" size={14} />}
     </button>
     <button className="favorite-toggle" aria-label={profile.favorite ? `Remove ${profile.label} from favorites` : `Add ${profile.label} to favorites`} title={profile.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => onToggleFavorite(profile)}><Star size={14} fill={profile.favorite ? "currentColor" : "none"} /></button>
@@ -623,9 +624,10 @@ function SessionTabs({ tabs, visible, activeId, onSelect, onClose, onNew }: {
 }
 
 function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionTab; onToggleLayout: () => void; onDisconnect: () => void }) {
+  const encrypted = tab.protocol !== "ftp";
   return (
     <header className="connection-header">
-      <div className="secure-status"><span className="lock-circle"><LockKeyhole size={16} /></span><div><strong>{tab.host}</strong><small><i /> Connected securely</small></div></div>
+      <div className={`secure-status ${encrypted ? "" : "insecure"}`}><span className="lock-circle">{encrypted ? <LockKeyhole size={16} /> : <CircleAlert size={16} />}</span><div><strong>{tab.host}</strong><small><i />{encrypted ? <><span>Connected securely</span> <em>over {tab.protocol.toUpperCase()}</em></> : <span>Connected over unencrypted FTP</span>}</small></div></div>
       <div className="header-actions">
         <button className="search-trigger"><Search size={15} /><span>Search</span><kbd>⌘F</kbd></button>
         <button title="Toggle layout" onClick={onToggleLayout}><LayoutPanelLeft size={17} /></button>
@@ -891,6 +893,7 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
   onSubmit: (profile: ConnectionProfile, credential: string) => Promise<void>;
 }) {
   const [label, setLabel] = useState(existing?.label ?? "");
+  const [protocol, setProtocol] = useState<ConnectionProfile["protocol"]>(existing?.protocol ?? "sftp");
   const [host, setHost] = useState(existing?.host ?? "");
   const [port, setPort] = useState(existing?.port ?? 22);
   const [username, setUsername] = useState(existing?.username ?? "");
@@ -911,17 +914,25 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
       setDialogError(errorMessage(reason));
     }
   }
+  const sshProtocol = protocol === "sftp";
+  const protocolLabel = protocol === "ftps" ? "FTPS (explicit TLS)" : protocol.toUpperCase();
+  function chooseProtocol(next: ConnectionProfile["protocol"]) {
+    setProtocol(next);
+    setPort(next === "sftp" ? 22 : 21);
+    if (next !== "sftp" && (authKind === "private_key" || authKind === "agent")) setAuthKind("password");
+    if (next === "sftp" && authKind === "anonymous") setAuthKind("password");
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setDialogError(null);
     const now = new Date().toISOString();
-    const auth: AuthRef = authKind === "password" ? { kind: "password", remember } : authKind === "private_key" ? { kind: "private_key", path: keyPath, remember_passphrase: remember } : { kind: "agent" };
+    const auth: AuthRef = authKind === "anonymous" ? { kind: "anonymous" } : authKind === "password" ? { kind: "password", remember } : authKind === "private_key" ? { kind: "private_key", path: keyPath, remember_passphrase: remember } : { kind: "agent" };
     try {
       await onSubmit({
         id: existing?.id ?? crypto.randomUUID(),
         label,
-        protocol: "sftp",
+        protocol,
         host,
         port,
         username,
@@ -937,12 +948,15 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
       setSaving(false);
     }
   }
-  return <Dialog title={existing ? `Connect to ${existing.label}` : "New connection"} subtitle="SFTP connection details" onClose={onClose}>
+  return <Dialog title={existing ? `Connect to ${existing.label}` : "New connection"} subtitle={`${protocolLabel} connection details`} onClose={onClose}>
     <form className="connection-form" onSubmit={submit}>
-      <div className="form-grid"><label className="wide">Display name<input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Production server" required /></label><label className="host">Host<input value={host} onChange={(e) => setHost(e.target.value)} placeholder="sftp.example.com" required /></label><label>Port<input type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} required /></label><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="deploy" required /></label><label>Initial path<input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/html" /></label></div>
-      <fieldset><legend>Authentication</legend><div className="segmented">{(["password", "private_key", "agent"] as const).map((kind) => <button type="button" key={kind} className={authKind === kind ? "active" : ""} onClick={() => setAuthKind(kind)}>{kind === "password" ? "Password" : kind === "private_key" ? "Private key" : "SSH agent"}</button>)}</div>
+      <fieldset><legend>Protocol</legend><div className="segmented protocol-options">{(["sftp", "ftp", "ftps"] as const).map((kind) => <button type="button" key={kind} className={protocol === kind ? "active" : ""} onClick={() => chooseProtocol(kind)}>{kind === "sftp" ? "SFTP" : kind === "ftp" ? "FTP" : "FTPS"}</button>)}</div></fieldset>
+      {protocol === "ftp" && <p className="protocol-warning"><CircleAlert size={14} />FTP does not encrypt your sign-in or file transfers. Use FTPS or SFTP whenever the server supports it.</p>}
+      <div className="form-grid"><label className="wide">Display name<input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Production server" required /></label><label className="host">Host<input value={host} onChange={(e) => setHost(e.target.value)} placeholder={sshProtocol ? "sftp.example.com" : "ftp.example.com"} required /></label><label>Port<input type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} required /></label><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={sshProtocol ? "deploy" : "ftp-user"} required /></label><label>Initial path<input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/html" /></label></div>
+      <fieldset><legend>Authentication</legend><div className={`segmented ${sshProtocol ? "" : "two-options"}`}>{(sshProtocol ? ["password", "private_key", "agent"] : ["password", "anonymous"]).map((kind) => <button type="button" key={kind} className={authKind === kind ? "active" : ""} onClick={() => setAuthKind(kind as AuthRef["kind"])}>{kind === "password" ? "Password" : kind === "private_key" ? "Private key" : kind === "agent" ? "SSH agent" : "Anonymous"}</button>)}</div>
         {authKind === "private_key" && <label>Private key file<span className="file-picker-field"><input value={keyPath} onChange={(e) => setKeyPath(e.target.value)} placeholder="Choose an SSH private key" required /><button type="button" className="secondary" onClick={() => void choosePrivateKey()}><FileKey2 size={15} /> Browse…</button></span></label>}
-        {authKind !== "agent" && <><label>{authKind === "password" ? "Password" : "Passphrase (if required)"}<span className="secret-field"><input type={showSecret ? "text" : "password"} value={credential} onChange={(e) => setCredential(e.target.value)} required={authKind === "password" && !existing} /><button type="button" aria-label={showSecret ? "Hide secret" : "Show secret"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="checkbox"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Store securely in the OS keyring</label></>}
+        {(authKind === "password" || authKind === "private_key") && <><label>{authKind === "password" ? "Password" : "Passphrase (if required)"}<span className="secret-field"><input type={showSecret ? "text" : "password"} value={credential} onChange={(e) => setCredential(e.target.value)} required={authKind === "password" && !existing} /><button type="button" aria-label={showSecret ? "Hide secret" : "Show secret"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="checkbox"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Store securely in the OS keyring</label></>}
+        {authKind === "anonymous" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will sign in with the standard anonymous FTP account. No password is stored.</span></div>}
         {authKind === "agent" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will try identities from your running SSH agent. Private keys never enter the app.</span></div>}
       </fieldset>
       {dialogError && <p className="dialog-error"><CircleAlert size={14} />{dialogError}</p>}
@@ -971,7 +985,7 @@ function Dialog({ title, subtitle, children, onClose, tone = "default" }: { titl
 }
 
 function Welcome({ profiles, onConnect, onNew }: { profiles: ConnectionProfile[]; onConnect: (profile: ConnectionProfile) => void; onNew: () => void }) {
-  return <section className="welcome"><img src={appIcon} alt="" /><h1>Move files without the noise.</h1><p>Connect securely over SFTP. Your profiles stay local and credentials stay in your operating system’s keyring.</p><button className="primary" onClick={onNew}><Plus size={16} /> New connection</button>{profiles.length > 0 && <div className="welcome-recents"><span>Or reconnect</span>{profiles.slice(0, 3).map((profile) => <button key={profile.id} onClick={() => onConnect(profile)}><Server size={16} /><span><strong>{profile.label}</strong><small>{profile.host}</small></span><ChevronRight size={15} /></button>)}</div>}</section>;
+  return <section className="welcome"><img src={appIcon} alt="" /><h1>Move files without the noise.</h1><p>Connect with SFTP, FTP, or explicit FTPS. Profiles stay local and passwords can remain in your operating system’s keyring.</p><button className="primary" onClick={onNew}><Plus size={16} /> New connection</button>{profiles.length > 0 && <div className="welcome-recents"><span>Or reconnect</span>{profiles.slice(0, 3).map((profile) => <button key={profile.id} onClick={() => onConnect(profile)}><Server size={16} /><span><strong>{profile.label}</strong><small>{profile.host}</small></span><ChevronRight size={15} /></button>)}</div>}</section>;
 }
 
 function fileIcon(entry: FileEntry) {

@@ -57,4 +57,19 @@ describe("Siftlane shell", () => {
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
     expect(document.querySelector(".session-tabs")).toHaveClass("empty");
   });
+
+  it("offers FTP and FTPS with protocol-appropriate sign-in options", async () => {
+    render(<App />);
+    const newButtons = await screen.findAllByRole("button", { name: /new connection/i });
+    await userEvent.click(newButtons[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "FTP" }));
+    expect(screen.getByText(/does not encrypt your sign-in/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "SSH agent" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Anonymous" }));
+    expect(screen.getByText(/standard anonymous FTP account/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "FTPS" }));
+    expect(screen.queryByText(/does not encrypt your sign-in/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/FTPS \(explicit TLS\) connection details/i)).toBeInTheDocument();
+  });
 });

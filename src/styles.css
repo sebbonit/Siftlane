@@ -17,6 +17,8 @@
   --teal-strong: #056866;
   --teal-soft: #e0f3f0;
   --green: #2e9b55;
+  --orange: #b26a2d;
+  --orange-soft: #fff0e1;
   --red: #bd4b4b;
   --red-soft: #fae9e7;
   --shadow: 0 18px 60px rgba(31, 47, 42, 0.16);
@@ -37,6 +39,8 @@
   --teal-strong: #54bfba;
   --teal-soft: #173d3a;
   --green: #5fc77a;
+  --orange: #f0a25d;
+  --orange-soft: #4a3020;
   --red: #ed817b;
   --red-soft: #492928;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
@@ -58,6 +62,8 @@
     --teal-strong: #54bfba;
     --teal-soft: #173d3a;
     --green: #5fc77a;
+    --orange: #f0a25d;
+    --orange-soft: #4a3020;
     --red: #ed817b;
     --red-soft: #492928;
     --shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
@@ -91,6 +97,7 @@ button:disabled { cursor: default; opacity: .38; }
 .connection-item:hover, .nav-item:hover { background: color-mix(in srgb, var(--surface) 65%, transparent); color: var(--text); }
 .connection-item.active { color: white; background: var(--teal); }
 .connection-item.compact { min-height: 36px; }
+.protocol-badge { display: inline-flex; margin-right: 5px; padding: 1px 4px; border: 1px solid color-mix(in srgb, currentColor 28%, transparent); border-radius: 3px; font-size: 8px; font-weight: 700; letter-spacing: .04em; line-height: 1.2; vertical-align: 1px; }
 .connection-open { min-width: 0; height: 100%; display: grid; grid-template-columns: 27px minmax(0, 1fr) 16px; align-items: center; gap: 6px; padding: 5px 2px 5px 7px; color: inherit; text-align: left; }
 .favorite-toggle { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 5px; color: inherit; opacity: .72; }
 .favorite-toggle:hover { background: color-mix(in srgb, var(--surface) 25%, transparent); opacity: 1; }
@@ -134,6 +141,10 @@ button:disabled { cursor: default; opacity: .38; }
 .secure-status > div { display: flex; flex-direction: column; gap: 3px; }
 .secure-status strong { font-size: 13px; }
 .secure-status small { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 10px; }
+.secure-status small em { color: var(--muted); font-style: normal; }
+.secure-status.insecure .lock-circle { color: var(--orange); background: var(--orange-soft); }
+.secure-status.insecure small { color: var(--orange); }
+.secure-status.insecure small i { background: var(--orange); }
 .header-actions { display: flex; align-items: center; gap: 5px; }
 .header-actions > button { height: 32px; min-width: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 7px; color: var(--muted); }
 .header-actions > button:hover { border-color: var(--border); background: var(--surface-soft); color: var(--text); }
@@ -282,6 +293,7 @@ button:disabled { cursor: default; opacity: .38; }
 .connection-form fieldset { display: grid; gap: 12px; margin: 18px 0 0; padding: 0; border: 0; }
 .connection-form legend { margin-bottom: 9px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 3px; border-radius: 8px; background: var(--surface-soft); border: 1px solid var(--border); }
+.segmented.two-options { grid-template-columns: repeat(2, 1fr); }
 .segmented button { height: 29px; border-radius: 5px; color: var(--muted); font-size: 10px; }
 .segmented button.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
 .secret-field { position: relative; display: block; }
@@ -294,6 +306,8 @@ button:disabled { cursor: default; opacity: .38; }
 .agent-note { display: flex; align-items: center; gap: 9px; padding: 10px; border-radius: 7px; color: var(--muted); background: var(--teal-soft); font-size: 11px; line-height: 1.45; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 15px 20px 18px; }
 .connection-form .dialog-actions { padding: 18px 0 0; }
+.protocol-warning { display: flex; align-items: flex-start; gap: 7px; margin: 13px 0 -3px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--orange) 36%, var(--border)); border-radius: 7px; color: var(--muted); background: var(--orange-soft); font-size: 10px; line-height: 1.4; }
+.protocol-warning svg { flex: 0 0 auto; color: var(--orange); }
 .dialog-error { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; color: var(--red); font-size: 10px; }
 .trust-content { padding: 20px 20px 5px; }
 .trust-icon { width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 13px; border-radius: 12px; color: var(--teal); background: var(--teal-soft); }

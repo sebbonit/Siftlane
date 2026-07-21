@@ -118,6 +118,7 @@ export interface SessionTab {
   profileId: UUID;
   label: string;
   host: string;
+  protocol: ConnectionProfile["protocol"];
   localPath: string;
   remotePath: string;
   layout: "dual_pane" | "remote_focused";

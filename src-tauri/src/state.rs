@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use siftlane_core::{AppError, ErrorCode, TransferQueue};
-use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey, SftpClient};
+use siftlane_core::{AppError, ErrorCode, RemoteFilesystem, TransferQueue};
+use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey};
 use tauri::Manager;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use uuid::Uuid;
@@ -25,7 +25,7 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct SessionRecord {
     pub profile_id: Uuid,
-    pub client: Arc<SftpClient>,
+    pub client: Arc<dyn RemoteFilesystem>,
 }
 
 #[derive(Debug, Clone)]

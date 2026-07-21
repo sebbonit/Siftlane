@@ -65,7 +65,7 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
 async fn upload(
     app: &AppHandle,
     state: &AppState,
-    remote: Arc<impl RemoteFilesystem>,
+    remote: Arc<dyn RemoteFilesystem>,
     id: TransferId,
 ) -> Result<(), AppError> {
     let job = job_snapshot(state, id).await?;
@@ -114,7 +114,7 @@ async fn upload(
 async fn download(
     app: &AppHandle,
     state: &AppState,
-    remote: Arc<impl RemoteFilesystem>,
+    remote: Arc<dyn RemoteFilesystem>,
     id: TransferId,
 ) -> Result<(), AppError> {
     let job = job_snapshot(state, id).await?;

@@ -4540,6 +4540,7 @@ dependencies = [
  "serde",
  "serde_json",
  "siftlane-core",
+ "siftlane-ftp",
  "siftlane-sftp",
  "tauri",
  "tauri-build",
@@ -4573,6 +4574,7 @@ dependencies = [
 name = "siftlane-ftp"
 version = "0.1.0"
 dependencies = [
+ "async-native-tls",
  "async-trait",
  "chrono",
  "secrecy",
