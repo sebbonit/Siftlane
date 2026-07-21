@@ -1110,6 +1110,7 @@ pub async fn list_transfers(state: State<'_, AppState>) -> Result<Vec<TransferJo
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferFilter {
+    All,
     Active,
     Completed,
     Failed,
@@ -1118,6 +1119,7 @@ pub enum TransferFilter {
 impl From<TransferFilter> for TransferListFilter {
     fn from(value: TransferFilter) -> Self {
         match value {
+            TransferFilter::All => Self::All,
             TransferFilter::Active => Self::Active,
             TransferFilter::Completed => Self::Completed,
             TransferFilter::Failed => Self::Failed,

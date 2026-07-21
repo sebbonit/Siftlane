@@ -150,6 +150,7 @@ impl TransferQueue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferListFilter {
+    All,
     Active,
     Completed,
     Failed,
@@ -158,6 +159,7 @@ pub enum TransferListFilter {
 impl TransferListFilter {
     pub fn matches(self, state: TransferState) -> bool {
         match self {
+            Self::All => true,
             Self::Active => !state.is_terminal(),
             Self::Completed => state == TransferState::Completed,
             Self::Failed => matches!(state, TransferState::Failed | TransferState::Cancelled),
@@ -296,6 +298,37 @@ mod tests {
             queue.clear_filter(super::TransferListFilter::Active),
             vec![active]
         );
+        assert!(queue.list().is_empty());
+    }
+
+    #[test]
+    fn clear_filter_all_removes_every_job() {
+        let mut queue = TransferQueue::default();
+        let first = queue.enqueue(TransferJob::new(
+            Uuid::new_v4(),
+            TransferDirection::Upload,
+            "one".into(),
+            "dest".into(),
+            Some(10),
+        ));
+        let second = {
+            let job = TransferJob::new(
+                Uuid::new_v4(),
+                TransferDirection::Download,
+                "two".into(),
+                "dest".into(),
+                Some(10),
+            );
+            let id = queue.enqueue(job);
+            queue.transition(id, TransferState::Running).unwrap();
+            queue.transition(id, TransferState::Completed).unwrap();
+            id
+        };
+
+        let removed = queue.clear_filter(super::TransferListFilter::All);
+        assert_eq!(removed.len(), 2);
+        assert!(removed.contains(&first));
+        assert!(removed.contains(&second));
         assert!(queue.list().is_empty());
     }
 }

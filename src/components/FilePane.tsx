@@ -7,21 +7,18 @@ import {
   EyeOff,
   File,
   FileCode2,
-  FileEdit,
-  FilePlus2,
   Folder,
-  FolderPlus,
-  Info,
+  FolderOpen,
   LoaderCircle,
-  LockKeyhole,
   RefreshCw,
   Search,
-  Trash2,
+  X,
 } from "lucide-react";
 import { formatBytes, formatDate, formatPermissions } from "../lib/format";
 import { sortEntries, type SortDir, type SortKey } from "../lib/fileSort";
 import { parentPath } from "../lib/paths";
 import type { FileEntry } from "../types";
+import { FilePaneContextMenu } from "./FilePaneContextMenu";
 
 export type PaneSide = "local" | "remote";
 
@@ -43,6 +40,7 @@ export function FilePane({
   showHidden,
   onSelect,
   onNavigate,
+  onBrowse,
   onRefresh,
   onToggleHidden,
   onCreateFile,
@@ -54,6 +52,7 @@ export function FilePane({
   onOpenFile,
   onOpenPrivileged,
   onShowInfo,
+  onRevealInFileManager,
 }: {
   title: string;
   subtitle?: string;
@@ -65,6 +64,7 @@ export function FilePane({
   showHidden: boolean;
   onSelect: (entry: FileEntry) => void;
   onNavigate: (path: string) => void;
+  onBrowse?: () => void;
   onRefresh: () => void;
   onToggleHidden: () => void;
   onCreateFile: () => void;
@@ -76,6 +76,7 @@ export function FilePane({
   onOpenFile: (entry: FileEntry) => void;
   onOpenPrivileged: (entry: FileEntry) => void;
   onShowInfo: (entry: FileEntry) => void;
+  onRevealInFileManager?: (path: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -96,12 +97,8 @@ export function FilePane({
 
   function openContextMenu(event: ReactMouseEvent, entry: FileEntry | null) {
     event.preventDefault();
+    event.stopPropagation();
     setContextMenu({ x: event.clientX, y: event.clientY, entry });
-  }
-
-  function closeContextMenu(action?: () => void) {
-    setContextMenu(null);
-    action?.();
   }
 
   function toggleSort(key: SortKey) {
@@ -143,9 +140,23 @@ export function FilePane({
         </button>
         <div className="path-field">
           <Folder size={15} />
-          <span>{path}</span>
+          <span title={path}>{path}</span>
+          {onBrowse && (
+            <button
+              type="button"
+              className="path-browse"
+              title="Browse folder"
+              aria-label="Browse folder"
+              onClick={(event) => {
+                event.stopPropagation();
+                onBrowse();
+              }}
+            >
+              <FolderOpen size={14} />
+            </button>
+          )}
         </div>
-        <label className="filter-field">
+        <label className={`filter-field${query ? " has-value" : ""}`}>
           <Search size={14} />
           <input
             aria-label={`Filter ${title} files`}
@@ -153,6 +164,20 @@ export function FilePane({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Filter"
           />
+          {query && (
+            <button
+              type="button"
+              className="filter-clear"
+              aria-label={`Clear ${title} filter`}
+              title="Clear filter"
+              onClick={(event) => {
+                event.preventDefault();
+                setQuery("");
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </label>
       </div>
       <div className="file-table" role="table">
@@ -220,62 +245,23 @@ export function FilePane({
         <span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span>
       </footer>
       {contextMenu && (
-        <div
-          className="file-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {contextMenu.entry?.kind === "file" && (
-            <>
-              <button onClick={() => closeContextMenu(() => onOpenFile(contextMenu.entry!))}>
-                <FileEdit size={14} />
-                Edit file
-              </button>
-              <button onClick={() => closeContextMenu(() => onOpenPrivileged(contextMenu.entry!))}>
-                <LockKeyhole size={14} />
-                Edit with sudo
-              </button>
-              <i />
-            </>
-          )}
-          <button onClick={() => closeContextMenu(onCreateFile)}>
-            <FilePlus2 size={14} />
-            New file
-          </button>
-          <button onClick={() => closeContextMenu(onCreateFilePrivileged)}>
-            <LockKeyhole size={14} />
-            New file with sudo
-          </button>
-          <button onClick={() => closeContextMenu(onCreateDirectory)}>
-            <FolderPlus size={14} />
-            New folder
-          </button>
-          <button onClick={() => closeContextMenu(onCreateDirectoryPrivileged)}>
-            <LockKeyhole size={14} />
-            New folder with sudo
-          </button>
-          {contextMenu.entry && (
-            <>
-              <i />
-              <button onClick={() => closeContextMenu(() => onShowInfo(contextMenu.entry!))}>
-                <Info size={14} />
-                Get Info
-              </button>
-              <i />
-              <button onClick={() => closeContextMenu(() => onRemove(contextMenu.entry!))}>
-                <Trash2 size={14} />
-                Delete
-              </button>
-              <button
-                className="danger"
-                onClick={() => closeContextMenu(() => onRemovePrivileged(contextMenu.entry!))}
-              >
-                <LockKeyhole size={14} />
-                Delete with sudo
-              </button>
-            </>
-          )}
-        </div>
+        <FilePaneContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          path={path}
+          entry={contextMenu.entry}
+          onClose={() => setContextMenu(null)}
+          onOpenFile={onOpenFile}
+          onOpenPrivileged={onOpenPrivileged}
+          onCreateFile={onCreateFile}
+          onCreateFilePrivileged={onCreateFilePrivileged}
+          onCreateDirectory={onCreateDirectory}
+          onCreateDirectoryPrivileged={onCreateDirectoryPrivileged}
+          onShowInfo={onShowInfo}
+          onRemove={onRemove}
+          onRemovePrivileged={onRemovePrivileged}
+          onRevealInFileManager={onRevealInFileManager}
+        />
       )}
     </section>
   );

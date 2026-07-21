@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { homeDir } from "@tauri-apps/api/path";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppError,
   ConflictPolicy,
@@ -155,6 +156,20 @@ export const api = {
     });
     return typeof selected === "string" ? selected : null;
   },
+  async pickDirectory(defaultPath?: string) {
+    if (!desktop) return null;
+    const selected = await openDialog({
+      title: "Choose folder",
+      multiple: false,
+      directory: true,
+      defaultPath,
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+  async revealInFileManager(path: string) {
+    if (!desktop) return;
+    await revealItemInDir(path);
+  },
   async listProfiles() {
     return desktop ? call<ConnectionProfile[]>("list_profiles") : browserProfiles;
   },
@@ -303,15 +318,19 @@ export const api = {
   async listTransfers() {
     return desktop ? call<TransferJob[]>("list_transfers") : browserTransfers;
   },
-  async clearTransfers(filter: "active" | "completed" | "failed") {
+  async clearTransfers(filter: "all" | "active" | "completed" | "failed") {
     if (desktop) return call<TransferJob[]>("clear_transfers", { filter });
-    const terminal =
+    if (filter === "all") {
+      browserTransfers = [];
+      return browserTransfers;
+    }
+    const matches =
       filter === "active"
         ? (state: TransferJob["state"]) => !["completed", "failed", "cancelled"].includes(state)
         : filter === "completed"
           ? (state: TransferJob["state"]) => state === "completed"
           : (state: TransferJob["state"]) => ["failed", "cancelled"].includes(state);
-    browserTransfers = browserTransfers.filter((job) => !terminal(job.state));
+    browserTransfers = browserTransfers.filter((job) => !matches(job.state));
     return browserTransfers;
   },
   async enqueueTransfer(draft: {
