@@ -5,12 +5,12 @@ export function formatBytes(bytes: number | null | undefined) {
   if (amount < 1024) return `${Math.round(amount)} B`;
   const units = ["KB", "MB", "GB", "TB"] as const;
   let value = amount / 1024;
-  let unit: (typeof units)[number] = units[0];
-  for (let index = 1; value >= 1024 && index < units.length; index += 1) {
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
     value /= 1024;
-    unit = units[index];
+    unitIndex += 1;
   }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export function formatDate(value: string | null) {

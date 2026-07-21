@@ -993,7 +993,8 @@ pub fn set_local_permissions(path: String, permissions: u32) -> Result<(), AppEr
                 std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
                 _ => ErrorCode::Io,
             };
-            AppError::new(code, "Could not change local permissions").with_detail(source.to_string())
+            AppError::new(code, "Could not change local permissions")
+                .with_detail(source.to_string())
         })
     }
     #[cfg(not(unix))]
