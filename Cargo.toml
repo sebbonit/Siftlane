@@ -4,6 +4,7 @@ members = [
   "src-tauri",
   "crates/siftlane-core",
   "crates/siftlane-sftp",
+  "crates/siftlane-ftp",
 ]
 
 [workspace.package]

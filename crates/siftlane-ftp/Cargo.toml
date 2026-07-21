@@ -1,0 +1,14 @@
+[package]
+name = "siftlane-ftp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+secrecy.workspace = true
+siftlane-core = { path = "../siftlane-core" }
+suppaftp = { version = "10.0.1", features = ["tokio-async-native-tls"] }
+tokio.workspace = true

@@ -1,6 +1,7 @@
 export type UUID = string;
 
 export type AuthRef =
+  | { kind: "anonymous" }
   | { kind: "password"; remember: boolean }
   | { kind: "private_key"; path: string; remember_passphrase: boolean }
   | { kind: "agent" };
@@ -8,7 +9,7 @@ export type AuthRef =
 export interface ConnectionProfile {
   id: UUID;
   label: string;
-  protocol: "sftp";
+  protocol: "sftp" | "ftp" | "ftps";
   host: string;
   port: number;
   username: string;

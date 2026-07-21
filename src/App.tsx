@@ -15,6 +15,7 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
 import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -693,6 +694,7 @@ function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; sav
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [formatting, setFormatting] = useState(false);
   const [formatError, setFormatError] = useState<string | null>(null);
+  const editorView = useRef<EditorView | null>(null);
   const dirty = content !== file.content;
   function close() {
     if (dirty) setDiscardPrompt(true);
@@ -712,9 +714,9 @@ function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; sav
   return <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={`Edit ${file.name}`}>
     <section className="editor-dialog">
       <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon"><FileEdit size={16} /></span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span><span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
-      <div className="editor-toolbar"><span>Text editor</span><div className="editor-toolbar-actions"><span className="editor-hint">Syntax colors enabled</span>{canFormat && <button className="format-button" title="Format document" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}</div></div>
+      <div className="editor-toolbar"><span>Text editor</span><div className="editor-toolbar-actions"><button className="editor-search-button" title="Find and replace (⌘F)" onClick={() => editorView.current && openSearchPanel(editorView.current)}><Search size={12} />Find</button>{canFormat && <button className="format-button" title="Format document (Shift+Alt+F)" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}</div></div>
       {formatError && <div className="format-error"><CircleAlert size={14} /><span>{formatError}</span><button aria-label="Dismiss formatting error" onClick={() => setFormatError(null)}><X size={14} /></button></div>}
-      <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} />
+      <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} onViewReady={(view) => { editorView.current = view; }} />
       <footer className="editor-footer"><span>{content.split("\n").length} lines · {new TextEncoder().encode(content).length} bytes</span><div className="dialog-actions"><button className="secondary" onClick={close}>Cancel</button><button className="primary" disabled={!dirty || saving} onClick={() => void onSave(content)}>{saving ? <LoaderCircle className="spin" size={15} /> : <FileEdit size={15} />}Save file</button></div></footer>
       {discardPrompt && <div className="discard-overlay"><section className="discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-title"><div className="discard-icon"><CircleAlert size={20} /></div><div><h2 id="discard-title">Discard unsaved changes?</h2><p>Your changes to <strong>{file.name}</strong> have not been saved.</p></div><div className="dialog-actions"><button className="secondary" onClick={() => setDiscardPrompt(false)}>Keep editing</button><button className="danger-button" onClick={onClose}>Discard changes</button></div></section></div>}
     </section>
@@ -730,13 +732,15 @@ function prettierOptions(language: string) {
   return { ...common, parser: "babel" as const, plugins: [babelPlugin, estreePlugin] };
 }
 
-function CodeEditor({ value, language, onChange, onFormat }: { value: string; language: string; onChange: (value: string) => void; onFormat?: () => Promise<void> }) {
+function CodeEditor({ value, language, onChange, onFormat, onViewReady }: { value: string; language: string; onChange: (value: string) => void; onFormat?: () => Promise<void>; onViewReady: (view: EditorView | null) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const changeHandler = useRef(onChange);
   const formatHandler = useRef(onFormat);
+  const readyHandler = useRef(onViewReady);
   changeHandler.current = onChange;
   formatHandler.current = onFormat;
+  readyHandler.current = onViewReady;
 
   useEffect(() => {
     if (!host.current) return;
@@ -753,12 +757,14 @@ function CodeEditor({ value, language, onChange, onFormat }: { value: string; la
           indentOnInput(),
           bracketMatching(),
           highlightActiveLine(),
+          highlightSelectionMatches(),
           syntaxHighlighting(editorHighlight),
           getLanguageExtension(language),
           editorTheme,
           keymap.of([
             ...defaultKeymap,
             ...historyKeymap,
+            ...searchKeymap,
             indentWithTab,
             {
               key: "Shift-Alt-f",
@@ -777,10 +783,12 @@ function CodeEditor({ value, language, onChange, onFormat }: { value: string; la
       parent: host.current,
     });
     view.current = editor;
+    readyHandler.current(editor);
     editor.focus();
     return () => {
       editor.destroy();
       view.current = null;
+      readyHandler.current(null);
     };
   }, [language]);
 
