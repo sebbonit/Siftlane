@@ -1,9 +1,9 @@
 ---
-description: Run local CI gates (fmt, clippy, pnpm) before commit/push
+description: Run local CI gates and never credit Cursor as co-author
 alwaysApply: true
 ---
 
-# Pre-push CI gates
+# Pre-push CI gates and commit attribution
 
 Before committing or pushing, run the same checks as `.github/workflows/ci.yml`. Failed CI wastes GitHub compute. See root `AGENTS.md`.
 
@@ -23,3 +23,13 @@ pnpm test
 ```
 
 `cargo check` alone is not sufficient. Fix fmt/clippy locally; do not weaken CI.
+
+## Never credit Cursor as co-author
+
+After any agent `git commit`, check `git log -1 --format=%B`. If you see `Co-authored-by: Cursor <cursoragent@cursor.com>`, strip it before pushing:
+
+```bash
+git log -1 --format=%B | sed '/Co-authored-by: Cursor <cursoragent@cursor.com>/d;/^---------$/d' | git commit --amend -F -
+```
+
+Do not add Co-authored-by trailers for Cursor or similar tools. Commits must be authored only as the human repo owner.
