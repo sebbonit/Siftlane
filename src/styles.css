@@ -104,8 +104,7 @@ button:disabled { cursor: default; opacity: .38; }
 .sidebar-footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 10px; color: var(--muted); }
 .sidebar-footer > button { width: 30px; height: 28px; display: grid; place-items: center; border-radius: 6px; }
 .sidebar-footer > button:hover { background: var(--surface); }
-.sidebar-footer span { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-.sidebar-footer i, .secure-status small i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.secure-status small i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .sidebar.collapsed { padding-inline: 12px; }
 .sidebar.collapsed .brand { justify-content: center; padding: 2px 0 14px; }
 .sidebar.collapsed .brand div, .sidebar.collapsed .primary-action span, .sidebar.collapsed .sidebar-section, .sidebar.collapsed .sidebar-footer > span { display: none; }
