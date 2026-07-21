@@ -172,7 +172,7 @@ export const api = {
     return { status: "connected", session_id: `session-${profileId}` } satisfies ConnectResult;
   },
   trustHostKey(challengeId: UUID, accept: boolean) {
-    return call<void>("trust_host_key", { challengeId, accept });
+    return call<ConnectResult | null>("trust_host_key", { challengeId, accept });
   },
   disconnectSession(sessionId: UUID) {
     return desktop ? call<void>("disconnect_session", { sessionId }) : Promise.resolve();

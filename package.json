@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "RUSTC_WRAPPER=$INIT_CWD/scripts/sign-macos-dev-binary.sh tauri"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

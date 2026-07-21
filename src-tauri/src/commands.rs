@@ -117,13 +117,24 @@ async fn connect_sftp(
     preferences: Preferences,
 ) -> Result<ConnectResult, AppError> {
     let (auth, supplied_secret) = resolve_sftp_auth(state, &profile, credential)?;
+    connect_sftp_with_auth(app, state, profile, auth, supplied_secret, preferences).await
+}
+
+async fn connect_sftp_with_auth(
+    app: &AppHandle,
+    state: &AppState,
+    profile: ConnectionProfile,
+    auth: SftpAuth,
+    supplied_secret: Option<(SecretKind, String)>,
+    preferences: Preferences,
+) -> Result<ConnectResult, AppError> {
     let known_keys = state.storage.host_keys(&profile.host, profile.port)?;
     let verifier = Arc::new(StoredKeyVerifier::new(known_keys));
     let options = SftpConnectOptions {
         host: profile.host.clone(),
         port: profile.port,
         username: profile.username.clone(),
-        auth,
+        auth: auth.clone(),
         connect_timeout: std::time::Duration::from_secs(preferences.connect_timeout_seconds),
         response_timeout: std::time::Duration::from_secs(preferences.response_timeout_seconds),
         keepalive_interval: std::time::Duration::from_secs(preferences.keepalive_seconds),
@@ -146,11 +157,16 @@ async fn connect_sftp(
             if let Some(key) = connect_error.host_key {
                 let challenge_id = Uuid::new_v4();
                 let changed = connect_error.error.code == ErrorCode::HostKeyChanged;
-                state
-                    .pending_host_keys
-                    .lock()
-                    .await
-                    .insert(challenge_id, PendingHostKey { key: key.clone() });
+                state.pending_host_keys.lock().await.insert(
+                    challenge_id,
+                    PendingHostKey {
+                        key: key.clone(),
+                        profile,
+                        auth,
+                        supplied_secret,
+                        preferences,
+                    },
+                );
                 Ok(ConnectResult::NeedsHostTrust {
                     challenge: HostKeyChallenge {
                         challenge_id,
@@ -238,10 +254,11 @@ async fn resume_profile_transfers(
 
 #[tauri::command]
 pub async fn trust_host_key(
+    app: AppHandle,
     state: State<'_, AppState>,
     challenge_id: Uuid,
     accept: bool,
-) -> Result<(), AppError> {
+) -> Result<Option<ConnectResult>, AppError> {
     let pending = state
         .pending_host_keys
         .lock()
@@ -249,14 +266,24 @@ pub async fn trust_host_key(
         .remove(&challenge_id)
         .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Host-key challenge expired"))?;
     if !accept {
-        return Ok(());
+        return Ok(None);
     }
     state.storage.trust_host_key(&StoredHostKey {
-        host: pending.key.host,
+        host: pending.key.host.clone(),
         port: pending.key.port,
-        algorithm: pending.key.algorithm,
-        fingerprint: pending.key.fingerprint_sha256,
-    })
+        algorithm: pending.key.algorithm.clone(),
+        fingerprint: pending.key.fingerprint_sha256.clone(),
+    })?;
+    connect_sftp_with_auth(
+        &app,
+        state.inner(),
+        pending.profile,
+        pending.auth,
+        pending.supplied_secret,
+        pending.preferences,
+    )
+    .await
+    .map(Some)
 }
 
 #[tauri::command]
