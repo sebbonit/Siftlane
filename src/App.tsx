@@ -1109,7 +1109,10 @@ function fileIcon(entry: FileEntry) {
 }
 
 function errorMessage(reason: unknown) {
-  if (typeof reason === "object" && reason && "message" in reason) return String(reason.message);
+  if (typeof reason === "object" && reason && "message" in reason) {
+    const detail = "detail" in reason && reason.detail ? `: ${String(reason.detail)}` : "";
+    return `${String(reason.message)}${detail}`;
+  }
   return String(reason);
 }
 

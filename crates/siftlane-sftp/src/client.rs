@@ -208,13 +208,12 @@ impl SftpClient {
         command: String,
         input: Option<Vec<u8>>,
     ) -> Result<CommandOutput, AppError> {
-        let mut channel = self
-            ._ssh
-            .lock()
-            .await
-            .channel_open_session()
-            .await
-            .map_err(|source| connection_failure(source.to_string()))?;
+        let mut channel = {
+            let ssh = self._ssh.lock().await;
+            ssh.channel_open_session()
+                .await
+                .map_err(|source| connection_failure(source.to_string()))?
+        };
         channel
             .exec(true, command)
             .await
@@ -233,7 +232,16 @@ impl SftpClient {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut status = None;
-        while let Some(message) = channel.wait().await {
+        loop {
+            let message = if status.is_some() {
+                match timeout(Duration::from_secs(1), channel.wait()).await {
+                    Ok(message) => message,
+                    Err(_) => break,
+                }
+            } else {
+                channel.wait().await
+            };
+            let Some(message) = message else { break };
             match message {
                 ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
                 ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
@@ -248,6 +256,7 @@ impl SftpClient {
                 ));
             }
         }
+        let _ = channel.close().await;
         Ok(CommandOutput {
             stdout,
             stderr,
