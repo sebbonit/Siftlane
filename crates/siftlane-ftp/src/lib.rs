@@ -353,7 +353,11 @@ fn parse_mlsx(value: &str, directory: &str) -> Option<FileEntry> {
         path: join_path(directory, name),
         name: name.to_string(),
         kind,
-        size,
+        size: if kind == EntryKind::Directory {
+            None
+        } else {
+            size
+        },
         modified_at,
         permissions: None,
         symlink_target: None,
@@ -475,7 +479,7 @@ mod tests {
         let entry = parse_mlsx("type=dir;size=4096;modify=20260721120000; releases", "/").unwrap();
         assert_eq!(entry.path, "/releases");
         assert_eq!(entry.kind, EntryKind::Directory);
-        assert_eq!(entry.size, Some(4096));
+        assert_eq!(entry.size, None);
     }
 
     #[test]
