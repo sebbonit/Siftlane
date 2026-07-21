@@ -68,9 +68,10 @@ jobs:
 
       # Write version config to a file so Windows shells cannot strip JSON quotes.
       - name: Write release version config
-        run: node -e "require('fs').writeFileSync('tauri.release.json', JSON.stringify({ version: process.env.SIFTLANE_VERSION }))"
         env:
           SIFTLANE_VERSION: ${{ inputs.version }}
+        run: |
+          node -e 'require("fs").writeFileSync("tauri.release.json", JSON.stringify({ version: process.env.SIFTLANE_VERSION }))'
 
       - name: Build and publish bundles
         uses: tauri-apps/tauri-action@v0
