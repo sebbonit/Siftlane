@@ -1,0 +1,25 @@
+---
+description: Run local CI gates (fmt, clippy, pnpm) before commit/push
+alwaysApply: true
+---
+
+# Pre-push CI gates
+
+Before committing or pushing, run the same checks as `.github/workflows/ci.yml`. Failed CI wastes GitHub compute. See root `AGENTS.md`.
+
+Rust changes (`src-tauri/`, `crates/`, Cargo files):
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Frontend changes (`src/`, etc.):
+
+```bash
+pnpm build
+pnpm test
+```
+
+`cargo check` alone is not sufficient. Fix fmt/clippy locally; do not weaken CI.

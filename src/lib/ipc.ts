@@ -303,6 +303,17 @@ export const api = {
   async listTransfers() {
     return desktop ? call<TransferJob[]>("list_transfers") : browserTransfers;
   },
+  async clearTransfers(filter: "active" | "completed" | "failed") {
+    if (desktop) return call<TransferJob[]>("clear_transfers", { filter });
+    const terminal =
+      filter === "active"
+        ? (state: TransferJob["state"]) => !["completed", "failed", "cancelled"].includes(state)
+        : filter === "completed"
+          ? (state: TransferJob["state"]) => state === "completed"
+          : (state: TransferJob["state"]) => ["failed", "cancelled"].includes(state);
+    browserTransfers = browserTransfers.filter((job) => !terminal(job.state));
+    return browserTransfers;
+  },
   async enqueueTransfer(draft: {
     profileId: UUID;
     direction: TransferDirection;

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use siftlane_core::{
     AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
     FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, TransferDirection,
-    TransferJob, TransferState,
+    TransferJob, TransferListFilter, TransferState,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
@@ -1105,6 +1105,35 @@ pub fn save_preferences(
 #[tauri::command]
 pub async fn list_transfers(state: State<'_, AppState>) -> Result<Vec<TransferJob>, AppError> {
     Ok(state.transfers.lock().await.list())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferFilter {
+    Active,
+    Completed,
+    Failed,
+}
+
+impl From<TransferFilter> for TransferListFilter {
+    fn from(value: TransferFilter) -> Self {
+        match value {
+            TransferFilter::Active => Self::Active,
+            TransferFilter::Completed => Self::Completed,
+            TransferFilter::Failed => Self::Failed,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn clear_transfers(
+    state: State<'_, AppState>,
+    filter: TransferFilter,
+) -> Result<Vec<TransferJob>, AppError> {
+    let mut queue = state.transfers.lock().await;
+    let removed = queue.clear_filter(filter.into());
+    state.storage.delete_transfers(&removed)?;
+    Ok(queue.list())
 }
 
 #[derive(Debug, Deserialize)]
