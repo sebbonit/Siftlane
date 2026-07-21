@@ -269,6 +269,31 @@ export const api = {
     if (desktop) return call<void>("delete_remote_entry_privileged", { sessionId, path, directory, sudoPassword });
     remoteDemo = remoteDemo.filter((entry) => entry.path !== path);
   },
+  async setLocalPermissions(path: string, permissions: number) {
+    if (desktop) return call<void>("set_local_permissions", { path, permissions });
+    localDemo = localDemo.map((entry) =>
+      entry.path === path ? { ...entry, permissions } : entry,
+    );
+  },
+  async setRemotePermissions(sessionId: UUID, path: string, permissions: number) {
+    if (desktop) return call<void>("set_remote_permissions", { sessionId, path, permissions });
+    remoteDemo = remoteDemo.map((entry) =>
+      entry.path === path ? { ...entry, permissions } : entry,
+    );
+  },
+  async getLocalDirectorySize(path: string) {
+    if (desktop) return call<number>("get_local_directory_size", { path });
+    return localDemo
+      .filter((entry) => entry.path.startsWith(`${path.replace(/[\\/]$/, "")}/`) && entry.kind === "file")
+      .reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+  },
+  async getRemoteDirectorySize(sessionId: UUID, path: string) {
+    if (desktop) return call<number>("get_remote_directory_size", { sessionId, path });
+    void sessionId;
+    return remoteDemo
+      .filter((entry) => entry.path.startsWith(`${path.replace(/[\\/]$/, "")}/`) && entry.kind === "file")
+      .reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+  },
   async confirmDelete(name: string, directory: boolean) {
     const message = `Delete ${directory ? "folder" : "file"} “${name}”? This cannot be undone.`;
     return desktop

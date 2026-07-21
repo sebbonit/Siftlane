@@ -974,6 +974,115 @@ pub async fn set_remote_permissions(
 }
 
 #[tauri::command]
+pub fn set_local_permissions(path: String, permissions: u32) -> Result<(), AppError> {
+    if permissions > 0o7777 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Invalid POSIX permissions",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::symlink_metadata(&path).map_err(local_io_error)?;
+        let mut mode = metadata.permissions();
+        mode.set_mode(permissions);
+        std::fs::set_permissions(&path, mode).map_err(|source| {
+            let code = match source.kind() {
+                std::io::ErrorKind::NotFound => ErrorCode::NotFound,
+                std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+                _ => ErrorCode::Io,
+            };
+            AppError::new(code, "Could not change local permissions").with_detail(source.to_string())
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, permissions);
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Local permission changes are only supported on Unix systems",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn get_local_directory_size(path: String) -> Result<u64, AppError> {
+    tokio::task::spawn_blocking(move || local_directory_content_size(Path::new(&path)))
+        .await
+        .map_err(|source| {
+            AppError::new(ErrorCode::Internal, "Directory size calculation failed")
+                .with_detail(source.to_string())
+        })
+}
+
+#[tauri::command]
+pub async fn get_remote_directory_size(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+) -> Result<u64, AppError> {
+    let client = session_client(&state, session_id).await?;
+    let root = normalize_remote_path(&path)?;
+    // Bound only by time so large trees stay accurate instead of returning a partial total.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        remote_directory_content_size(client.as_ref(), &root),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(AppError::new(
+            ErrorCode::TimedOut,
+            "Calculating this folder size took too long",
+        )),
+    }
+}
+
+fn local_directory_content_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for item in entries.flatten() {
+            let Ok(metadata) = std::fs::symlink_metadata(item.path()) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                stack.push(item.path());
+            } else if metadata.is_file() {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+    total
+}
+
+async fn remote_directory_content_size(
+    client: &dyn RemoteFilesystem,
+    path: &str,
+) -> Result<u64, AppError> {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_string()];
+    while let Some(current) = stack.pop() {
+        let entries = client.list_directory(&current).await?;
+        for entry in entries {
+            match entry.kind {
+                EntryKind::Directory => stack.push(entry.path),
+                EntryKind::File => total = total.saturating_add(entry.size.unwrap_or(0)),
+                _ => {}
+            }
+        }
+    }
+    Ok(total)
+}
+
+#[tauri::command]
 pub fn get_preferences(state: State<'_, AppState>) -> Result<Preferences, AppError> {
     state.storage.load_preferences()
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import prettier from "prettier/standalone";
 import * as babelPlugin from "prettier/plugins/babel";
 import * as cssPlugin from "prettier/plugins/postcss";
@@ -31,14 +31,10 @@ import {
   Eye,
   EyeOff,
   File,
-  FileCode2,
   FileEdit,
   FileKey2,
-  FilePlus2,
-  Folder,
   FolderClock,
   FolderHeart,
-  FolderPlus,
   KeyRound,
   LayoutPanelLeft,
   ListFilter,
@@ -59,7 +55,11 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { FileInfoDialog } from "./components/FileInfoDialog";
+import { FilePane, type PaneSide } from "./components/FilePane";
 import { api, desktop } from "./lib/ipc";
+import { capitalize, formatBytes } from "./lib/format";
+import { joinPath } from "./lib/paths";
 import { useAppStore } from "./store";
 import type {
   AppError,
@@ -75,9 +75,9 @@ import type {
 } from "./types";
 import appIcon from "../src-tauri/icons/128x128.png";
 
-type PaneSide = "local" | "remote";
 type EntryCreation = { side: PaneSide; directory: boolean; privileged: boolean };
 type SudoPrompt = { path: string; resolve: (password: string | null) => void };
+type InfoTarget = { entry: FileEntry; side: PaneSide };
 
 const editorTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
@@ -123,6 +123,8 @@ export default function App() {
   const [editorSaving, setEditorSaving] = useState(false);
   const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
+  const [infoTarget, setInfoTarget] = useState<InfoTarget | null>(null);
+  const [infoSaving, setInfoSaving] = useState(false);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
     remote: null,
@@ -241,11 +243,14 @@ export default function App() {
         side === "local"
           ? await api.listLocal(path)
           : await api.listRemote(activeTab.id, path);
+      const normalized = entries.map((entry) =>
+        entry.kind === "directory" ? { ...entry, size: null } : entry,
+      );
       if (side === "local") {
-        setLocalEntries(entries);
+        setLocalEntries(normalized);
         setSelectedLocal(null);
       } else {
-        setRemoteEntries(entries);
+        setRemoteEntries(normalized);
         setSelectedRemote(null);
       }
     } catch (reason) {
@@ -511,6 +516,7 @@ export default function App() {
                   onRemovePrivileged={(entry) => void removeSelected("local", true, entry)}
                   onOpenFile={(entry) => void openEditor(entry, "local")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
+                  onShowInfo={(entry) => setInfoTarget({ entry, side: "local" })}
                 />
               )}
               {activeTab.layout === "dual_pane" && (
@@ -544,6 +550,7 @@ export default function App() {
                 onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
                 onOpenFile={(entry) => void openEditor(entry, "remote")}
                 onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
+                onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
               />
             </section>
             <TransferPanel />
@@ -552,6 +559,51 @@ export default function App() {
           <Welcome profiles={profiles} onConnect={handleProfileClick} onNew={() => setConnectionDialog("new")} />
         )}
       </main>
+      {infoTarget && activeTab && (
+        <FileInfoDialog
+          entry={
+            (infoTarget.side === "local" ? localEntries : remoteEntries).find(
+              (entry) => entry.path === infoTarget.entry.path,
+            ) ?? infoTarget.entry
+          }
+          canEditPermissions={
+            infoTarget.side === "local"
+              ? infoTarget.entry.permissions != null
+              : activeProfile?.protocol === "sftp" && infoTarget.entry.permissions != null
+          }
+          saving={infoSaving}
+          onClose={() => setInfoTarget(null)}
+          onResolveDirectorySize={
+            infoTarget.entry.kind === "directory"
+              ? (path) =>
+                  infoTarget.side === "local"
+                    ? api.getLocalDirectorySize(path)
+                    : api.getRemoteDirectorySize(activeTab.id, path)
+              : undefined
+          }
+          onSavePermissions={async (permissions) => {
+            setInfoSaving(true);
+            try {
+              if (infoTarget.side === "local") {
+                await api.setLocalPermissions(infoTarget.entry.path, permissions);
+                await loadPane("local", activeTab.localPath);
+              } else {
+                await api.setRemotePermissions(activeTab.id, infoTarget.entry.path, permissions);
+                await loadPane("remote", activeTab.remotePath);
+              }
+              setInfoTarget({
+                ...infoTarget,
+                entry: { ...infoTarget.entry, permissions },
+              });
+            } catch (reason) {
+              setError(errorMessage(reason));
+              throw reason;
+            } finally {
+              setInfoSaving(false);
+            }
+          }}
+        />
+      )}
       {entryCreation && (
         <NewEntryDialog
           directory={entryCreation.directory}
@@ -735,81 +787,6 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
         <button className="disconnect-action" title="Disconnect this session" onClick={onDisconnect}><LogOut size={16} /><span>Disconnect</span></button>
       </div>
     </header>
-  );
-}
-
-function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onCreateFilePrivileged, onCreateDirectoryPrivileged, onRemove, onRemovePrivileged, onOpenFile, onOpenPrivileged }: {
-  title: string;
-  subtitle?: string;
-  side: PaneSide;
-  path: string;
-  entries: FileEntry[];
-  selected: FileEntry | null;
-  loading: boolean;
-  showHidden: boolean;
-  onSelect: (entry: FileEntry) => void;
-  onNavigate: (path: string) => void;
-  onRefresh: () => void;
-  onToggleHidden: () => void;
-  onCreateFile: () => void;
-  onCreateDirectory: () => void;
-  onCreateFilePrivileged: () => void;
-  onCreateDirectoryPrivileged: () => void;
-  onRemove: (entry: FileEntry) => void;
-  onRemovePrivileged: (entry: FileEntry) => void;
-  onOpenFile: (entry: FileEntry) => void;
-  onOpenPrivileged: (entry: FileEntry) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: FileEntry | null } | null>(null);
-  const visible = useMemo(() => entries.filter((entry) => (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(query.toLowerCase())), [entries, query, showHidden]);
-  function openContextMenu(event: ReactMouseEvent, entry: FileEntry | null) {
-    event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY, entry });
-  }
-  function closeContextMenu(action?: () => void) {
-    setContextMenu(null);
-    action?.();
-  }
-  return (
-    <section className="file-pane" aria-label={`${title} files`} onClick={() => setContextMenu(null)} onContextMenu={(event) => openContextMenu(event, null)}>
-      <div className="pane-title"><div><strong>{title}</strong>{subtitle && <span>{subtitle}</span>}</div><div className="pane-actions"><button title={showHidden ? "Hide hidden files" : "Show hidden files"} onClick={onToggleHidden}>{showHidden ? <EyeOff size={15} /> : <Eye size={15} />}</button><button title="Refresh" onClick={onRefresh}><RefreshCw className={loading ? "spin" : ""} size={15} /></button></div></div>
-      <div className="path-toolbar">
-        <button title="Parent folder" onClick={() => onNavigate(parentPath(path, side === "remote"))}><ArrowLeft size={15} /></button>
-        <div className="path-field"><Folder size={15} /><span>{path}</span></div>
-        <label className="filter-field"><Search size={14} /><input aria-label={`Filter ${title} files`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter" /></label>
-      </div>
-      <div className="file-table" role="table">
-        <div className="file-header" role="row"><span>Name</span><span>Size</span><span>Modified</span><span aria-label="Permissions">Mode</span></div>
-        <div className="file-rows">
-          {loading && entries.length === 0 ? <div className="pane-message"><LoaderCircle className="spin" size={20} /> Loading directory…</div> : visible.map((entry) => (
-            <button
-              key={entry.path}
-              className={`file-row ${selected?.path === entry.path ? "selected" : ""}`}
-              onClick={() => onSelect(entry)}
-              onDoubleClick={() => entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)}
-              onContextMenu={(event) => { event.stopPropagation(); onSelect(entry); openContextMenu(event, entry); }}
-              role="row"
-            >
-              <span className="file-name">{fileIcon(entry)}<span>{entry.name}</span>{entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}</span>
-              <span>{entry.kind === "directory" ? "—" : formatBytes(entry.size)}</span>
-              <span>{formatDate(entry.modified_at)}</span>
-              <span className="permissions">{formatPermissions(entry.permissions)}</span>
-            </button>
-          ))}
-          {!loading && visible.length === 0 && <div className="pane-message">No matching files</div>}
-        </div>
-      </div>
-      <footer className="pane-footer"><span>{visible.length} items</span><span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span></footer>
-      {contextMenu && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-        {contextMenu.entry?.kind === "file" && <><button onClick={() => closeContextMenu(() => onOpenFile(contextMenu.entry!))}><FileEdit size={14} />Edit file</button><button onClick={() => closeContextMenu(() => onOpenPrivileged(contextMenu.entry!))}><LockKeyhole size={14} />Edit with sudo</button><i /></>}
-        <button onClick={() => closeContextMenu(onCreateFile)}><FilePlus2 size={14} />New file</button>
-        <button onClick={() => closeContextMenu(onCreateFilePrivileged)}><LockKeyhole size={14} />New file with sudo</button>
-        <button onClick={() => closeContextMenu(onCreateDirectory)}><FolderPlus size={14} />New folder</button>
-        <button onClick={() => closeContextMenu(onCreateDirectoryPrivileged)}><LockKeyhole size={14} />New folder with sudo</button>
-        {contextMenu.entry && <><i /><button onClick={() => closeContextMenu(() => onRemove(contextMenu.entry!))}><Trash2 size={14} />Delete</button><button className="danger" onClick={() => closeContextMenu(() => onRemovePrivileged(contextMenu.entry!))}><LockKeyhole size={14} />Delete with sudo</button></>}
-      </div>}
-    </section>
   );
 }
 
@@ -1123,57 +1100,12 @@ function Welcome({ profiles, onConnect, onNew }: { profiles: ConnectionProfile[]
   return <section className="welcome"><img src={appIcon} alt="" /><h1>Move files without the noise.</h1><p>Connect with SFTP, FTP, or explicit FTPS. Profiles stay local and passwords can remain in your operating system’s keyring.</p><button className="primary" onClick={onNew}><Plus size={16} /> New connection</button>{profiles.length > 0 && <div className="welcome-recents"><span>Or reconnect</span>{profiles.slice(0, 3).map((profile) => <button key={profile.id} onClick={() => onConnect(profile)}><Server size={16} /><span><strong>{profile.label}</strong><small>{profile.host}</small></span><ChevronRight size={15} /></button>)}</div>}</section>;
 }
 
-function fileIcon(entry: FileEntry) {
-  if (entry.kind === "directory") return <Folder size={17} fill="currentColor" />;
-  if (/\.(tsx?|jsx?|html|css|json|rs)$/i.test(entry.name)) return <FileCode2 size={16} />;
-  return <File size={16} />;
-}
-
 function errorMessage(reason: unknown) {
   if (typeof reason === "object" && reason && "message" in reason) {
     const detail = "detail" in reason && reason.detail ? `: ${String(reason.detail)}` : "";
     return `${String(reason.message)}${detail}`;
   }
   return String(reason);
-}
-
-function joinPath(base: string, name: string, remote: boolean) {
-  const separator = remote ? "/" : base.includes("\\") ? "\\" : "/";
-  return `${base.replace(/[\\/]$/, "")}${separator}${name}`;
-}
-
-function parentPath(path: string, remote: boolean) {
-  const normalized = path.replace(/[\\/]+$/, "");
-  const separator = remote ? "/" : normalized.includes("\\") ? "\\" : "/";
-  const index = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-  if (index <= 0) return remote ? "/" : normalized.slice(0, Math.max(1, index + 1));
-  return normalized.slice(0, index) || separator;
-}
-
-function formatBytes(bytes: number | null) {
-  if (bytes == null) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = units[0];
-  for (let index = 1; value >= 1024 && index < units.length; index += 1) {
-    value /= 1024;
-    unit = units[index];
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
-}
-
-function formatPermissions(value: number | null) {
-  return value == null ? "—" : `0${value.toString(8).padStart(3, "0")}`;
-}
-
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function orderProfiles(profiles: ConnectionProfile[]) {
