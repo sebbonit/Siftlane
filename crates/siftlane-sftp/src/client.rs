@@ -522,7 +522,11 @@ impl RemoteFilesystem for SftpClient {
                 hidden: name.starts_with('.'),
                 name,
                 kind,
-                size: metadata.size,
+                size: if kind == EntryKind::Directory {
+                    None
+                } else {
+                    metadata.size
+                },
                 modified_at: metadata.modified().ok().map(DateTime::<Utc>::from),
                 permissions: metadata.permissions.map(|mode| mode & 0o7777),
                 symlink_target,
