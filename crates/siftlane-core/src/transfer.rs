@@ -137,10 +137,10 @@ impl TransferQueue {
             })
             .collect();
         for id in &ids {
-            if let Some(job) = self.jobs.get(id) {
-                if is_valid_transition(job.state, TransferState::Cancelled) {
-                    let _ = self.transition(*id, TransferState::Cancelled);
-                }
+            if let Some(job) = self.jobs.get(id)
+                && is_valid_transition(job.state, TransferState::Cancelled)
+            {
+                let _ = self.transition(*id, TransferState::Cancelled);
             }
             self.remove(*id);
         }

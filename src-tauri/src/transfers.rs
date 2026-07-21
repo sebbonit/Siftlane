@@ -345,7 +345,9 @@ async fn fail(
         || matches!(
             current,
             Some(
-                TransferState::Paused | TransferState::Cancelled | TransferState::WaitingForConflict
+                TransferState::Paused
+                    | TransferState::Cancelled
+                    | TransferState::WaitingForConflict
             )
         )
     {
