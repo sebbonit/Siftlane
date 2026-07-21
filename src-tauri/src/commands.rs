@@ -6,7 +6,9 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use secrecy::{ExposeSecret, SecretString};
+#[cfg(unix)]
+use secrecy::ExposeSecret;
+use secrecy::SecretString;
 use serde::Deserialize;
 use siftlane_core::{
     AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
@@ -16,6 +18,7 @@ use siftlane_core::{
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
 use tauri::{AppHandle, Manager, State};
+#[cfg(unix)]
 use tokio::{io::AsyncWriteExt, process::Command as TokioCommand};
 use uuid::Uuid;
 
@@ -1263,7 +1266,9 @@ fn local_permissions(_: &std::fs::Metadata) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorCode, local_sudo_error, normalize_remote_path};
+    use super::normalize_remote_path;
+    #[cfg(unix)]
+    use super::{ErrorCode, local_sudo_error};
 
     #[test]
     fn remote_paths_are_absolute_and_normalized() {
