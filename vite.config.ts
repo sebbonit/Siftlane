@@ -1,8 +1,9 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { resilientIndexHtml } from "./scripts/resilientIndexHtml";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), resilientIndexHtml()],
   clearScreen: false,
   server: {
     port: 1420,
