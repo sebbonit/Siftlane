@@ -33,7 +33,9 @@ describe("Siftlane shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
     await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
     await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     const addFavorite = await screen.findByRole("button", {
       name: "Add Demo server to favorites",
     });
@@ -53,6 +55,7 @@ describe("Siftlane shell", () => {
     await userEvent.click(within(favorites!).getByRole("button", { name: "Demo server" }));
     expect(await screen.findByText(/Secure · SFTP/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: /connect to demo server/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
     expect(document.querySelector(".session-tabs")).toHaveClass("empty");
