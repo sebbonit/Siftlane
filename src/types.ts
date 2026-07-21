@@ -1,6 +1,7 @@
 export type UUID = string;
 
 export type AuthRef =
+  | { kind: "anonymous" }
   | { kind: "password"; remember: boolean }
   | { kind: "private_key"; path: string; remember_passphrase: boolean }
   | { kind: "agent" };
@@ -8,7 +9,7 @@ export type AuthRef =
 export interface ConnectionProfile {
   id: UUID;
   label: string;
-  protocol: "sftp";
+  protocol: "sftp" | "ftp" | "ftps";
   host: string;
   port: number;
   username: string;
@@ -30,6 +31,14 @@ export interface FileEntry {
   permissions: number | null;
   symlink_target: string | null;
   hidden: boolean;
+}
+
+export interface EditableFile {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  size: number;
 }
 
 export interface HostKeyChallenge {
@@ -109,6 +118,7 @@ export interface SessionTab {
   profileId: UUID;
   label: string;
   host: string;
+  protocol: ConnectionProfile["protocol"];
   localPath: string;
   remotePath: string;
   layout: "dual_pane" | "remote_focused";

@@ -15,6 +15,7 @@ pub struct RemoteCapabilities {
 #[async_trait]
 pub trait RemoteFilesystem: Send + Sync {
     fn capabilities(&self) -> RemoteCapabilities;
+    async fn disconnect(&self) -> Result<(), AppError>;
     async fn list_directory(&self, path: &str) -> Result<Vec<FileEntry>, AppError>;
     async fn metadata(&self, path: &str) -> Result<Option<FileEntry>, AppError>;
     async fn create_directory(&self, path: &str) -> Result<(), AppError>;

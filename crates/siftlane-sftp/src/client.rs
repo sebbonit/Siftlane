@@ -350,6 +350,10 @@ impl RemoteFilesystem for SftpClient {
         }
     }
 
+    async fn disconnect(&self) -> Result<(), AppError> {
+        SftpClient::disconnect(self).await
+    }
+
     async fn list_directory(&self, path: &str) -> Result<Vec<FileEntry>, AppError> {
         let entries = self.sftp.read_dir(path).await.map_err(map_sftp_error)?;
         let mut result = Vec::new();

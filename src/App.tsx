@@ -1,4 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import prettier from "prettier/standalone";
+import * as babelPlugin from "prettier/plugins/babel";
+import * as cssPlugin from "prettier/plugins/postcss";
+import * as estreePlugin from "prettier/plugins/estree";
+import * as htmlPlugin from "prettier/plugins/html";
+import * as markdownPlugin from "prettier/plugins/markdown";
+import * as typescriptPlugin from "prettier/plugins/typescript";
+import { EditorState, type Extension } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { rust } from "@codemirror/lang-rust";
+import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
+import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowDownToLine,
@@ -13,6 +32,7 @@ import {
   EyeOff,
   File,
   FileCode2,
+  FileEdit,
   FileKey2,
   FilePlus2,
   Folder,
@@ -51,11 +71,33 @@ import type {
   SessionTab,
   TransferJob,
   UUID,
+  EditableFile,
 } from "./types";
 import appIcon from "../src-tauri/icons/128x128.png";
 
 type PaneSide = "local" | "remote";
 type EntryCreation = { side: PaneSide; directory: boolean };
+
+const editorTheme = EditorView.theme({
+  "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
+  ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: "12px", lineHeight: "1.65" },
+  ".cm-content": { padding: "14px 0 18px", caretColor: "var(--teal)" },
+  ".cm-line": { padding: "0 18px" },
+  ".cm-gutters": { color: "var(--faint)", backgroundColor: "var(--surface-soft)", borderRight: "1px solid var(--border)" },
+  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--teal-soft) 45%, transparent)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--teal-soft)", color: "var(--teal)" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--teal) 30%, transparent)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--teal)" },
+});
+
+const editorHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: "#087d7b" },
+  { tag: [tags.string, tags.special(tags.string)], color: "#b26a2d" },
+  { tag: [tags.number, tags.bool, tags.null], color: "#8d55a6" },
+  { tag: [tags.comment, tags.docComment], color: "#7c8782", fontStyle: "italic" },
+  { tag: [tags.tagName, tags.typeName, tags.className], color: "#156c98" },
+  { tag: [tags.propertyName, tags.attributeName], color: "#926225" },
+]);
 
 export default function App() {
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -74,6 +116,10 @@ export default function App() {
   const [loadingPane, setLoadingPane] = useState<PaneSide | null>(null);
   const [connectingId, setConnectingId] = useState<UUID | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editorFile, setEditorFile] = useState<EditableFile | null>(null);
+  const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorSaving, setEditorSaving] = useState(false);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
@@ -162,6 +208,7 @@ export default function App() {
         profileId: profile.id,
         label: profile.label,
         host: profile.host,
+        protocol: profile.protocol,
         localPath,
         remotePath: profile.initial_remote_path,
         layout: preferences?.default_layout ?? "dual_pane",
@@ -265,6 +312,30 @@ export default function App() {
     }
   }
 
+  async function openEditor(entry: FileEntry, side: PaneSide) {
+    if (!activeTab || entry.kind !== "file") return;
+    setError(null);
+    try {
+      const file = side === "remote" ? await api.readRemoteFile(activeTab.id, entry.path) : await api.readLocalFile(entry.path);
+      setEditorFile(file);
+      setEditorSide(side);
+      setEditorOpen(true);
+    } catch (reason) { setError(errorMessage(reason)); }
+  }
+
+  async function saveEditor(content: string) {
+    if (!activeTab || !editorFile) return;
+    setEditorSaving(true);
+    try {
+      if (editorSide === "remote") await api.saveRemoteFile(activeTab.id, editorFile.path, content);
+      else await api.saveLocalFile(editorFile.path, content);
+      setEditorFile({ ...editorFile, content, size: new TextEncoder().encode(content).length });
+      setEditorOpen(false);
+      await loadPane(editorSide ?? "remote", editorSide === "remote" ? activeTab.remotePath : activeTab.localPath);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setEditorSaving(false); }
+  }
+
   async function handleProfileClick(profile: ConnectionProfile) {
     const existing = tabs.find((tab) => tab.profileId === profile.id);
     if (existing) {
@@ -366,6 +437,7 @@ export default function App() {
                   onCreateFile={() => setEntryCreation({ side: "local", directory: false })}
                   onCreateDirectory={() => setEntryCreation({ side: "local", directory: true })}
                   onRemove={() => void removeSelected("local")}
+                  onOpenFile={(entry) => void openEditor(entry, "local")}
                 />
               )}
               {activeTab.layout === "dual_pane" && (
@@ -394,6 +466,7 @@ export default function App() {
                 onCreateFile={() => setEntryCreation({ side: "remote", directory: false })}
                 onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true })}
                 onRemove={() => void removeSelected("remote")}
+                onOpenFile={(entry) => void openEditor(entry, "remote")}
               />
             </section>
             <TransferPanel />
@@ -445,6 +518,7 @@ export default function App() {
           }}
         />
       )}
+      {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
     </div>
   );
 }
@@ -510,7 +584,7 @@ function ConnectionItem({ profile, active, connecting, compact = false, onOpen, 
   return <div className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}>
     <button className="connection-open" onClick={() => onOpen(profile)}>
       <span className="server-icon"><Server size={15} /></span>
-      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small>{profile.username}@{profile.host}</small>}</span>
+      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small><span className="protocol-badge">{profile.protocol.toUpperCase()}</span>{profile.username}@{profile.host}</small>}</span>
       {connecting && <LoaderCircle className="spin" size={14} />}
     </button>
     <button className="favorite-toggle" aria-label={profile.favorite ? `Remove ${profile.label} from favorites` : `Add ${profile.label} to favorites`} title={profile.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => onToggleFavorite(profile)}><Star size={14} fill={profile.favorite ? "currentColor" : "none"} /></button>
@@ -550,9 +624,10 @@ function SessionTabs({ tabs, visible, activeId, onSelect, onClose, onNew }: {
 }
 
 function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionTab; onToggleLayout: () => void; onDisconnect: () => void }) {
+  const encrypted = tab.protocol !== "ftp";
   return (
     <header className="connection-header">
-      <div className="secure-status"><span className="lock-circle"><LockKeyhole size={16} /></span><div><strong>{tab.host}</strong><small><i /> Connected securely</small></div></div>
+      <div className={`secure-status ${encrypted ? "" : "insecure"}`}><span className="lock-circle">{encrypted ? <LockKeyhole size={16} /> : <CircleAlert size={16} />}</span><div><strong>{tab.host}</strong><small><i />{encrypted ? <><span>Connected securely</span> <em>over {tab.protocol.toUpperCase()}</em></> : <span>Connected over unencrypted FTP</span>}</small></div></div>
       <div className="header-actions">
         <button className="search-trigger"><Search size={15} /><span>Search</span><kbd>⌘F</kbd></button>
         <button title="Toggle layout" onClick={onToggleLayout}><LayoutPanelLeft size={17} /></button>
@@ -563,7 +638,7 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
   );
 }
 
-function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onRemove }: {
+function FilePane({ title, subtitle, side, path, entries, selected, loading, showHidden, onSelect, onNavigate, onRefresh, onToggleHidden, onCreateFile, onCreateDirectory, onRemove, onOpenFile }: {
   title: string;
   subtitle?: string;
   side: PaneSide;
@@ -579,6 +654,7 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
   onCreateFile: () => void;
   onCreateDirectory: () => void;
   onRemove: () => void;
+  onOpenFile: (entry: FileEntry) => void;
 }) {
   const [query, setQuery] = useState("");
   const visible = useMemo(() => entries.filter((entry) => (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(query.toLowerCase())), [entries, query, showHidden]);
@@ -598,7 +674,7 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
               key={entry.path}
               className={`file-row ${selected?.path === entry.path ? "selected" : ""}`}
               onClick={() => onSelect(entry)}
-              onDoubleClick={() => entry.kind === "directory" && onNavigate(entry.path)}
+              onDoubleClick={() => entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)}
               role="row"
             >
               <span className="file-name">{fileIcon(entry)}<span>{entry.name}</span>{entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}</span>
@@ -613,6 +689,129 @@ function FilePane({ title, subtitle, side, path, entries, selected, loading, sho
       <footer className="pane-footer"><span>{visible.length} items</span><span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span></footer>
     </section>
   );
+}
+
+function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; saving: boolean; onClose: () => void; onSave: (content: string) => Promise<void> }) {
+  const [content, setContent] = useState(file.content);
+  const [discardPrompt, setDiscardPrompt] = useState(false);
+  const [formatting, setFormatting] = useState(false);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const editorView = useRef<EditorView | null>(null);
+  const dirty = content !== file.content;
+  function close() {
+    if (dirty) setDiscardPrompt(true);
+    else onClose();
+  }
+  const canFormat = ["HTML", "CSS", "JavaScript", "JSON", "Markdown", "Rust"].includes(file.language);
+  async function formatContent() {
+    setFormatting(true);
+    setFormatError(null);
+    try {
+      const formatted = file.language === "Rust" ? await api.formatRust(content) : await prettier.format(content, prettierOptions(file.language));
+      setContent(formatted);
+    } catch (reason) {
+      setFormatError(errorMessage(reason));
+    } finally { setFormatting(false); }
+  }
+  return <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={`Edit ${file.name}`}>
+    <section className="editor-dialog">
+      <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon"><FileEdit size={16} /></span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span><span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
+      <div className="editor-toolbar"><span>Text editor</span><div className="editor-toolbar-actions"><button className="editor-search-button" title="Find and replace (⌘F)" onClick={() => editorView.current && openSearchPanel(editorView.current)}><Search size={12} />Find</button>{canFormat && <button className="format-button" title="Format document (Shift+Alt+F)" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}</div></div>
+      {formatError && <div className="format-error"><CircleAlert size={14} /><span>{formatError}</span><button aria-label="Dismiss formatting error" onClick={() => setFormatError(null)}><X size={14} /></button></div>}
+      <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} onViewReady={(view) => { editorView.current = view; }} />
+      <footer className="editor-footer"><span>{content.split("\n").length} lines · {new TextEncoder().encode(content).length} bytes</span><div className="dialog-actions"><button className="secondary" onClick={close}>Cancel</button><button className="primary" disabled={!dirty || saving} onClick={() => void onSave(content)}>{saving ? <LoaderCircle className="spin" size={15} /> : <FileEdit size={15} />}Save file</button></div></footer>
+      {discardPrompt && <div className="discard-overlay"><section className="discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-title"><div className="discard-icon"><CircleAlert size={20} /></div><div><h2 id="discard-title">Discard unsaved changes?</h2><p>Your changes to <strong>{file.name}</strong> have not been saved.</p></div><div className="dialog-actions"><button className="secondary" onClick={() => setDiscardPrompt(false)}>Keep editing</button><button className="danger-button" onClick={onClose}>Discard changes</button></div></section></div>}
+    </section>
+  </div>;
+}
+
+function prettierOptions(language: string) {
+  const common = { tabWidth: 2, printWidth: 100, singleQuote: true } as const;
+  if (language === "HTML") return { ...common, parser: "html" as const, plugins: [htmlPlugin] };
+  if (language === "CSS") return { ...common, parser: "css" as const, plugins: [cssPlugin] };
+  if (language === "Markdown") return { ...common, parser: "markdown" as const, plugins: [markdownPlugin] };
+  if (language === "TypeScript") return { ...common, parser: "typescript" as const, plugins: [typescriptPlugin, estreePlugin] };
+  return { ...common, parser: "babel" as const, plugins: [babelPlugin, estreePlugin] };
+}
+
+function CodeEditor({ value, language, onChange, onFormat, onViewReady }: { value: string; language: string; onChange: (value: string) => void; onFormat?: () => Promise<void>; onViewReady: (view: EditorView | null) => void }) {
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  const changeHandler = useRef(onChange);
+  const formatHandler = useRef(onFormat);
+  const readyHandler = useRef(onViewReady);
+  changeHandler.current = onChange;
+  formatHandler.current = onFormat;
+  readyHandler.current = onViewReady;
+
+  useEffect(() => {
+    if (!host.current) return;
+    const editor = new EditorView({
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          history(),
+          foldGutter(),
+          drawSelection(),
+          dropCursor(),
+          indentOnInput(),
+          bracketMatching(),
+          highlightActiveLine(),
+          highlightSelectionMatches(),
+          syntaxHighlighting(editorHighlight),
+          getLanguageExtension(language),
+          editorTheme,
+          keymap.of([
+            ...defaultKeymap,
+            ...historyKeymap,
+            ...searchKeymap,
+            indentWithTab,
+            {
+              key: "Shift-Alt-f",
+              run: () => {
+                if (!formatHandler.current) return false;
+                void formatHandler.current();
+                return true;
+              },
+            },
+          ]),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) changeHandler.current(update.state.doc.toString());
+          }),
+        ],
+      }),
+      parent: host.current,
+    });
+    view.current = editor;
+    readyHandler.current(editor);
+    editor.focus();
+    return () => {
+      editor.destroy();
+      view.current = null;
+      readyHandler.current(null);
+    };
+  }, [language]);
+
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || editor.state.doc.toString() === value) return;
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
+  }, [value]);
+
+  return <div className="editor-code-wrap" ref={host} aria-label="File contents" />;
+}
+
+function getLanguageExtension(language: string): Extension {
+  if (language === "HTML") return html();
+  if (language === "CSS") return css();
+  if (language === "JavaScript") return javascript({ jsx: true });
+  if (language === "TypeScript") return javascript({ jsx: true, typescript: true });
+  if (language === "JSON") return json();
+  if (language === "Markdown") return markdown();
+  if (language === "Rust") return rust();
+  return [];
 }
 
 function TransferPanel() {
@@ -694,6 +893,7 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
   onSubmit: (profile: ConnectionProfile, credential: string) => Promise<void>;
 }) {
   const [label, setLabel] = useState(existing?.label ?? "");
+  const [protocol, setProtocol] = useState<ConnectionProfile["protocol"]>(existing?.protocol ?? "sftp");
   const [host, setHost] = useState(existing?.host ?? "");
   const [port, setPort] = useState(existing?.port ?? 22);
   const [username, setUsername] = useState(existing?.username ?? "");
@@ -714,17 +914,25 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
       setDialogError(errorMessage(reason));
     }
   }
+  const sshProtocol = protocol === "sftp";
+  const protocolLabel = protocol === "ftps" ? "FTPS (explicit TLS)" : protocol.toUpperCase();
+  function chooseProtocol(next: ConnectionProfile["protocol"]) {
+    setProtocol(next);
+    setPort(next === "sftp" ? 22 : 21);
+    if (next !== "sftp" && (authKind === "private_key" || authKind === "agent")) setAuthKind("password");
+    if (next === "sftp" && authKind === "anonymous") setAuthKind("password");
+  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setDialogError(null);
     const now = new Date().toISOString();
-    const auth: AuthRef = authKind === "password" ? { kind: "password", remember } : authKind === "private_key" ? { kind: "private_key", path: keyPath, remember_passphrase: remember } : { kind: "agent" };
+    const auth: AuthRef = authKind === "anonymous" ? { kind: "anonymous" } : authKind === "password" ? { kind: "password", remember } : authKind === "private_key" ? { kind: "private_key", path: keyPath, remember_passphrase: remember } : { kind: "agent" };
     try {
       await onSubmit({
         id: existing?.id ?? crypto.randomUUID(),
         label,
-        protocol: "sftp",
+        protocol,
         host,
         port,
         username,
@@ -740,12 +948,15 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
       setSaving(false);
     }
   }
-  return <Dialog title={existing ? `Connect to ${existing.label}` : "New connection"} subtitle="SFTP connection details" onClose={onClose}>
+  return <Dialog title={existing ? `Connect to ${existing.label}` : "New connection"} subtitle={`${protocolLabel} connection details`} onClose={onClose}>
     <form className="connection-form" onSubmit={submit}>
-      <div className="form-grid"><label className="wide">Display name<input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Production server" required /></label><label className="host">Host<input value={host} onChange={(e) => setHost(e.target.value)} placeholder="sftp.example.com" required /></label><label>Port<input type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} required /></label><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="deploy" required /></label><label>Initial path<input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/html" /></label></div>
-      <fieldset><legend>Authentication</legend><div className="segmented">{(["password", "private_key", "agent"] as const).map((kind) => <button type="button" key={kind} className={authKind === kind ? "active" : ""} onClick={() => setAuthKind(kind)}>{kind === "password" ? "Password" : kind === "private_key" ? "Private key" : "SSH agent"}</button>)}</div>
+      <fieldset><legend>Protocol</legend><div className="segmented protocol-options">{(["sftp", "ftp", "ftps"] as const).map((kind) => <button type="button" key={kind} className={protocol === kind ? "active" : ""} onClick={() => chooseProtocol(kind)}>{kind === "sftp" ? "SFTP" : kind === "ftp" ? "FTP" : "FTPS"}</button>)}</div></fieldset>
+      {protocol === "ftp" && <p className="protocol-warning"><CircleAlert size={14} />FTP does not encrypt your sign-in or file transfers. Use FTPS or SFTP whenever the server supports it.</p>}
+      <div className="form-grid"><label className="wide">Display name<input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Production server" required /></label><label className="host">Host<input value={host} onChange={(e) => setHost(e.target.value)} placeholder={sshProtocol ? "sftp.example.com" : "ftp.example.com"} required /></label><label>Port<input type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} required /></label><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={sshProtocol ? "deploy" : "ftp-user"} required /></label><label>Initial path<input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/html" /></label></div>
+      <fieldset><legend>Authentication</legend><div className={`segmented ${sshProtocol ? "" : "two-options"}`}>{(sshProtocol ? ["password", "private_key", "agent"] : ["password", "anonymous"]).map((kind) => <button type="button" key={kind} className={authKind === kind ? "active" : ""} onClick={() => setAuthKind(kind as AuthRef["kind"])}>{kind === "password" ? "Password" : kind === "private_key" ? "Private key" : kind === "agent" ? "SSH agent" : "Anonymous"}</button>)}</div>
         {authKind === "private_key" && <label>Private key file<span className="file-picker-field"><input value={keyPath} onChange={(e) => setKeyPath(e.target.value)} placeholder="Choose an SSH private key" required /><button type="button" className="secondary" onClick={() => void choosePrivateKey()}><FileKey2 size={15} /> Browse…</button></span></label>}
-        {authKind !== "agent" && <><label>{authKind === "password" ? "Password" : "Passphrase (if required)"}<span className="secret-field"><input type={showSecret ? "text" : "password"} value={credential} onChange={(e) => setCredential(e.target.value)} required={authKind === "password" && !existing} /><button type="button" aria-label={showSecret ? "Hide secret" : "Show secret"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="checkbox"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Store securely in the OS keyring</label></>}
+        {(authKind === "password" || authKind === "private_key") && <><label>{authKind === "password" ? "Password" : "Passphrase (if required)"}<span className="secret-field"><input type={showSecret ? "text" : "password"} value={credential} onChange={(e) => setCredential(e.target.value)} required={authKind === "password" && !existing} /><button type="button" aria-label={showSecret ? "Hide secret" : "Show secret"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="checkbox"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Store securely in the OS keyring</label></>}
+        {authKind === "anonymous" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will sign in with the standard anonymous FTP account. No password is stored.</span></div>}
         {authKind === "agent" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will try identities from your running SSH agent. Private keys never enter the app.</span></div>}
       </fieldset>
       {dialogError && <p className="dialog-error"><CircleAlert size={14} />{dialogError}</p>}
@@ -774,7 +985,7 @@ function Dialog({ title, subtitle, children, onClose, tone = "default" }: { titl
 }
 
 function Welcome({ profiles, onConnect, onNew }: { profiles: ConnectionProfile[]; onConnect: (profile: ConnectionProfile) => void; onNew: () => void }) {
-  return <section className="welcome"><img src={appIcon} alt="" /><h1>Move files without the noise.</h1><p>Connect securely over SFTP. Your profiles stay local and credentials stay in your operating system’s keyring.</p><button className="primary" onClick={onNew}><Plus size={16} /> New connection</button>{profiles.length > 0 && <div className="welcome-recents"><span>Or reconnect</span>{profiles.slice(0, 3).map((profile) => <button key={profile.id} onClick={() => onConnect(profile)}><Server size={16} /><span><strong>{profile.label}</strong><small>{profile.host}</small></span><ChevronRight size={15} /></button>)}</div>}</section>;
+  return <section className="welcome"><img src={appIcon} alt="" /><h1>Move files without the noise.</h1><p>Connect with SFTP, FTP, or explicit FTPS. Profiles stay local and passwords can remain in your operating system’s keyring.</p><button className="primary" onClick={onNew}><Plus size={16} /> New connection</button>{profiles.length > 0 && <div className="welcome-recents"><span>Or reconnect</span>{profiles.slice(0, 3).map((profile) => <button key={profile.id} onClick={() => onConnect(profile)}><Server size={16} /><span><strong>{profile.label}</strong><small>{profile.host}</small></span><ChevronRight size={15} /></button>)}</div>}</section>;
 }
 
 function fileIcon(entry: FileEntry) {

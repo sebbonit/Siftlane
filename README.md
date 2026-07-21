@@ -1,16 +1,17 @@
-# Siftlane — Secure SFTP Client for macOS, Windows, and Linux
+# Siftlane — File Transfer Client for macOS, Windows, and Linux
 
-Siftlane is a lightweight, open-source SFTP client for macOS, Windows, and Linux. Built with Rust, Tauri 2, TypeScript, and React, it provides a native desktop experience for secure SSH file transfers, saved connections, strict host-key verification, and resumable uploads and downloads.
+Siftlane is a lightweight, open-source file transfer client for macOS, Windows, and Linux. Built with Rust, Tauri 2, TypeScript, and React, it supports SFTP, FTP, and explicit FTPS connections with saved profiles and resumable uploads and downloads.
 
 The interface is designed around a quiet dual-pane workflow with no advertising or upgrade popups. Siftlane is currently in early alpha and is intended for development and evaluation while the cross-platform desktop SFTP experience matures.
 
 ![Siftlane dual-pane SFTP client](docs/images/siftlane-app.png)
 
-> **Project status:** early alpha. The SFTP vertical slice is implemented and usable for development. FTP/FTPS, recursive directory transfers, remote search, bookmarks, and signed release updates remain roadmap items.
+> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Recursive directory transfers, remote search, bookmarks, implicit FTPS, and signed release updates remain roadmap items.
 
 ## Features
 
 - SFTP password, private-key, and SSH-agent authentication through `russh`
+- FTP and explicit FTPS password or anonymous authentication
 - Unknown and changed host-key confirmation with SHA-256 fingerprints
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
@@ -28,7 +29,8 @@ Siftlane is a Cargo workspace with a Tauri desktop shell and a React frontend. P
 .
 ├── crates/
 │   ├── siftlane-core/       # Shared models, errors, filesystem traits, and transfer state machine
-│   └── siftlane-sftp/       # russh/russh-sftp implementation and SSH host-key verification
+│   ├── siftlane-sftp/       # russh/russh-sftp implementation and SSH host-key verification
+│   └── siftlane-ftp/        # FTP and explicit FTPS implementation
 ├── src/                     # React UI, Zustand store, typed IPC client, and browser demo
 │   ├── lib/
 │   └── test/
@@ -46,7 +48,7 @@ Siftlane is a Cargo workspace with a Tauri desktop shell and a React frontend. P
 Key boundaries:
 
 - `crates/siftlane-core` contains transport-neutral domain logic so future protocols can reuse the transfer queue.
-- `crates/siftlane-sftp` adapts the core filesystem interface to SFTP over SSH.
+- `crates/siftlane-sftp` and `crates/siftlane-ftp` adapt the core filesystem interface to their respective protocols.
 - `src-tauri` exposes native functionality through Tauri IPC and handles SQLite, OS keyring access, sessions, and transfer execution.
 - `src` renders the desktop UI and provides a browser-only demo adapter for fast frontend work.
 

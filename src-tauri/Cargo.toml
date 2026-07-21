@@ -21,6 +21,7 @@ secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 siftlane-core = { path = "../crates/siftlane-core" }
+siftlane-ftp = { path = "../crates/siftlane-ftp" }
 siftlane-sftp = { path = "../crates/siftlane-sftp" }
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-dialog = "2.7.2"

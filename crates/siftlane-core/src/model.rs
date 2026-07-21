@@ -11,11 +11,14 @@ pub type TransferId = Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     Sftp,
+    Ftp,
+    Ftps,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuthRef {
+    Anonymous,
     Password {
         remember: bool,
     },
@@ -56,6 +59,15 @@ impl ConnectionProfile {
             favorite: false,
             created_at: now,
             updated_at: now,
+        }
+    }
+}
+
+impl Protocol {
+    pub const fn default_port(self) -> u16 {
+        match self {
+            Self::Sftp => 22,
+            Self::Ftp | Self::Ftps => 21,
         }
     }
 }
