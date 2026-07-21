@@ -6,7 +6,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use siftlane_core::{
     AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
@@ -16,6 +16,7 @@ use siftlane_core::{
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
 use tauri::{AppHandle, Manager, State};
+use tokio::{io::AsyncWriteExt, process::Command as TokioCommand};
 use uuid::Uuid;
 
 use crate::{
@@ -344,6 +345,7 @@ pub struct EditableFile {
     pub content: String,
     pub language: String,
     pub size: usize,
+    pub privileged: bool,
 }
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -363,6 +365,233 @@ pub fn save_local_file(path: String, content: String) -> Result<(), AppError> {
         ));
     }
     std::fs::write(path, content).map_err(local_io_error)
+}
+
+#[tauri::command]
+pub async fn read_local_file_privileged(
+    path: String,
+    sudo_password: Option<String>,
+) -> Result<EditableFile, AppError> {
+    #[cfg(unix)]
+    {
+        let password = sudo_password.map(SecretString::from);
+        let output = match run_local_sudo(&["cat", &path], None, &[]).await {
+            Ok(output) => output,
+            Err(error) => {
+                let Some(password) = password.as_ref() else {
+                    return Err(error);
+                };
+                run_local_sudo(&["cat", &path], Some(password), &[]).await?
+            }
+        };
+        if output.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "Files larger than 4 MB cannot be edited in Siftlane",
+            ));
+        }
+        let mut file = editable_file(path, output)?;
+        file.privileged = true;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, sudo_password);
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Local sudo editing is supported on macOS and Linux only",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn save_local_file_privileged(
+    path: String,
+    content: String,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        let password = sudo_password.map(SecretString::from);
+        let probe = run_local_sudo(&["true"], None, &[]).await;
+        if probe.is_ok() {
+            run_local_sudo(&["tee", &path], None, content.as_bytes()).await?;
+            return Ok(());
+        }
+        let Some(password) = password.as_ref() else {
+            return Err(probe.expect_err("sudo probe must contain an error"));
+        };
+        run_local_sudo(&["tee", &path], Some(password), content.as_bytes())
+            .await
+            .map(|_| ())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, content, sudo_password);
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Local sudo editing is supported on macOS and Linux only",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn create_local_entry_privileged(
+    parent_path: String,
+    name: String,
+    directory: bool,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    validate_entry_name(&name)?;
+    let path = Path::new(&parent_path)
+        .join(name)
+        .to_string_lossy()
+        .to_string();
+    #[cfg(unix)]
+    {
+        let args = if directory {
+            vec!["mkdir".to_string(), path.clone()]
+        } else {
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "set -C; : > \"$1\"".to_string(),
+                "siftlane".to_string(),
+                path.clone(),
+            ]
+        };
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let password = sudo_password.map(SecretString::from);
+        run_local_sudo(&refs, password.as_ref(), &[])
+            .await
+            .map(|_| ())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, directory, sudo_password);
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Local sudo editing is supported on macOS and Linux only",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn delete_local_entry_privileged(
+    path: String,
+    directory: bool,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        let command = if directory { "rmdir" } else { "rm" };
+        let password = sudo_password.map(SecretString::from);
+        run_local_sudo(&[command, &path], password.as_ref(), &[])
+            .await
+            .map(|_| ())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, directory, sudo_password);
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Local sudo editing is supported on macOS and Linux only",
+        ))
+    }
+}
+
+#[cfg(unix)]
+async fn run_local_sudo(
+    args: &[&str],
+    password: Option<&SecretString>,
+    content: &[u8],
+) -> Result<Vec<u8>, AppError> {
+    let mut command = TokioCommand::new("sudo");
+    command
+        .args(["-n", "--"])
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = if let Some(password) = password {
+        let _ = TokioCommand::new("sudo")
+            .args(["-k"])
+            .status()
+            .await
+            .map_err(local_sudo_spawn_error)?;
+        let mut command = TokioCommand::new("sudo");
+        command
+            .args(["-S", "-p", "", "--"])
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().map_err(local_sudo_spawn_error)?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(password.expose_secret().as_bytes())
+                .await
+                .map_err(|error| {
+                    AppError::new(ErrorCode::Io, "Could not send the sudo password")
+                        .with_detail(error.to_string())
+                })?;
+            stdin.write_all(b"\n").await.map_err(|error| {
+                AppError::new(ErrorCode::Io, "Could not send the sudo password")
+                    .with_detail(error.to_string())
+            })?;
+            stdin.write_all(content).await.map_err(|error| {
+                AppError::new(ErrorCode::Io, "Could not send the file to sudo")
+                    .with_detail(error.to_string())
+            })?;
+        }
+        child
+            .wait_with_output()
+            .await
+            .map_err(local_sudo_spawn_error)?
+    } else {
+        command.output().await.map_err(local_sudo_spawn_error)?
+    };
+    if !output.status.success() {
+        return Err(local_sudo_error(&output.stderr));
+    }
+    if output.stdout.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        ));
+    }
+    Ok(output.stdout)
+}
+
+#[cfg(unix)]
+fn local_sudo_spawn_error(error: std::io::Error) -> AppError {
+    AppError::new(
+        ErrorCode::Unsupported,
+        "The local sudo command could not be started",
+    )
+    .with_detail(error.to_string())
+}
+
+#[cfg(unix)]
+fn local_sudo_error(stderr: &[u8]) -> AppError {
+    let detail = String::from_utf8_lossy(stderr).trim().to_string();
+    let lower = detail.to_ascii_lowercase();
+    let code = if lower.contains("password") || lower.contains("authentication") {
+        ErrorCode::AuthenticationFailed
+    } else if lower.contains("file exists") || lower.contains("already exists") {
+        ErrorCode::AlreadyExists
+    } else if lower.contains("no such file") {
+        ErrorCode::NotFound
+    } else {
+        ErrorCode::PermissionDenied
+    };
+    AppError::new(code, "The local sudo operation failed").with_detail(detail)
 }
 
 #[tauri::command]
@@ -439,6 +668,30 @@ pub async fn read_remote_file(
 }
 
 #[tauri::command]
+pub async fn read_remote_file_privileged(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+    sudo_password: Option<String>,
+) -> Result<EditableFile, AppError> {
+    let path = normalize_remote_path(&path)?;
+    let password = sudo_password.map(SecretString::from);
+    let bytes = session_client(&state, session_id)
+        .await?
+        .read_privileged(&path, password.as_ref())
+        .await?;
+    if bytes.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        ));
+    }
+    let mut file = editable_file(path, bytes)?;
+    file.privileged = true;
+    Ok(file)
+}
+
+#[tauri::command]
 pub async fn save_remote_file(
     state: State<'_, AppState>,
     session_id: Uuid,
@@ -489,6 +742,28 @@ pub async fn save_remote_file(
     client.remove_file(&backup).await
 }
 
+#[tauri::command]
+pub async fn save_remote_file_privileged(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+    content: String,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        ));
+    }
+    let path = normalize_remote_path(&path)?;
+    let password = sudo_password.map(SecretString::from);
+    session_client(&state, session_id)
+        .await?
+        .write_privileged(&path, content.as_bytes(), password.as_ref())
+        .await
+}
+
 fn editable_file(path: String, bytes: Vec<u8>) -> Result<EditableFile, AppError> {
     let name = Path::new(&path)
         .file_name()
@@ -508,6 +783,7 @@ fn editable_file(path: String, bytes: Vec<u8>) -> Result<EditableFile, AppError>
         name,
         content,
         size,
+        privileged: false,
     })
 }
 
@@ -585,6 +861,25 @@ pub async fn create_remote_entry(
 }
 
 #[tauri::command]
+pub async fn create_remote_entry_privileged(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    parent_path: String,
+    name: String,
+    directory: bool,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    validate_entry_name(&name)?;
+    let parent = normalize_remote_path(&parent_path)?;
+    let path = normalize_remote_path(&format!("{}/{}", parent.trim_end_matches('/'), name))?;
+    let password = sudo_password.map(SecretString::from);
+    session_client(&state, session_id)
+        .await?
+        .create_privileged(&path, directory, password.as_ref())
+        .await
+}
+
+#[tauri::command]
 pub async fn rename_remote_entry(
     state: State<'_, AppState>,
     session_id: Uuid,
@@ -611,6 +906,22 @@ pub async fn delete_remote_entry(
     } else {
         client.remove_file(&path).await
     }
+}
+
+#[tauri::command]
+pub async fn delete_remote_entry_privileged(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+    directory: bool,
+    sudo_password: Option<String>,
+) -> Result<(), AppError> {
+    let path = normalize_remote_path(&path)?;
+    let password = sudo_password.map(SecretString::from);
+    session_client(&state, session_id)
+        .await?
+        .delete_privileged(&path, directory, password.as_ref())
+        .await
 }
 
 #[tauri::command]
@@ -952,7 +1263,7 @@ fn local_permissions(_: &std::fs::Metadata) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_remote_path;
+    use super::{ErrorCode, local_sudo_error, normalize_remote_path};
 
     #[test]
     fn remote_paths_are_absolute_and_normalized() {
@@ -961,5 +1272,18 @@ mod tests {
             "/var/html"
         );
         assert_eq!(normalize_remote_path("").unwrap(), "/");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sudo_errors_distinguish_authentication_and_authorization() {
+        assert_eq!(
+            local_sudo_error(b"sudo: a password is required").code,
+            ErrorCode::AuthenticationFailed
+        );
+        assert_eq!(
+            local_sudo_error(b"user is not allowed to run sudo").code,
+            ErrorCode::PermissionDenied
+        );
     }
 }

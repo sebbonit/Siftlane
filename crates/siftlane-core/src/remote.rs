@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use secrecy::SecretString;
+
 use crate::{AppError, FileEntry};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,4 +28,27 @@ pub trait RemoteFilesystem: Send + Sync {
     async fn read_chunk(&self, path: &str, offset: u64, length: u32) -> Result<Vec<u8>, AppError>;
     async fn write_chunk(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), AppError>;
     async fn sync_file(&self, path: &str) -> Result<(), AppError>;
+    async fn read_privileged(
+        &self,
+        path: &str,
+        password: Option<&SecretString>,
+    ) -> Result<Vec<u8>, AppError>;
+    async fn write_privileged(
+        &self,
+        path: &str,
+        content: &[u8],
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError>;
+    async fn create_privileged(
+        &self,
+        path: &str,
+        directory: bool,
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError>;
+    async fn delete_privileged(
+        &self,
+        path: &str,
+        directory: bool,
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError>;
 }

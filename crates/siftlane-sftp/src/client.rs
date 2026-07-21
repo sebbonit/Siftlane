@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use russh::{
+    ChannelMsg,
     client::{self, AuthResult, Handle},
     keys::{
         PrivateKeyWithHashAlg,
@@ -115,6 +116,14 @@ pub struct SftpClient {
     _ssh: Mutex<Handle<ClientHandler>>,
 }
 
+const MAX_PRIVILEGED_OUTPUT_BYTES: usize = 4 * 1024 * 1024 + 1;
+
+struct CommandOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    status: Option<u32>,
+}
+
 impl SftpClient {
     pub async fn connect(
         options: SftpConnectOptions,
@@ -193,6 +202,133 @@ impl SftpClient {
             .await
             .map_err(|source| connection_failure(source.to_string()))
     }
+
+    async fn execute_command(
+        &self,
+        command: String,
+        input: Option<Vec<u8>>,
+    ) -> Result<CommandOutput, AppError> {
+        let mut channel = self
+            ._ssh
+            .lock()
+            .await
+            .channel_open_session()
+            .await
+            .map_err(|source| connection_failure(source.to_string()))?;
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|source| connection_failure(source.to_string()))?;
+        if let Some(input) = input {
+            channel
+                .data_bytes(input)
+                .await
+                .map_err(|source| connection_failure(source.to_string()))?;
+        }
+        channel
+            .eof()
+            .await
+            .map_err(|source| connection_failure(source.to_string()))?;
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut status = None;
+        while let Some(message) = channel.wait().await {
+            match message {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                _ => {}
+            }
+            if stdout.len() + stderr.len() > MAX_PRIVILEGED_OUTPUT_BYTES {
+                let _ = channel.close().await;
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "Privileged files larger than 4 MB cannot be edited in Siftlane",
+                ));
+            }
+        }
+        Ok(CommandOutput {
+            stdout,
+            stderr,
+            status,
+        })
+    }
+
+    async fn execute_with_sudo(
+        &self,
+        no_password_command: String,
+        password_command: String,
+        password: Option<&SecretString>,
+        content: &[u8],
+    ) -> Result<CommandOutput, AppError> {
+        let probe = self.execute_command(privileged_probe(false), None).await?;
+        if probe.status == Some(0) {
+            return self
+                .execute_command(no_password_command, Some(content.to_vec()))
+                .await;
+        }
+        let Some(password) = password else {
+            return Err(privileged_error(&probe));
+        };
+        let mut input = password.expose_secret().as_bytes().to_vec();
+        input.push(b'\n');
+        input.extend_from_slice(content);
+        self.execute_command(password_command, Some(input)).await
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn privileged_command(program: &str, path: &str, password: bool) -> String {
+    let sudo = if password {
+        "sudo -k && sudo -S -p ''"
+    } else {
+        "sudo -n"
+    };
+    format!(
+        "{sudo} -- sh -c 'exec {} \"$1\"' sh {}",
+        program,
+        shell_quote(path)
+    )
+}
+
+fn privileged_probe(password: bool) -> String {
+    if password {
+        "sudo -k && sudo -S -p '' -- true".to_string()
+    } else {
+        "sudo -n -- true".to_string()
+    }
+}
+
+fn privileged_shell_command(script: &str, path: &str, password: bool) -> String {
+    let sudo = if password {
+        "sudo -k && sudo -S -p ''"
+    } else {
+        "sudo -n"
+    };
+    format!(
+        "{sudo} -- sh -c {} sh {}",
+        shell_quote(script),
+        shell_quote(path)
+    )
+}
+
+fn privileged_error(output: &CommandOutput) -> AppError {
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let lower = detail.to_ascii_lowercase();
+    let code = if lower.contains("password") || lower.contains("authentication") {
+        ErrorCode::AuthenticationFailed
+    } else if lower.contains("not allowed") || lower.contains("not permitted") {
+        ErrorCode::PermissionDenied
+    } else if lower.contains("not found") || lower.contains("no such file") {
+        ErrorCode::NotFound
+    } else {
+        ErrorCode::PermissionDenied
+    };
+    AppError::new(code, "The remote sudo operation failed").with_detail(detail)
 }
 
 fn connect_error(
@@ -492,6 +628,132 @@ impl RemoteFilesystem for SftpClient {
         file.sync_all().await.map_err(map_sftp_error)?;
         file.shutdown().await.map_err(map_io_error)
     }
+
+    async fn read_privileged(
+        &self,
+        path: &str,
+        password: Option<&SecretString>,
+    ) -> Result<Vec<u8>, AppError> {
+        let probe = self
+            .execute_command(privileged_command("cat", path, false), None)
+            .await?;
+        let output = if probe.status == Some(0) {
+            probe
+        } else {
+            let Some(password) = password else {
+                return Err(privileged_error(&probe));
+            };
+            let mut input = password.expose_secret().as_bytes().to_vec();
+            input.push(b'\n');
+            let fallback = self
+                .execute_command(privileged_command("cat", path, true), Some(input))
+                .await?;
+            if fallback.status != Some(0) {
+                return Err(privileged_error(&fallback));
+            }
+            fallback
+        };
+        Ok(output.stdout)
+    }
+
+    async fn write_privileged(
+        &self,
+        path: &str,
+        content: &[u8],
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        let probe = self.execute_command(privileged_probe(false), None).await?;
+        if probe.status == Some(0) {
+            let output = self
+                .execute_command(
+                    privileged_command("tee >/dev/null", path, false),
+                    Some(content.to_vec()),
+                )
+                .await?;
+            if output.status != Some(0) {
+                return Err(privileged_error(&output));
+            }
+            return Ok(());
+        }
+        let Some(password) = password else {
+            return Err(privileged_error(&probe));
+        };
+        let mut input = password.expose_secret().as_bytes().to_vec();
+        input.push(b'\n');
+        input.extend_from_slice(content);
+        let fallback = self
+            .execute_command(
+                privileged_command("tee >/dev/null", path, true),
+                Some(input),
+            )
+            .await?;
+        if fallback.status != Some(0) {
+            return Err(privileged_error(&fallback));
+        }
+        Ok(())
+    }
+
+    async fn create_privileged(
+        &self,
+        path: &str,
+        directory: bool,
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        let operation = if directory {
+            "if [ -e \"$1\" ]; then exit 17; fi; mkdir \"$1\""
+        } else {
+            "if [ -e \"$1\" ]; then exit 17; fi; set -C; : > \"$1\""
+        };
+        let output = self
+            .execute_with_sudo(
+                privileged_shell_command(operation, path, false),
+                privileged_shell_command(operation, path, true),
+                password,
+                &[],
+            )
+            .await?;
+        if output.status == Some(17) {
+            return Err(AppError::new(
+                ErrorCode::AlreadyExists,
+                "An entry with that name already exists",
+            ));
+        }
+        if output.status != Some(0) {
+            return Err(privileged_error(&output));
+        }
+        Ok(())
+    }
+
+    async fn delete_privileged(
+        &self,
+        path: &str,
+        directory: bool,
+        password: Option<&SecretString>,
+    ) -> Result<(), AppError> {
+        let operation = if directory {
+            "if [ ! -e \"$1\" ]; then exit 18; fi; rmdir \"$1\""
+        } else {
+            "if [ ! -e \"$1\" ]; then exit 18; fi; rm \"$1\""
+        };
+        let output = self
+            .execute_with_sudo(
+                privileged_shell_command(operation, path, false),
+                privileged_shell_command(operation, path, true),
+                password,
+                &[],
+            )
+            .await?;
+        if output.status == Some(18) {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "The entry no longer exists",
+            ));
+        }
+        if output.status != Some(0) {
+            return Err(privileged_error(&output));
+        }
+        Ok(())
+    }
 }
 
 fn authentication_failure(message: impl Into<String>) -> AppError {
@@ -529,4 +791,38 @@ fn empty_attributes_with_permissions(permissions: u32) -> FileAttributes {
     let mut attributes = FileAttributes::empty();
     attributes.permissions = Some(permissions);
     attributes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{privileged_command, privileged_shell_command, shell_quote};
+
+    #[test]
+    fn shell_quote_keeps_remote_paths_in_one_argument() {
+        assert_eq!(shell_quote("/etc/it's.conf"), "'/etc/it'\\''s.conf'");
+    }
+
+    #[test]
+    fn privileged_commands_use_fixed_programs_and_quoted_paths() {
+        let command = privileged_command("cat", "/etc/app config", false);
+        assert!(command.starts_with("sudo -n -- sh -c 'exec cat"));
+        assert!(command.ends_with(" '/etc/app config'"));
+    }
+
+    #[test]
+    fn privileged_create_and_delete_scripts_are_directory_aware() {
+        let create = privileged_shell_command(
+            "if [ -e \"$1\" ]; then exit 17; fi; mkdir \"$1\"",
+            "/opt/app dir",
+            false,
+        );
+        let delete = privileged_shell_command(
+            "if [ ! -e \"$1\" ]; then exit 18; fi; rmdir \"$1\"",
+            "/opt/app dir",
+            false,
+        );
+        assert!(create.contains("exit 17"));
+        assert!(delete.contains("rmdir"));
+        assert!(create.ends_with(" '/opt/app dir'"));
+    }
 }

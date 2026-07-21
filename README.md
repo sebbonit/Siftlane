@@ -17,6 +17,7 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Local/remote dual-pane browser with remote-focused mode
 - Upload/download queue with progress, pause, cancel, retry, conflict prompts, partial files, and restart recovery
 - Remote create, rename, delete, and POSIX permission operations
+- Explicit sudo editing for protected local Unix files and SFTP files
 - Persistent preferences, window state, transfer history, and recent connections
 - Native macOS, Windows, and Linux packaging configuration
 - Browser demo mode for fast UI work without a running Tauri backend
@@ -86,6 +87,8 @@ cargo test --workspace
 - `src`: React UI, Zustand state, typed IPC boundary, and browser demo adapter
 
 SQLite never stores credentials. Keyring entries use the service name `app.siftlane.desktop`, keyed by connection UUID. Uploads and downloads first write uniquely named partial files and use a backup/rename commit sequence to reduce the chance of replacing a destination with incomplete data.
+
+Protected-file operations use the existing SSH identity (including private keys and SSH agents) for connection authentication, then check the remote account's sudo policy separately. Siftlane probes `sudo -n` for `NOPASSWD` access and otherwise prompts for the account's sudo password for the immediate read, write, create, or delete operation; it never stores or logs that password. A terminal that does not prompt may be using a cached sudo timestamp, which is not shared with Siftlane's non-interactive SSH channel. Server administrators must configure an appropriate `NOPASSWD` policy when passwordless file operations are required.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/architecture.md](docs/architecture.md) for more detail.
 
