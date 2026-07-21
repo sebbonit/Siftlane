@@ -1,12 +1,14 @@
-# Siftlane
+# Siftlane — Secure SFTP Client for macOS, Windows, and Linux
 
-Siftlane is a lightweight, native SFTP desktop client built with Rust, Tauri 2, TypeScript, and React. It is designed around a quiet dual-pane workflow: saved connections, strict SSH host-key verification, resumable file transfers, and no advertising or upgrade popups.
+Siftlane is a lightweight, open-source SFTP client for macOS, Windows, and Linux. Built with Rust, Tauri 2, TypeScript, and React, it provides a native desktop experience for secure SSH file transfers, saved connections, strict host-key verification, and resumable uploads and downloads.
+
+The interface is designed around a quiet dual-pane workflow with no advertising or upgrade popups. Siftlane is currently in early alpha and is intended for development and evaluation while the cross-platform desktop SFTP experience matures.
 
 ![Siftlane dual-pane SFTP client](docs/images/siftlane-app.png)
 
 > **Project status:** early alpha. The SFTP vertical slice is implemented and usable for development. FTP/FTPS, recursive directory transfers, remote search, bookmarks, and signed release updates remain roadmap items.
 
-## What works
+## Features
 
 - SFTP password, private-key, and SSH-agent authentication through `russh`
 - Unknown and changed host-key confirmation with SHA-256 fingerprints
@@ -17,6 +19,36 @@ Siftlane is a lightweight, native SFTP desktop client built with Rust, Tauri 2, 
 - Persistent preferences, window state, transfer history, and recent connections
 - Native macOS, Windows, and Linux packaging configuration
 - Browser demo mode for fast UI work without a running Tauri backend
+
+## Project structure
+
+Siftlane is a Cargo workspace with a Tauri desktop shell and a React frontend. Protocol-independent transfer logic lives in reusable Rust crates, while native persistence and IPC commands stay in the Tauri application layer.
+
+```text
+.
+├── crates/
+│   ├── siftlane-core/       # Shared models, errors, filesystem traits, and transfer state machine
+│   └── siftlane-sftp/       # russh/russh-sftp implementation and SSH host-key verification
+├── src/                     # React UI, Zustand store, typed IPC client, and browser demo
+│   ├── lib/
+│   └── test/
+├── src-tauri/               # Tauri commands, SQLite storage, keyring, sessions, and transfers
+│   ├── capabilities/
+│   └── src/
+├── docs/                    # Architecture, threat model, and screenshots
+├── index.html               # Vite entry document
+├── package.json             # Frontend and desktop development scripts
+├── Cargo.toml               # Rust workspace and shared dependency versions
+├── vite.config.ts           # Vite configuration
+└── tsconfig*.json           # TypeScript project configuration
+```
+
+Key boundaries:
+
+- `crates/siftlane-core` contains transport-neutral domain logic so future protocols can reuse the transfer queue.
+- `crates/siftlane-sftp` adapts the core filesystem interface to SFTP over SSH.
+- `src-tauri` exposes native functionality through Tauri IPC and handles SQLite, OS keyring access, sessions, and transfer execution.
+- `src` renders the desktop UI and provides a browser-only demo adapter for fast frontend work.
 
 ## Development
 
@@ -44,7 +76,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-## Architecture
+## Security and architecture
 
 - `crates/siftlane-core`: protocol-neutral models, errors, filesystem trait, and transfer state machine
 - `crates/siftlane-sftp`: `russh`/`russh-sftp` adapter and strict host-key verification
