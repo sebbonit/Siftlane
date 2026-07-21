@@ -66,6 +66,12 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
+      # Write version config to a file so Windows shells cannot strip JSON quotes.
+      - name: Write release version config
+        run: node -e "require('fs').writeFileSync('tauri.release.json', JSON.stringify({ version: process.env.SIFTLANE_VERSION }))"
+        env:
+          SIFTLANE_VERSION: ${{ inputs.version }}
+
       - name: Build and publish bundles
         uses: tauri-apps/tauri-action@v0
         env:
@@ -76,4 +82,4 @@ jobs:
           releaseBody: Siftlane v${{ inputs.version }}
           releaseDraft: false
           prerelease: ${{ inputs.prerelease }}
-          args: --config '{"version":"${{ inputs.version }}"}'
+          args: --config tauri.release.json
