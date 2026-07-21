@@ -341,10 +341,14 @@ async fn fail(
 ) -> Result<(), AppError> {
     let mut queue = state.transfers.lock().await;
     let current = queue.get(id).map(|job| job.state);
-    if matches!(
-        current,
-        Some(TransferState::Paused | TransferState::Cancelled | TransferState::WaitingForConflict)
-    ) {
+    if current.is_none()
+        || matches!(
+            current,
+            Some(
+                TransferState::Paused | TransferState::Cancelled | TransferState::WaitingForConflict
+            )
+        )
+    {
         return Ok(());
     }
     queue.set_error(id, Some(error.message.clone()))?;

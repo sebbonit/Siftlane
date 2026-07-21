@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use siftlane_core::{AppError, ConnectionProfile, ErrorCode, Preferences, TransferJob};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct StoredHostKey {
@@ -233,6 +234,19 @@ impl Storage {
                     job.updated_at.to_rfc3339(),
                 ],
             )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_transfers(&self, ids: &[Uuid]) -> Result<(), AppError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare("DELETE FROM transfer_jobs WHERE id = ?1")?;
+            for id in ids {
+                statement.execute(params![id.to_string()])?;
+            }
             Ok(())
         })
     }

@@ -119,6 +119,50 @@ impl TransferQueue {
         job.updated_at = Utc::now();
         Ok(())
     }
+
+    pub fn remove(&mut self, id: TransferId) -> Option<TransferJob> {
+        self.order.retain(|item| *item != id);
+        self.jobs.remove(&id)
+    }
+
+    pub fn clear_filter(&mut self, filter: TransferListFilter) -> Vec<TransferId> {
+        let ids: Vec<_> = self
+            .order
+            .iter()
+            .filter_map(|id| {
+                self.jobs
+                    .get(id)
+                    .filter(|job| filter.matches(job.state))
+                    .map(|job| job.id)
+            })
+            .collect();
+        for id in &ids {
+            if let Some(job) = self.jobs.get(id) {
+                if is_valid_transition(job.state, TransferState::Cancelled) {
+                    let _ = self.transition(*id, TransferState::Cancelled);
+                }
+            }
+            self.remove(*id);
+        }
+        ids
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferListFilter {
+    Active,
+    Completed,
+    Failed,
+}
+
+impl TransferListFilter {
+    pub fn matches(self, state: TransferState) -> bool {
+        match self {
+            Self::Active => !state.is_terminal(),
+            Self::Completed => state == TransferState::Completed,
+            Self::Failed => matches!(state, TransferState::Failed | TransferState::Cancelled),
+        }
+    }
 }
 
 fn is_valid_transition(from: TransferState, to: TransferState) -> bool {
@@ -197,5 +241,61 @@ mod tests {
 
         queue.transition(id, TransferState::Queued).unwrap();
         assert_eq!(queue.get(id).unwrap().state, TransferState::Queued);
+    }
+
+    #[test]
+    fn clear_filter_removes_matching_jobs_only() {
+        let mut queue = TransferQueue::default();
+        let completed = {
+            let job = TransferJob::new(
+                Uuid::new_v4(),
+                TransferDirection::Upload,
+                "done".into(),
+                "dest".into(),
+                Some(10),
+            );
+            let id = queue.enqueue(job);
+            queue.transition(id, TransferState::Running).unwrap();
+            queue.transition(id, TransferState::Completed).unwrap();
+            id
+        };
+        let failed = {
+            let job = TransferJob::new(
+                Uuid::new_v4(),
+                TransferDirection::Upload,
+                "bad".into(),
+                "dest".into(),
+                Some(10),
+            );
+            let id = queue.enqueue(job);
+            queue.transition(id, TransferState::Running).unwrap();
+            queue.transition(id, TransferState::Failed).unwrap();
+            id
+        };
+        let active = queue.enqueue(TransferJob::new(
+            Uuid::new_v4(),
+            TransferDirection::Download,
+            "active".into(),
+            "dest".into(),
+            Some(10),
+        ));
+
+        assert_eq!(
+            queue.clear_filter(super::TransferListFilter::Completed),
+            vec![completed]
+        );
+        assert!(queue.get(completed).is_none());
+        assert!(queue.get(failed).is_some());
+        assert!(queue.get(active).is_some());
+
+        assert_eq!(
+            queue.clear_filter(super::TransferListFilter::Failed),
+            vec![failed]
+        );
+        assert_eq!(
+            queue.clear_filter(super::TransferListFilter::Active),
+            vec![active]
+        );
+        assert!(queue.list().is_empty());
     }
 }
