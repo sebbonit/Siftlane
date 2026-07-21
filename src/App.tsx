@@ -51,8 +51,10 @@ import {
 import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { GoToPathDialog } from "./components/GoToPathDialog";
+import { ImagePreview } from "./components/ImagePreview";
 import { TransferPanel } from "./components/TransferPanel";
 import { api, desktop } from "./lib/ipc";
+import { isImageFile } from "./lib/media";
 import { joinPath } from "./lib/paths";
 import { useAppStore } from "./store";
 import type {
@@ -62,6 +64,7 @@ import type {
   FileEntry,
   HostKeyChallenge,
   Preferences,
+  PreviewFile,
   SessionTab,
   UUID,
   EditableFile,
@@ -114,6 +117,7 @@ export default function App() {
   const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [pathJump, setPathJump] = useState<PaneSide | null>(null);
@@ -371,6 +375,24 @@ export default function App() {
     }
   }
 
+  async function openFile(entry: FileEntry, side: PaneSide) {
+    if (!activeTab || entry.kind !== "file") return;
+    if (isImageFile(entry.name)) {
+      setError(null);
+      try {
+        const file =
+          side === "remote"
+            ? await api.readRemotePreview(activeTab.id, entry.path)
+            : await api.readLocalPreview(entry.path);
+        setPreviewFile(file);
+      } catch (reason) {
+        setError(errorMessage(reason));
+      }
+      return;
+    }
+    await openEditor(entry, side);
+  }
+
   async function openEditor(entry: FileEntry, side: PaneSide) {
     if (!activeTab || entry.kind !== "file") return;
     setError(null);
@@ -550,7 +572,7 @@ export default function App() {
                   onCreateDirectoryPrivileged={() => setEntryCreation({ side: "local", directory: true, privileged: true })}
                   onRemove={(entry) => void removeSelected("local", false, entry)}
                   onRemovePrivileged={(entry) => void removeSelected("local", true, entry)}
-                  onOpenFile={(entry) => void openEditor(entry, "local")}
+                  onOpenFile={(entry) => void openFile(entry, "local")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "local" })}
                   onRevealInFileManager={(path) => void revealInFileManager(path)}
@@ -591,7 +613,7 @@ export default function App() {
                   onCreateDirectoryPrivileged={() => setEntryCreation({ side: "remote", directory: true, privileged: true })}
                   onRemove={(entry) => void removeSelected("remote", false, entry)}
                   onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
-                  onOpenFile={(entry) => void openEditor(entry, "remote")}
+                  onOpenFile={(entry) => void openFile(entry, "remote")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
                 />
@@ -735,6 +757,7 @@ export default function App() {
         />
       )}
       {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {previewFile && <ImagePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
       {sudoPrompt && <SudoPasswordDialog prompt={sudoPrompt} onClose={() => { sudoPrompt.resolve(null); setSudoPrompt(null); }} onSubmit={(password) => { sudoPrompt.resolve(password); setSudoPrompt(null); }} />}
     </div>
   );

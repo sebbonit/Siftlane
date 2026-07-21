@@ -375,6 +375,18 @@ button:disabled { cursor: default; opacity: .38; }
 .pane-footer { min-height: 29px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 9px; }
 .editor-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 7vh 6vw; background: rgba(20, 27, 25, .48); backdrop-filter: blur(3px); animation: backdrop-in var(--dur) var(--ease-out) both; }
 .editor-dialog { width: min(1100px, 100%); height: min(760px, 86vh); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); animation: dialog-in var(--dur-slow) var(--ease-bounce) both; }
+.image-preview-dialog { width: min(980px, 100%); height: min(760px, 86vh); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); animation: dialog-in var(--dur-slow) var(--ease-bounce) both; }
+.image-preview-stage { min-height: 0; flex: 1; display: grid; place-items: center; padding: 18px; background:
+  linear-gradient(45deg, color-mix(in srgb, var(--border) 55%, transparent) 25%, transparent 25%),
+  linear-gradient(-45deg, color-mix(in srgb, var(--border) 55%, transparent) 25%, transparent 25%),
+  linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--border) 55%, transparent) 75%),
+  linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--border) 55%, transparent) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+  background-color: var(--surface-soft);
+  overflow: auto;
+}
+.image-preview-stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 12px 40px rgba(20, 27, 25, .22); animation: pop-in var(--dur) var(--ease-bounce) both; }
 .editor-header { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 15px; border-bottom: 1px solid var(--border); }
 .editor-file-title, .editor-meta, .editor-file-title > div { display: flex; align-items: center; }
 .editor-file-title { min-width: 0; gap: 9px; }

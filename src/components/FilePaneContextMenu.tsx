@@ -3,10 +3,12 @@ import {
   FilePlus2,
   FolderOpen,
   FolderPlus,
+  Image as ImageIcon,
   Info,
   LockKeyhole,
   Trash2,
 } from "lucide-react";
+import { isImageFile } from "../lib/media";
 import { fileManagerRevealLabel } from "../lib/platform";
 import type { FileEntry } from "../types";
 import { ContextMenu } from "./ContextMenu";
@@ -54,13 +56,15 @@ export function FilePaneContextMenu({
       {entry?.kind === "file" && (
         <>
           <button onClick={() => run(() => onOpenFile(entry))}>
-            <FileEdit size={14} />
-            Edit file
+            {isImageFile(entry.name) ? <ImageIcon size={14} /> : <FileEdit size={14} />}
+            {isImageFile(entry.name) ? "Preview image" : "Edit file"}
           </button>
-          <button onClick={() => run(() => onOpenPrivileged(entry))}>
-            <LockKeyhole size={14} />
-            Edit with sudo
-          </button>
+          {!isImageFile(entry.name) && (
+            <button onClick={() => run(() => onOpenPrivileged(entry))}>
+              <LockKeyhole size={14} />
+              Edit with sudo
+            </button>
+          )}
           <i />
         </>
       )}

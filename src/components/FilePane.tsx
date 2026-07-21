@@ -9,6 +9,7 @@ import {
   FileCode2,
   Folder,
   FolderOpen,
+  Image as ImageIcon,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { formatBytes, formatDate, formatPermissions } from "../lib/format";
 import { sortEntries, type SortDir, type SortKey } from "../lib/fileSort";
+import { isImageFile } from "../lib/media";
 import { parentPath } from "../lib/paths";
 import type { FileEntry } from "../types";
 import { FilePaneContextMenu } from "./FilePaneContextMenu";
@@ -269,6 +271,7 @@ export function FilePane({
 
 function fileIcon(entry: FileEntry) {
   if (entry.kind === "directory") return <Folder size={17} fill="currentColor" />;
+  if (isImageFile(entry.name)) return <ImageIcon size={16} />;
   if (/\.(tsx?|jsx?|html|css|json|rs)$/i.test(entry.name)) return <FileCode2 size={16} />;
   return <File size={16} />;
 }

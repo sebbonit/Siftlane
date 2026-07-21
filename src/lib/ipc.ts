@@ -11,6 +11,7 @@ import type {
   FileEntry,
   EditableFile,
   Preferences,
+  PreviewFile,
   TransferDirection,
   TransferJob,
   TransferProgress,
@@ -217,6 +218,10 @@ export const api = {
     if (desktop) return call<EditableFile>("read_local_file", { path });
     return demoFile(path);
   },
+  async readLocalPreview(path: string) {
+    if (desktop) return call<PreviewFile>("read_local_preview", { path });
+    return demoPreview(path);
+  },
   async readLocalFilePrivileged(path: string, sudoPassword?: string) {
     if (desktop) return call<EditableFile>("read_local_file_privileged", { path, sudoPassword });
     return { ...demoFile(path), privileged: true };
@@ -224,6 +229,10 @@ export const api = {
   async readRemoteFile(sessionId: UUID, path: string) {
     if (desktop) return call<EditableFile>("read_remote_file", { sessionId, path });
     return demoFile(path);
+  },
+  async readRemotePreview(sessionId: UUID, path: string) {
+    if (desktop) return call<PreviewFile>("read_remote_preview", { sessionId, path });
+    return demoPreview(path);
   },
   async readRemoteFilePrivileged(sessionId: UUID, path: string, sudoPassword?: string) {
     if (desktop) return call<EditableFile>("read_remote_file_privileged", { sessionId, path, sudoPassword });
@@ -382,6 +391,19 @@ function demoFile(path: string): EditableFile {
     ? `<!doctype html>\n<html>\n  <head><title>Preview</title></head>\n  <body>\n    <h1>Edit this remote file</h1>\n  </body>\n</html>\n`
     : name.endsWith(".css") ? `body {\n  color: #202827;\n}\n` : `# ${name}\n\nEdit this file and save it back to the server.\n`;
   return { path, name, content, language: languageFor(name), size: new TextEncoder().encode(content).length, privileged: false };
+}
+
+function demoPreview(path: string): PreviewFile {
+  const name = path.split(/[\\/]/).pop() ?? "preview.png";
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNk+M9Qz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC";
+  return {
+    path,
+    name,
+    mime: name.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg",
+    data_base64: png,
+    size: 68,
+  };
 }
 
 function languageFor(name: string) {
