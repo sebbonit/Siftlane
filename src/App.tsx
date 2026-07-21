@@ -577,10 +577,31 @@ export default function App() {
           value={hostTrust.challenge}
           onClose={() => setHostTrust(null)}
           onDecision={async (accept) => {
-            await api.trustHostKey(hostTrust.challenge.challenge_id, accept);
             const pending = hostTrust;
             setHostTrust(null);
-            if (accept) await connect(pending.profile, pending.credential);
+            const result = await api.trustHostKey(pending.challenge.challenge_id, accept);
+            if (!result) return;
+            if (result.status === "needs_host_trust") {
+              setHostTrust({ profile: pending.profile, credential: pending.credential, challenge: result.challenge });
+              return;
+            }
+            if (result.status === "needs_credential") {
+              setConnectionDialog(pending.profile);
+              return;
+            }
+            const localPath = await api.defaultLocalPath();
+            addTab({
+              id: result.session_id,
+              profileId: pending.profile.id,
+              label: pending.profile.label,
+              host: pending.profile.host,
+              protocol: pending.profile.protocol,
+              localPath,
+              remotePath: pending.profile.initial_remote_path,
+              layout: preferences?.default_layout ?? "dual_pane",
+              connected: true,
+            });
+            setConnectionDialog(null);
           }}
         />
       )}

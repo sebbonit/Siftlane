@@ -88,6 +88,16 @@ cargo test --workspace
 
 SQLite never stores credentials. Keyring entries use the service name `app.siftlane.desktop`, keyed by connection UUID. Uploads and downloads first write uniquely named partial files and use a backup/rename commit sequence to reduce the chance of replacing a destination with incomplete data.
 
+### macOS development Keychain access
+
+The macOS Keychain associates an item's access rule with the code signature of the executable that created it. An ad-hoc Rust development build receives a new signature hash after every rebuild, which makes Keychain ask for the login password again. `npm run tauri dev` now signs the Siftlane debug executable with the first available **Apple Development** signing identity, or a local **Siftlane Development** identity, so the rule remains stable across rebuilds. Set `SIFTLANE_DEV_SIGNING_IDENTITY` to a specific identity or certificate hash when more than one is available.
+
+The first access after enabling this may still require one confirmation. Choose **Always Allow**. Existing credentials created by ad-hoc builds can retain their old hash-based rules; delete only the affected `app.siftlane.desktop` entry in Keychain Access and save that connection password again to recreate it with the stable rule.
+
+Touch ID is not available through the legacy macOS Keychain API used by development builds. It requires the protected-data Keychain plus a provisioned, sandboxed macOS application. Until the release signing/provisioning setup is in place, the secure expected experience is no prompt after the one-time **Always Allow**, rather than a Touch ID prompt on every connection.
+
+If you do not have a paid Apple Developer account, create a local signing identity in **Keychain Access → Certificate Assistant → Create a Certificate…**. Name it `Siftlane Development`, choose **Self-Signed Root Certificate**, choose **Code Signing** as the certificate type, and keep the generated private key in your login keychain. Then double-click the certificate under **login → My Certificates**, expand **Trust**, set **Code Signing** to **Always Trust**, and close the dialog (approve with your Mac password if asked). Verify it with `security find-identity -v -p codesigning`, then run `npm run tauri dev`. If it is not selected automatically, set `SIFTLANE_DEV_SIGNING_IDENTITY` to the certificate hash printed by that command.
+
 Protected-file operations use the existing SSH identity (including private keys and SSH agents) for connection authentication, then check the remote account's sudo policy separately. Siftlane probes `sudo -n` for `NOPASSWD` access and otherwise prompts for the account's sudo password for the immediate read, write, create, or delete operation; it never stores or logs that password. A terminal that does not prompt may be using a cached sudo timestamp, which is not shared with Siftlane's non-interactive SSH channel. Server administrators must configure an appropriate `NOPASSWD` policy when passwordless file operations are required.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/architecture.md](docs/architecture.md) for more detail.

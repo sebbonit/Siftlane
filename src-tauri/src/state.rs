@@ -1,14 +1,16 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use siftlane_core::{AppError, ErrorCode, RemoteFilesystem, TransferQueue};
-use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey};
+use siftlane_core::{
+    AppError, ConnectionProfile, ErrorCode, Preferences, RemoteFilesystem, TransferQueue,
+};
+use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey, SftpAuth};
 use tauri::Manager;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use uuid::Uuid;
 
 use crate::{
-    secrets::SecretStore,
+    secrets::{SecretKind, SecretStore},
     storage::{Storage, StoredHostKey},
 };
 
@@ -28,9 +30,15 @@ pub struct SessionRecord {
     pub client: Arc<dyn RemoteFilesystem>,
 }
 
-#[derive(Debug, Clone)]
 pub struct PendingHostKey {
     pub key: ObservedHostKey,
+    /// Authentication is kept only until the user accepts or rejects the
+    /// host-key prompt. Keeping it here prevents a second Keychain read when
+    /// the connection is resumed after trust is granted.
+    pub profile: ConnectionProfile,
+    pub auth: SftpAuth,
+    pub supplied_secret: Option<(SecretKind, String)>,
+    pub preferences: Preferences,
 }
 
 impl AppState {
