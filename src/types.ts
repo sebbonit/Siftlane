@@ -42,6 +42,14 @@ export interface EditableFile {
   privileged?: boolean;
 }
 
+export interface PreviewFile {
+  path: string;
+  name: string;
+  mime: string;
+  data_base64: string;
+  size: number;
+}
+
 export interface HostKeyChallenge {
   challenge_id: UUID;
   host: string;

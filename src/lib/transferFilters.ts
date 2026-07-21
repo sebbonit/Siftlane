@@ -1,8 +1,9 @@
 import type { TransferJob } from "../types";
 
-export type TransferFilter = "active" | "completed" | "failed";
+export type TransferFilter = "all" | "active" | "completed" | "failed";
 
 export function matchesTransferFilter(job: TransferJob, filter: TransferFilter) {
+  if (filter === "all") return true;
   if (filter === "active") return !["completed", "failed", "cancelled"].includes(job.state);
   if (filter === "completed") return job.state === "completed";
   return ["failed", "cancelled"].includes(job.state);

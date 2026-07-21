@@ -50,8 +50,11 @@ import {
 } from "lucide-react";
 import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
+import { GoToPathDialog } from "./components/GoToPathDialog";
+import { ImagePreview } from "./components/ImagePreview";
 import { TransferPanel } from "./components/TransferPanel";
 import { api, desktop } from "./lib/ipc";
+import { isImageFile } from "./lib/media";
 import { joinPath } from "./lib/paths";
 import { useAppStore } from "./store";
 import type {
@@ -61,6 +64,7 @@ import type {
   FileEntry,
   HostKeyChallenge,
   Preferences,
+  PreviewFile,
   SessionTab,
   UUID,
   EditableFile,
@@ -113,8 +117,10 @@ export default function App() {
   const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
+  const [pathJump, setPathJump] = useState<PaneSide | null>(null);
   const [infoTarget, setInfoTarget] = useState<InfoTarget | null>(null);
   const [infoSaving, setInfoSaving] = useState(false);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
@@ -122,7 +128,9 @@ export default function App() {
     remote: null,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [layoutMorphing, setLayoutMorphing] = useState(false);
   const initialized = useRef(false);
+  const layoutMorphTimer = useRef<number | null>(null);
   const observedCompletedTransfers = useRef<Set<UUID>>(new Set());
 
   const {
@@ -155,7 +163,10 @@ export default function App() {
     void api.onTransferProgress(updateTransfer).then((unlisten) => {
       stop = unlisten;
     });
-    return () => stop?.();
+    return () => {
+      stop?.();
+      if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
+    };
   }, [setTransfers, updateTransfer]);
 
   useEffect(() => {
@@ -258,6 +269,30 @@ export default function App() {
     await loadPane(side, path);
   }
 
+  async function browseFolder(side: PaneSide) {
+    if (!activeTab) return;
+    setError(null);
+    if (side === "remote") {
+      setPathJump("remote");
+      return;
+    }
+    try {
+      const selected = await api.pickDirectory(activeTab.localPath);
+      if (selected) await navigate("local", selected);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function revealInFileManager(path: string) {
+    setError(null);
+    try {
+      await api.revealInFileManager(path);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
   async function addTransfer(direction: "upload" | "download") {
     if (!activeTab || !activeProfile) return;
     const selected = direction === "upload" ? selectedLocal : selectedRemote;
@@ -338,6 +373,24 @@ export default function App() {
     } catch (reason) {
       setError(errorMessage(reason));
     }
+  }
+
+  async function openFile(entry: FileEntry, side: PaneSide) {
+    if (!activeTab || entry.kind !== "file") return;
+    if (isImageFile(entry.name)) {
+      setError(null);
+      try {
+        const file =
+          side === "remote"
+            ? await api.readRemotePreview(activeTab.id, entry.path)
+            : await api.readLocalPreview(entry.path);
+        setPreviewFile(file);
+      } catch (reason) {
+        setError(errorMessage(reason));
+      }
+      return;
+    }
+    await openEditor(entry, side);
   }
 
   async function openEditor(entry: FileEntry, side: PaneSide) {
@@ -480,14 +533,26 @@ export default function App() {
             <ConnectionHeader
               tab={activeTab}
               onDisconnect={() => void closeSession(activeTab)}
-              onToggleLayout={() =>
+              onToggleLayout={() => {
+                if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
+                setLayoutMorphing(true);
                 updateTab(activeTab.id, {
                   layout: activeTab.layout === "dual_pane" ? "remote_focused" : "dual_pane",
-                })
-              }
+                });
+                layoutMorphTimer.current = window.setTimeout(() => {
+                  setLayoutMorphing(false);
+                  layoutMorphTimer.current = null;
+                }, 780);
+              }}
             />
-            <section className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : ""}`}>
-              {activeTab.layout === "dual_pane" && (
+            <section
+              className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : "dual-pane"}${layoutMorphing ? " is-morphing" : ""}`}
+            >
+              <div
+                className="browser-slot local-slot"
+                aria-hidden={activeTab.layout === "remote_focused"}
+                inert={activeTab.layout === "remote_focused" ? true : undefined}
+              >
                 <FilePane
                   title="Local"
                   side="local"
@@ -498,6 +563,7 @@ export default function App() {
                   showHidden={paneHidden.local ?? preferences?.show_hidden_files ?? true}
                   onSelect={setSelectedLocal}
                   onNavigate={(path) => navigate("local", path)}
+                  onBrowse={() => void browseFolder("local")}
                   onRefresh={() => loadPane("local", activeTab.localPath)}
                   onToggleHidden={() => setPaneHidden((value) => ({ ...value, local: !(value.local ?? preferences?.show_hidden_files ?? true) }))}
                   onCreateFile={() => setEntryCreation({ side: "local", directory: false, privileged: false })}
@@ -506,12 +572,17 @@ export default function App() {
                   onCreateDirectoryPrivileged={() => setEntryCreation({ side: "local", directory: true, privileged: true })}
                   onRemove={(entry) => void removeSelected("local", false, entry)}
                   onRemovePrivileged={(entry) => void removeSelected("local", true, entry)}
-                  onOpenFile={(entry) => void openEditor(entry, "local")}
+                  onOpenFile={(entry) => void openFile(entry, "local")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "local" })}
+                  onRevealInFileManager={(path) => void revealInFileManager(path)}
                 />
-              )}
-              {activeTab.layout === "dual_pane" && (
+              </div>
+              <div
+                className="browser-slot transfer-slot"
+                aria-hidden={activeTab.layout === "remote_focused"}
+                inert={activeTab.layout === "remote_focused" ? true : undefined}
+              >
                 <div className="transfer-controls" aria-label="Transfer selected file">
                   <button title="Upload selected file" onClick={() => void addTransfer("upload")} disabled={!selectedLocal}>
                     <ArrowRight size={17} />
@@ -520,30 +591,33 @@ export default function App() {
                     <ArrowLeft size={17} />
                   </button>
                 </div>
-              )}
-              <FilePane
-                title="Remote"
-                subtitle={activeProfile?.host}
-                side="remote"
-                path={activeTab.remotePath}
-                entries={remoteEntries}
-                selected={selectedRemote}
-                loading={loadingPane === "remote"}
-                showHidden={paneHidden.remote ?? preferences?.show_hidden_files ?? true}
-                onSelect={setSelectedRemote}
-                onNavigate={(path) => navigate("remote", path)}
-                onRefresh={() => loadPane("remote", activeTab.remotePath)}
-                onToggleHidden={() => setPaneHidden((value) => ({ ...value, remote: !(value.remote ?? preferences?.show_hidden_files ?? true) }))}
-                onCreateFile={() => setEntryCreation({ side: "remote", directory: false, privileged: false })}
-                onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true, privileged: false })}
-                onCreateFilePrivileged={() => setEntryCreation({ side: "remote", directory: false, privileged: true })}
-                onCreateDirectoryPrivileged={() => setEntryCreation({ side: "remote", directory: true, privileged: true })}
-                onRemove={(entry) => void removeSelected("remote", false, entry)}
-                onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
-                onOpenFile={(entry) => void openEditor(entry, "remote")}
-                onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
-                onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
-              />
+              </div>
+              <div className="browser-slot remote-slot">
+                <FilePane
+                  title="Remote"
+                  subtitle={activeProfile?.host}
+                  side="remote"
+                  path={activeTab.remotePath}
+                  entries={remoteEntries}
+                  selected={selectedRemote}
+                  loading={loadingPane === "remote"}
+                  showHidden={paneHidden.remote ?? preferences?.show_hidden_files ?? true}
+                  onSelect={setSelectedRemote}
+                  onNavigate={(path) => navigate("remote", path)}
+                  onBrowse={() => void browseFolder("remote")}
+                  onRefresh={() => loadPane("remote", activeTab.remotePath)}
+                  onToggleHidden={() => setPaneHidden((value) => ({ ...value, remote: !(value.remote ?? preferences?.show_hidden_files ?? true) }))}
+                  onCreateFile={() => setEntryCreation({ side: "remote", directory: false, privileged: false })}
+                  onCreateDirectory={() => setEntryCreation({ side: "remote", directory: true, privileged: false })}
+                  onCreateFilePrivileged={() => setEntryCreation({ side: "remote", directory: false, privileged: true })}
+                  onCreateDirectoryPrivileged={() => setEntryCreation({ side: "remote", directory: true, privileged: true })}
+                  onRemove={(entry) => void removeSelected("remote", false, entry)}
+                  onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
+                  onOpenFile={(entry) => void openFile(entry, "remote")}
+                  onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
+                  onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
+                />
+              </div>
             </section>
             <TransferPanel />
           </>
@@ -605,6 +679,27 @@ export default function App() {
           onSubmit={createEntry}
         />
       )}
+      {pathJump && activeTab && (
+        <GoToPathDialog
+          side={pathJump}
+          initialPath={pathJump === "local" ? activeTab.localPath : activeTab.remotePath}
+          onClose={() => setPathJump(null)}
+          onSubmit={(path) => navigate(pathJump, path)}
+          onListDirectories={async (directory) => {
+            try {
+              const entries =
+                pathJump === "local"
+                  ? await api.listLocal(directory)
+                  : await api.listRemote(activeTab.id, directory);
+              return entries
+                .filter((entry) => entry.kind === "directory")
+                .map((entry) => entry.name);
+            } catch {
+              return [];
+            }
+          }}
+        />
+      )}
       {connectionDialog && (
         <ConnectionDialog
           existing={connectionDialog === "new" ? null : connectionDialog}
@@ -662,6 +757,7 @@ export default function App() {
         />
       )}
       {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {previewFile && <ImagePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
       {sudoPrompt && <SudoPasswordDialog prompt={sudoPrompt} onClose={() => { sudoPrompt.resolve(null); setSudoPrompt(null); }} onSubmit={(password) => { sudoPrompt.resolve(password); setSudoPrompt(null); }} />}
     </div>
   );
@@ -771,12 +867,29 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
   const encrypted = tab.protocol !== "ftp";
   return (
     <header className="connection-header">
-      <div className={`secure-status ${encrypted ? "" : "insecure"}`}><span className="lock-circle">{encrypted ? <LockKeyhole size={16} /> : <CircleAlert size={16} />}</span><div><strong>{tab.host}</strong><small><i />{encrypted ? <><span>Connected securely</span> <em>over {tab.protocol.toUpperCase()}</em></> : <span>Connected over unencrypted FTP</span>}</small></div></div>
+      <div className={`secure-status ${encrypted ? "" : "insecure"}`}>
+        <span className="lock-circle">{encrypted ? <LockKeyhole size={13} /> : <CircleAlert size={13} />}</span>
+        <strong>{tab.host}</strong>
+        <small>
+          <i />
+          {encrypted ? (
+            <>Secure · {tab.protocol.toUpperCase()}</>
+          ) : (
+            <>Unencrypted FTP</>
+          )}
+        </small>
+      </div>
       <div className="header-actions">
-        <button className="search-trigger"><Search size={15} /><span>Search</span><kbd>⌘F</kbd></button>
-        <button title="Toggle layout" onClick={onToggleLayout}><LayoutPanelLeft size={17} /></button>
-        <button title="Connection settings"><Settings size={17} /></button>
-        <button className="disconnect-action" title="Disconnect this session" onClick={onDisconnect}><LogOut size={16} /><span>Disconnect</span></button>
+        <button className="search-trigger"><Search size={13} /><span>Search</span><kbd>⌘F</kbd></button>
+        <button
+          className={`layout-toggle ${tab.layout === "remote_focused" ? "is-remote" : ""}`}
+          title={tab.layout === "remote_focused" ? "Show dual pane" : "Focus remote pane"}
+          onClick={onToggleLayout}
+        >
+          <LayoutPanelLeft size={15} />
+        </button>
+        <button title="Connection settings"><Settings size={15} /></button>
+        <button className="disconnect-action" title="Disconnect this session" onClick={onDisconnect}><LogOut size={14} /><span>Disconnect</span></button>
       </div>
     </header>
   );

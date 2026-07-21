@@ -51,7 +51,7 @@ describe("Siftlane shell", () => {
     const favorites = screen.getByRole("button", { name: "Favorites" }).closest("section");
     expect(favorites).not.toBeNull();
     await userEvent.click(within(favorites!).getByRole("button", { name: "Demo server" }));
-    expect(await screen.findByText("Connected securely")).toBeInTheDocument();
+    expect(await screen.findByText(/Secure · SFTP/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: /connect to demo server/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();

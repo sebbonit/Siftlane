@@ -21,11 +21,11 @@ import {
 import { useAppStore } from "../store";
 import type { TransferJob } from "../types";
 
-const FILTERS: TransferFilter[] = ["active", "completed", "failed"];
+const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
 
 export function TransferPanel() {
   const { transfers, transferPanelOpen, toggleTransfers, setTransfers } = useAppStore();
-  const [filter, setFilter] = useState<TransferFilter>("active");
+  const [filter, setFilter] = useState<TransferFilter>("all");
   const filtered = transfers.filter((job) => matchesTransferFilter(job, filter));
   const clearableCount = countTransferFilter(transfers, filter);
 
@@ -138,7 +138,11 @@ export function TransferPanel() {
               </div>
             );
           })}
-          {filtered.length === 0 && <div className="empty-transfers">No {filter} transfers</div>}
+          {filtered.length === 0 && (
+            <div className="empty-transfers">
+              {filter === "all" ? "No transfers" : `No ${filter} transfers`}
+            </div>
+          )}
         </div>
       )}
     </section>
