@@ -112,7 +112,7 @@ export function PathSuggestInput({
         spellCheck={false}
         required
         role="combobox"
-        aria-expanded={open && suggestions.length > 0}
+        aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={
@@ -127,27 +127,31 @@ export function PathSuggestInput({
         onKeyDown={onKeyDown}
       />
       {loading && <LoaderCircle className="spin path-suggest-spinner" size={14} />}
-      {open && suggestions.length > 0 && (
-        <ul ref={listRef} id={listId} className="path-suggest-list" role="listbox">
-          {suggestions.map((suggestion, index) => (
-            <li key={suggestion} role="presentation">
-              <button
-                id={`${listId}-${index}`}
-                type="button"
-                role="option"
-                data-suggest-index={index}
-                aria-selected={index === activeIndex}
-                className={index === activeIndex ? "active" : ""}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => applySuggestion(suggestion)}
-              >
-                <Folder size={13} />
-                <span>{suggestion}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul ref={listRef} id={listId} className="path-suggest-list" role="listbox">
+        {suggestions.map((suggestion, index) => (
+          <li key={suggestion} role="presentation">
+            <button
+              id={`${listId}-${index}`}
+              type="button"
+              role="option"
+              data-suggest-index={index}
+              aria-selected={index === activeIndex}
+              className={index === activeIndex ? "active" : ""}
+              tabIndex={-1}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => applySuggestion(suggestion)}
+            >
+              <Folder size={13} />
+              <span>{suggestion}</span>
+            </button>
+          </li>
+        ))}
+        {!loading && suggestions.length === 0 && (
+          <li className="path-suggest-empty" role="presentation">
+            No matching folders
+          </li>
+        )}
+      </ul>
     </div>
   );
 }
