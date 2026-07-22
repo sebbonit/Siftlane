@@ -563,20 +563,20 @@ button:disabled { cursor: default; opacity: .38; }
 .new-entry-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .new-entry-form input { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--text); font-size: 12px; font-weight: 400; }
 .new-entry-form .dialog-actions { padding: 18px 0; }
-.path-suggest { position: relative; }
+.path-suggest { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .path-suggest input { width: 100%; height: 34px; padding: 0 32px 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--text); font-size: 12px; font-weight: 400; outline: 0; }
 .path-suggest input:focus { border-color: var(--teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 16%, transparent); }
 .path-suggest-spinner { position: absolute; right: 10px; top: 10px; color: var(--faint); pointer-events: none; }
-.path-suggest-list { margin: 6px 0 0; padding: 4px; list-style: none; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(31, 47, 42, .1); max-height: min(360px, 50vh); overflow: auto; animation: menu-pop var(--dur) var(--ease-bounce) both; }
-.path-suggest-list button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 5px; color: var(--text); text-align: left; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.path-suggest-list { margin: 6px 0 0; padding: 4px; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); height: 240px; overflow: auto; }
+.path-suggest-list button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 5px; color: var(--text); text-align: left; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .path-suggest-list button svg { flex: 0 0 auto; color: var(--teal); }
 .path-suggest-list button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .path-suggest-list button:hover,
 .path-suggest-list button.active { background: var(--teal-soft); }
-.goto-path-dialog { width: min(560px, 100%); overflow: visible; }
+.path-suggest-empty { padding: 12px 10px; color: var(--faint); font-size: 11px; font-weight: 400; }
+.goto-path-dialog { width: min(560px, 100%); overflow: hidden; }
 .goto-path-dialog .new-entry-form { min-height: 0; display: flex; flex-direction: column; }
-.goto-path-dialog .new-entry-form > label { flex: 0 1 auto; min-height: 0; }
-.goto-path-dialog .path-suggest { min-height: 0; display: flex; flex-direction: column; }
+.goto-path-dialog .new-entry-form > label { flex: 0 0 auto; }
 .goto-path-dialog .new-entry-form .dialog-actions { margin-top: 8px; flex: 0 0 auto; }
 .form-grid { display: grid; grid-template-columns: 1fr 94px; gap: 11px; }
 .form-grid .wide, .form-grid .host { grid-column: 1 / -1; }
