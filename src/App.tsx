@@ -53,6 +53,7 @@ import { FilePane, type PaneSide } from "./components/FilePane";
 import { GoToPathDialog } from "./components/GoToPathDialog";
 import { ImagePreview } from "./components/ImagePreview";
 import { MarkdownPreview } from "./components/MarkdownPreview";
+import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
 import { api, desktop } from "./lib/ipc";
 import { isImageFile } from "./lib/media";
@@ -492,6 +493,20 @@ export default function App() {
     }
   }
 
+  if (settingsOpen && preferences) {
+    return (
+      <SettingsView
+        value={preferences}
+        onBack={() => setSettingsOpen(false)}
+        onChange={(next) => {
+          setPreferences(next);
+          applyTheme(next.theme);
+          void api.savePreferences(next);
+        }}
+      />
+    );
+  }
+
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <div
@@ -744,18 +759,6 @@ export default function App() {
             });
             setConnectionDialog(null);
             setSidebarCollapsed(true);
-          }}
-        />
-      )}
-      {settingsOpen && preferences && (
-        <SettingsDialog
-          value={preferences}
-          onClose={() => setSettingsOpen(false)}
-          onSave={async (next) => {
-            await api.savePreferences(next);
-            setPreferences(next);
-            applyTheme(next.theme);
-            setSettingsOpen(false);
           }}
         />
       )}
@@ -1167,14 +1170,6 @@ function HostKeyDialog({ value, onClose, onDecision }: { value: HostKeyChallenge
   return <Dialog title={value.changed ? "Host key changed" : "Trust this server?"} subtitle={`${value.host}:${value.port}`} onClose={onClose} tone={value.changed ? "danger" : "default"}>
     <div className="trust-content"><div className={`trust-icon ${value.changed ? "danger" : ""}`}>{value.changed ? <ShieldAlert size={26} /> : <LockKeyhole size={25} />}</div><p>{value.changed ? "The server presented a different key than the one you previously trusted. Confirm the change with your administrator before continuing." : "This is the first time Siftlane has seen this server. Verify the fingerprint before storing it."}</p><dl><div><dt>Algorithm</dt><dd>{value.algorithm}</dd></div><div><dt>SHA-256 fingerprint</dt><dd>{value.fingerprint_sha256}</dd></div></dl></div>
     <div className="dialog-actions"><button className="secondary" onClick={() => void onDecision(false)}>Cancel</button><button className={value.changed ? "danger-button" : "primary"} onClick={() => void onDecision(true)}>{value.changed ? "Replace trusted key" : "Trust & Connect"}</button></div>
-  </Dialog>;
-}
-
-function SettingsDialog({ value, onClose, onSave }: { value: Preferences; onClose: () => void; onSave: (value: Preferences) => Promise<void> }) {
-  const [draft, setDraft] = useState(value);
-  return <Dialog title="Settings" subtitle="Appearance and transfer behavior" onClose={onClose}>
-    <div className="settings-form"><label>Appearance<select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Preferences["theme"] })}><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Default layout<select value={draft.default_layout} onChange={(e) => setDraft({ ...draft, default_layout: e.target.value as Preferences["default_layout"] })}><option value="dual_pane">Dual pane</option><option value="remote_focused">Remote focused</option></select></label><label className="checkbox"><input type="checkbox" checked={draft.show_hidden_files} onChange={(e) => setDraft({ ...draft, show_hidden_files: e.target.checked })} /> Show hidden files</label><label>Parallel transfers<input type="number" min={1} max={12} value={draft.global_parallel_transfers} onChange={(e) => setDraft({ ...draft, global_parallel_transfers: Number(e.target.value) })} /></label></div>
-    <div className="dialog-actions"><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" onClick={() => void onSave(draft)}>Save settings</button></div>
   </Dialog>;
 }
 
