@@ -767,6 +767,64 @@ impl RemoteFilesystem for SftpClient {
         }
         Ok(())
     }
+
+    async fn package_directory(&self, directory_path: &str) -> Result<String, AppError> {
+        let path = directory_path.trim_end_matches('/');
+        if path.is_empty() || path == "/" {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "Cannot package the filesystem root",
+            ));
+        }
+        let (parent, name) = match path.rsplit_once('/') {
+            Some(("", name)) => ("/", name),
+            Some((parent, name)) => (parent, name),
+            None => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "A remote directory path is required",
+                ));
+            }
+        };
+        if name.is_empty() {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "A remote directory path is required",
+            ));
+        }
+        let archive = if parent == "/" {
+            format!("/{name}.tar.gz")
+        } else {
+            format!("{parent}/{name}.tar.gz")
+        };
+        let command = format!(
+            "if [ ! -d {dir} ]; then exit 18; fi; tar -czf {archive} -C {parent} {name}",
+            dir = shell_quote(path),
+            archive = shell_quote(&archive),
+            parent = shell_quote(parent),
+            name = shell_quote(name),
+        );
+        let output = self.execute_command(command, None).await?;
+        if output.status == Some(18) {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "The remote directory was not found",
+            ));
+        }
+        if output.status != Some(0) {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(
+                AppError::new(ErrorCode::Io, "Could not package the remote directory").with_detail(
+                    if detail.is_empty() {
+                        format!("tar exited with status {:?}", output.status)
+                    } else {
+                        detail
+                    },
+                ),
+            );
+        }
+        Ok(archive)
+    }
 }
 
 fn authentication_failure(message: impl Into<String>) -> AppError {

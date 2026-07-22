@@ -12,6 +12,7 @@ import type {
   EditableFile,
   Preferences,
   PreviewFile,
+  SavedAction,
   TransferDirection,
   TransferJob,
   TransferProgress,
@@ -74,6 +75,7 @@ let browserTransfers: TransferJob[] = demoMode
       mockTransfer("style.css", 1, "upload", "completed"),
     ]
   : [];
+let browserSavedActions: SavedAction[] = [];
 
 function demoEntries(base: string, local: boolean): FileEntry[] {
   const values: Array<[string, FileEntry["kind"], number | null]> = [
@@ -382,6 +384,30 @@ export const api = {
   async onTransferProgress(callback: (progress: TransferProgress) => void): Promise<UnlistenFn> {
     if (!desktop) return () => undefined;
     return listen<TransferProgress>("transfer-progress", ({ payload }) => callback(payload));
+  },
+  async listSavedActions() {
+    return desktop ? call<SavedAction[]>("list_saved_actions") : browserSavedActions;
+  },
+  async saveSavedAction(action: SavedAction) {
+    if (desktop) return call<SavedAction>("save_saved_action", { action });
+    browserSavedActions = [
+      ...browserSavedActions.filter((item) => item.id !== action.id),
+      action,
+    ].sort((left, right) => left.label.localeCompare(right.label));
+    return action;
+  },
+  async deleteSavedAction(id: UUID) {
+    if (desktop) return call<void>("delete_saved_action", { id });
+    browserSavedActions = browserSavedActions.filter((action) => action.id !== id);
+  },
+  async packageLocalDirectory(path: string) {
+    if (desktop) return call<string>("package_local_directory", { path });
+    return `${path.replace(/\/+$/, "")}.zip`;
+  },
+  async packageRemoteDirectory(sessionId: UUID, path: string) {
+    if (desktop) return call<string>("package_remote_directory", { sessionId, path });
+    void sessionId;
+    return `${path.replace(/\/+$/, "") || "/"}.tar.gz`;
   },
 };
 

@@ -141,3 +141,22 @@ export interface SessionTab {
   layout: "dual_pane" | "remote_focused";
   connected: boolean;
 }
+
+export type SavedActionKind =
+  | "open_local"
+  | "open_remote"
+  | "open_both"
+  | "upload_dir"
+  | "download_dir"
+  | "package_local"
+  | "package_remote";
+
+export interface SavedAction {
+  id: UUID;
+  label: string;
+  kind: SavedActionKind;
+  local_path: string | null;
+  remote_path: string | null;
+  created_at: string;
+  updated_at: string;
+}

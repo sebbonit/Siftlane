@@ -218,8 +218,9 @@ button:disabled { cursor: default; opacity: .38; }
 .collapsed-favorites button > svg:not(.spin) { position: absolute; right: 2px; bottom: 2px; color: currentColor; }
 
 .workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
-.session-tabs { height: 39px; flex: 0 0 39px; display: flex; align-items: end; gap: 2px; padding: 0 10px; opacity: 1; transform: translateY(0); background: var(--surface-soft); border-bottom: 1px solid var(--border); overflow-x: auto; transition: height var(--dur) var(--ease-spring), flex-basis var(--dur) var(--ease-spring), opacity var(--dur-fast) var(--ease-out), transform var(--dur) var(--ease-spring), border-color var(--dur) var(--ease-soft); }
+.session-tabs { height: 39px; flex: 0 0 39px; display: flex; align-items: end; gap: 8px; padding: 0 10px; opacity: 1; transform: translateY(0); background: var(--surface-soft); border-bottom: 1px solid var(--border); overflow: hidden; transition: height var(--dur) var(--ease-spring), flex-basis var(--dur) var(--ease-spring), opacity var(--dur-fast) var(--ease-out), transform var(--dur) var(--ease-spring), border-color var(--dur) var(--ease-soft); }
 .session-tabs.empty { height: 0; flex-basis: 0; opacity: 0; transform: translateY(-8px); border-bottom-color: transparent; overflow: hidden; pointer-events: none; }
+.session-tabs-list { min-width: 0; flex: 1 1 auto; display: flex; align-items: end; gap: 2px; overflow-x: auto; }
 .session-tab { height: 33px; min-width: 138px; max-width: 210px; display: grid; grid-template-columns: 8px 1fr 15px; align-items: center; gap: 7px; padding: 0 10px; color: var(--muted); border-radius: 7px 7px 0 0; text-align: left; animation: tab-in var(--dur) var(--ease-bounce) both; transition: background-color var(--dur-fast) var(--ease-soft), color var(--dur-fast) var(--ease-soft), box-shadow var(--dur) var(--ease-out); }
 .session-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-tab > i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); transition: background-color var(--dur) var(--ease-soft), box-shadow var(--dur) var(--ease-out); }
@@ -228,8 +229,28 @@ button:disabled { cursor: default; opacity: .38; }
 .session-tab svg { opacity: 0; border-radius: 3px; transition: opacity var(--dur-fast) var(--ease-soft), transform var(--dur-fast) var(--ease-bounce), background-color var(--dur-fast) var(--ease-soft); }
 .session-tab:hover svg, .session-tab.active svg { opacity: .7; }
 .session-tab svg:hover { opacity: 1; transform: scale(1.15); background: color-mix(in srgb, var(--red) 12%, transparent); }
-.new-tab { width: 31px; height: 31px; display: grid; place-items: center; color: var(--muted); margin-bottom: 1px; border-radius: 6px; }
+.new-tab { width: 31px; height: 31px; display: grid; place-items: center; color: var(--muted); margin-bottom: 1px; border-radius: 6px; flex: 0 0 auto; }
 .new-tab:hover { background: var(--border); transform: rotate(90deg) scale(1.05); }
+.session-actions { flex: 0 0 auto; align-self: center; display: flex; align-items: center; }
+.session-actions-trigger { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--surface); font-size: 10px; font-weight: 600; }
+.session-actions-trigger:hover { color: var(--text); border-color: color-mix(in srgb, var(--teal) 35%, var(--border)); }
+.session-actions-trigger:disabled { opacity: .45; pointer-events: none; }
+.session-actions-menu { position: fixed; z-index: 80; min-width: 220px; max-width: 280px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(20, 32, 28, .14); display: grid; gap: 2px; }
+.session-actions-empty { margin: 0; padding: 10px 8px; color: var(--faint); font-size: 11px; }
+.session-actions-row { display: grid; grid-template-columns: 1fr 26px; gap: 2px; align-items: stretch; }
+.session-actions-row > button[role="menuitem"] { min-width: 0; display: grid; gap: 1px; padding: 7px 8px; border-radius: 7px; text-align: left; color: var(--text); }
+.session-actions-row > button[role="menuitem"] span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.session-actions-row > button[role="menuitem"] small { color: var(--muted); font-size: 10px; }
+.session-actions-row > button[role="menuitem"]:hover { background: var(--surface-soft); }
+.session-actions-delete { display: grid; place-items: center; border-radius: 7px; color: var(--muted); opacity: 0; }
+.session-actions-row:hover .session-actions-delete { opacity: 1; }
+.session-actions-delete:hover { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+.session-actions-menu > i { display: block; height: 1px; margin: 4px 2px; background: var(--border); }
+.session-actions-add { display: flex; align-items: center; gap: 6px; padding: 8px; border-radius: 7px; color: var(--teal); font-size: 11px; font-weight: 600; }
+.session-actions-add:hover { background: var(--teal-soft); }
+.saved-action-dialog { width: min(440px, calc(100vw - 32px)); }
+.saved-action-hint { margin: 2px 0 6px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.saved-action-dialog select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); color: var(--text); font: inherit; }
 .connection-header { height: 36px; flex: 0 0 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--border); animation: fade-up var(--dur-slow) var(--ease-out) both; }
 .secure-status { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .lock-circle { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; color: var(--teal); border-radius: 50%; background: var(--teal-soft); transition: transform var(--dur) var(--ease-bounce), background-color var(--dur) var(--ease-soft); }

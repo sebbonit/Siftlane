@@ -53,6 +53,12 @@ import { FilePane, type PaneSide } from "./components/FilePane";
 import { GoToPathDialog } from "./components/GoToPathDialog";
 import { ImagePreview } from "./components/ImagePreview";
 import { MarkdownPreview } from "./components/MarkdownPreview";
+import {
+  SavedActionDialog,
+  SessionActionsMenu,
+  newSavedActionId,
+  runSavedAction,
+} from "./components/SavedActions";
 import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
 import { api, desktop } from "./lib/ipc";
@@ -67,6 +73,7 @@ import type {
   HostKeyChallenge,
   Preferences,
   PreviewFile,
+  SavedAction,
   SessionTab,
   UUID,
   EditableFile,
@@ -125,6 +132,8 @@ export default function App() {
   const [pathJump, setPathJump] = useState<PaneSide | null>(null);
   const [infoTarget, setInfoTarget] = useState<InfoTarget | null>(null);
   const [infoSaving, setInfoSaving] = useState(false);
+  const [savedActions, setSavedActions] = useState<SavedAction[]>([]);
+  const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
     remote: null,
@@ -152,11 +161,12 @@ export default function App() {
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-    void Promise.all([api.listProfiles(), api.listTransfers(), api.getPreferences()])
-      .then(async ([nextProfiles, nextTransfers, nextPreferences]) => {
+    void Promise.all([api.listProfiles(), api.listTransfers(), api.getPreferences(), api.listSavedActions()])
+      .then(async ([nextProfiles, nextTransfers, nextPreferences, nextActions]) => {
         setProfiles(nextProfiles);
         setTransfers(nextTransfers);
         setPreferences(nextPreferences);
+        setSavedActions(nextActions);
         applyTheme(nextPreferences.theme);
         if (!desktop && nextProfiles[0]) await connect(nextProfiles[0]);
       })
@@ -312,6 +322,73 @@ export default function App() {
       conflictPolicy: "ask",
     });
     setTransfers([job, ...transfers.filter((item) => item.id !== job.id)]);
+  }
+
+  async function handleRunSavedAction(action: SavedAction) {
+    setError(null);
+    try {
+      const result = await runSavedAction(action, {
+        tab: activeTab,
+        navigate,
+      });
+      if (result.transfers?.length) {
+        setTransfers([
+          ...result.transfers,
+          ...transfers.filter((item) => !result.transfers!.some((job) => job.id === item.id)),
+        ]);
+      }
+      if (result.refreshLocal && activeTab) {
+        void loadPane("local", action.local_path ?? activeTab.localPath);
+      }
+      if (result.refreshRemote && activeTab) {
+        void loadPane("remote", action.remote_path ?? activeTab.remotePath);
+      }
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function handleSaveAction(draft: {
+    label: string;
+    kind: SavedAction["kind"];
+    localPath: string | null;
+    remotePath: string | null;
+  }) {
+    const now = new Date().toISOString();
+    const action: SavedAction = {
+      id: newSavedActionId(),
+      label: draft.label,
+      kind: draft.kind,
+      local_path: draft.localPath,
+      remote_path: draft.remotePath,
+      created_at: now,
+      updated_at: now,
+    };
+    const saved = await api.saveSavedAction(action);
+    setSavedActions((items) =>
+      [...items.filter((item) => item.id !== saved.id), saved].sort((left, right) =>
+        left.label.localeCompare(right.label),
+      ),
+    );
+  }
+
+  async function handleDeleteSavedAction(action: SavedAction) {
+    await api.deleteSavedAction(action.id);
+    setSavedActions((items) => items.filter((item) => item.id !== action.id));
+  }
+
+  async function listDirectoryNames(side: PaneSide, directory: string) {
+    try {
+      const entries =
+        side === "local"
+          ? await api.listLocal(directory)
+          : activeTab
+            ? await api.listRemote(activeTab.id, directory)
+            : [];
+      return entries.filter((entry) => entry.kind === "directory").map((entry) => entry.name);
+    } catch {
+      return [];
+    }
   }
 
   async function createEntry(name: string) {
@@ -534,9 +611,13 @@ export default function App() {
           tabs={tabs}
           visible={tabs.length > 0}
           activeId={activeTabId}
+          actions={savedActions}
           onSelect={setActiveTab}
           onClose={closeSession}
           onNew={() => setConnectionDialog("new")}
+          onRunAction={(action) => void handleRunSavedAction(action)}
+          onAddAction={() => setActionDialogOpen(true)}
+          onDeleteAction={(action) => void handleDeleteSavedAction(action).catch((reason) => setError(errorMessage(reason)))}
         />
         {error && (
           <div className="error-banner" role="alert">
@@ -702,19 +783,17 @@ export default function App() {
           initialPath={pathJump === "local" ? activeTab.localPath : activeTab.remotePath}
           onClose={() => setPathJump(null)}
           onSubmit={(path) => navigate(pathJump, path)}
-          onListDirectories={async (directory) => {
-            try {
-              const entries =
-                pathJump === "local"
-                  ? await api.listLocal(directory)
-                  : await api.listRemote(activeTab.id, directory);
-              return entries
-                .filter((entry) => entry.kind === "directory")
-                .map((entry) => entry.name);
-            } catch {
-              return [];
-            }
-          }}
+          onListDirectories={(directory) => listDirectoryNames(pathJump, directory)}
+        />
+      )}
+      {actionDialogOpen && (
+        <SavedActionDialog
+          initialLocalPath={activeTab?.localPath ?? ""}
+          initialRemotePath={activeTab?.remotePath ?? "/"}
+          onClose={() => setActionDialogOpen(false)}
+          onSubmit={handleSaveAction}
+          onListLocalDirectories={(directory) => listDirectoryNames("local", directory)}
+          onListRemoteDirectories={(directory) => listDirectoryNames("remote", directory)}
         />
       )}
       {connectionDialog && (
@@ -847,24 +926,49 @@ function SidebarSection({ title, icon, children }: { title: string; icon: ReactN
   );
 }
 
-function SessionTabs({ tabs, visible, activeId, onSelect, onClose, onNew }: {
+function SessionTabs({
+  tabs,
+  visible,
+  activeId,
+  actions,
+  onSelect,
+  onClose,
+  onNew,
+  onRunAction,
+  onAddAction,
+  onDeleteAction,
+}: {
   tabs: SessionTab[];
   visible: boolean;
   activeId: UUID | null;
+  actions: SavedAction[];
   onSelect: (id: UUID) => void;
   onClose: (tab: SessionTab) => void;
   onNew: () => void;
+  onRunAction: (action: SavedAction) => void;
+  onAddAction: () => void;
+  onDeleteAction: (action: SavedAction) => void;
 }) {
   return (
     <div className={`session-tabs ${visible ? "visible" : "empty"}`} aria-hidden={!visible}>
-      {tabs.map((tab) => (
-        <button key={tab.id} className={`session-tab ${activeId === tab.id ? "active" : ""}`} onClick={() => onSelect(tab.id)}>
-          <i className={tab.connected ? "online" : ""} />
-          <span>{tab.label}</span>
-          <X size={13} onClick={(event) => { event.stopPropagation(); void onClose(tab); }} />
-        </button>
-      ))}
-      <button className="new-tab" aria-label="New connection" onClick={onNew}><Plus size={15} /></button>
+      <div className="session-tabs-list">
+        {tabs.map((tab) => (
+          <button key={tab.id} className={`session-tab ${activeId === tab.id ? "active" : ""}`} onClick={() => onSelect(tab.id)}>
+            <i className={tab.connected ? "online" : ""} />
+            <span>{tab.label}</span>
+            <X size={13} onClick={(event) => { event.stopPropagation(); void onClose(tab); }} />
+          </button>
+        ))}
+        <button className="new-tab" aria-label="New connection" onClick={onNew}><Plus size={15} /></button>
+      </div>
+      {visible && (
+        <SessionActionsMenu
+          actions={actions}
+          onRun={onRunAction}
+          onAdd={onAddAction}
+          onDelete={onDeleteAction}
+        />
+      )}
     </div>
   );
 }

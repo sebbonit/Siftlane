@@ -12,8 +12,8 @@ use secrecy::SecretString;
 use serde::Deserialize;
 use siftlane_core::{
     AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
-    FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, TransferDirection,
-    TransferJob, TransferListFilter, TransferState,
+    FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, SavedAction,
+    TransferDirection, TransferJob, TransferListFilter, TransferState,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
@@ -1507,6 +1507,57 @@ fn validate_entry_name(name: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_saved_actions(state: State<'_, AppState>) -> Result<Vec<SavedAction>, AppError> {
+    state.storage.list_saved_actions()
+}
+
+#[tauri::command]
+pub fn save_saved_action(
+    state: State<'_, AppState>,
+    mut action: SavedAction,
+) -> Result<SavedAction, AppError> {
+    let label = action.label.trim();
+    if label.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "A label is required",
+        ));
+    }
+    action.label = label.to_string();
+    action.updated_at = Utc::now();
+    state.storage.save_saved_action(&action)?;
+    Ok(action)
+}
+
+#[tauri::command]
+pub fn delete_saved_action(state: State<'_, AppState>, id: Uuid) -> Result<(), AppError> {
+    state.storage.delete_saved_action(id)
+}
+
+#[tauri::command]
+pub fn package_local_directory(path: String) -> Result<String, AppError> {
+    crate::package::package_local_directory(&path)
+}
+
+#[tauri::command]
+pub async fn package_remote_directory(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+) -> Result<String, AppError> {
+    let client = {
+        let sessions = state.sessions.read().await;
+        sessions
+            .get(&session_id)
+            .map(|session| session.client.clone())
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Session not found"))?
+    };
+    client
+        .package_directory(&normalize_remote_path(&path)?)
+        .await
 }
 
 fn local_io_error(source: std::io::Error) -> AppError {
