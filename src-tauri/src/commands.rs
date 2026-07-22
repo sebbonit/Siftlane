@@ -11,8 +11,8 @@ use secrecy::ExposeSecret;
 use secrecy::SecretString;
 use serde::Deserialize;
 use siftlane_core::{
-    AppError, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind, ErrorCode,
-    FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, SavedAction,
+    AppError, ArchiveFormat, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind,
+    ErrorCode, FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, SavedAction,
     TransferDirection, TransferJob, TransferListFilter, TransferState,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
@@ -1538,8 +1538,8 @@ pub fn delete_saved_action(state: State<'_, AppState>, id: Uuid) -> Result<(), A
 }
 
 #[tauri::command]
-pub fn package_local_directory(path: String) -> Result<String, AppError> {
-    crate::package::package_local_directory(&path)
+pub fn package_local_directory(path: String, format: ArchiveFormat) -> Result<String, AppError> {
+    crate::package::package_local_directory(&path, format)
 }
 
 #[tauri::command]
@@ -1547,6 +1547,7 @@ pub async fn package_remote_directory(
     state: State<'_, AppState>,
     session_id: Uuid,
     path: String,
+    format: ArchiveFormat,
 ) -> Result<String, AppError> {
     let client = {
         let sessions = state.sessions.read().await;
@@ -1556,7 +1557,7 @@ pub async fn package_remote_directory(
             .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Session not found"))?
     };
     client
-        .package_directory(&normalize_remote_path(&path)?)
+        .package_directory(&normalize_remote_path(&path)?, format)
         .await
 }
 

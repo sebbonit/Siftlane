@@ -353,6 +353,7 @@ export default function App() {
     kind: SavedAction["kind"];
     localPath: string | null;
     remotePath: string | null;
+    archiveFormat: SavedAction["archive_format"];
   }) {
     const now = new Date().toISOString();
     const action: SavedAction = {
@@ -361,6 +362,7 @@ export default function App() {
       kind: draft.kind,
       local_path: draft.localPath,
       remote_path: draft.remotePath,
+      archive_format: draft.archiveFormat ?? null,
       created_at: now,
       updated_at: now,
     };

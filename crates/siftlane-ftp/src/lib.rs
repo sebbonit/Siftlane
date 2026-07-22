@@ -278,7 +278,11 @@ impl RemoteFilesystem for FtpClient {
         ))
     }
 
-    async fn package_directory(&self, _directory_path: &str) -> Result<String, AppError> {
+    async fn package_directory(
+        &self,
+        _directory_path: &str,
+        _format: siftlane_core::ArchiveFormat,
+    ) -> Result<String, AppError> {
         Err(AppError::new(
             ErrorCode::Unsupported,
             "Packaging remote directories requires an SFTP connection",

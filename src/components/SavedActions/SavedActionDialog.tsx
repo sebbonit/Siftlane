@@ -1,8 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { CircleAlert, X } from "lucide-react";
 import { PathSuggestInput } from "../PathSuggestInput";
-import type { SavedActionKind } from "../../types";
-import { SAVED_ACTION_KINDS, actionNeedsLocal, actionNeedsRemote } from "./kinds";
+import type { ArchiveFormat, SavedActionKind } from "../../types";
+import {
+  ARCHIVE_FORMATS,
+  SAVED_ACTION_KINDS,
+  actionNeedsArchiveFormat,
+  actionNeedsLocal,
+  actionNeedsRemote,
+  defaultArchiveFormat,
+} from "./kinds";
 
 export function SavedActionDialog({
   initialLocalPath,
@@ -20,6 +27,7 @@ export function SavedActionDialog({
     kind: SavedActionKind;
     localPath: string | null;
     remotePath: string | null;
+    archiveFormat: ArchiveFormat | null;
   }) => Promise<void>;
   onListLocalDirectories: (parentPath: string) => Promise<string[]>;
   onListRemoteDirectories: (parentPath: string) => Promise<string[]>;
@@ -28,11 +36,22 @@ export function SavedActionDialog({
   const [kind, setKind] = useState<SavedActionKind>("open_both");
   const [localPath, setLocalPath] = useState(initialLocalPath);
   const [remotePath, setRemotePath] = useState(initialRemotePath);
+  const [archiveFormat, setArchiveFormat] = useState<ArchiveFormat>(
+    defaultArchiveFormat("package_local"),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const needsLocal = actionNeedsLocal(kind);
   const needsRemote = actionNeedsRemote(kind);
+  const needsFormat = actionNeedsArchiveFormat(kind);
   const selected = SAVED_ACTION_KINDS.find((item) => item.kind === kind);
+
+  function changeKind(next: SavedActionKind) {
+    setKind(next);
+    if (actionNeedsArchiveFormat(next)) {
+      setArchiveFormat(defaultArchiveFormat(next));
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -59,6 +78,7 @@ export function SavedActionDialog({
         kind,
         localPath: nextLocal,
         remotePath: nextRemote,
+        archiveFormat: needsFormat ? archiveFormat : null,
       });
       onClose();
     } catch (reason) {
@@ -110,7 +130,7 @@ export function SavedActionDialog({
             <select
               value={kind}
               disabled={saving}
-              onChange={(event) => setKind(event.target.value as SavedActionKind)}
+              onChange={(event) => changeKind(event.target.value as SavedActionKind)}
             >
               {SAVED_ACTION_KINDS.map((item) => (
                 <option key={item.kind} value={item.kind}>
@@ -120,6 +140,22 @@ export function SavedActionDialog({
             </select>
           </label>
           {selected && <p className="saved-action-hint">{selected.description}</p>}
+          {needsFormat && (
+            <label>
+              Archive format
+              <select
+                value={archiveFormat}
+                disabled={saving}
+                onChange={(event) => setArchiveFormat(event.target.value as ArchiveFormat)}
+              >
+                {ARCHIVE_FORMATS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {needsLocal && (
             <label>
               Local directory

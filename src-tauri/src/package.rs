@@ -4,13 +4,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use siftlane_core::{AppError, ErrorCode};
+use flate2::{Compression, write::GzEncoder};
+use siftlane_core::{AppError, ArchiveFormat, ErrorCode};
+use tar::Builder;
 use walkdir::WalkDir;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 const MAX_PACKAGED_FILES: usize = 5_000;
 
-pub fn package_local_directory(directory_path: &str) -> Result<String, AppError> {
+pub fn package_local_directory(
+    directory_path: &str,
+    format: ArchiveFormat,
+) -> Result<String, AppError> {
     let source = PathBuf::from(directory_path);
     if !source.is_dir() {
         return Err(AppError::new(
@@ -31,7 +36,7 @@ pub fn package_local_directory(directory_path: &str) -> Result<String, AppError>
     let archive = source
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!("{name}.zip"));
+        .join(format!("{name}.{}", format.extension()));
     if archive.exists() {
         return Err(AppError::new(
             ErrorCode::AlreadyExists,
@@ -39,15 +44,24 @@ pub fn package_local_directory(directory_path: &str) -> Result<String, AppError>
         ));
     }
 
-    let file = File::create(&archive).map_err(package_io_error)?;
+    match format {
+        ArchiveFormat::Zip => package_zip(&source, &archive)?,
+        ArchiveFormat::Tar => package_tar(&source, name, &archive, false)?,
+        ArchiveFormat::TarGz => package_tar(&source, name, &archive, true)?,
+    }
+    Ok(archive.to_string_lossy().into_owned())
+}
+
+fn package_zip(source: &Path, archive: &Path) -> Result<(), AppError> {
+    let file = File::create(archive).map_err(package_io_error)?;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let mut count = 0usize;
     let mut buffer = Vec::new();
 
-    for entry in WalkDir::new(&source).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
         let path = entry.path();
-        let relative = path.strip_prefix(&source).map_err(|_| {
+        let relative = path.strip_prefix(source).map_err(|_| {
             AppError::new(
                 ErrorCode::Internal,
                 "Could not build a relative archive path",
@@ -73,7 +87,7 @@ pub fn package_local_directory(directory_path: &str) -> Result<String, AppError>
         }
         count += 1;
         if count > MAX_PACKAGED_FILES {
-            let _ = std::fs::remove_file(&archive);
+            let _ = std::fs::remove_file(archive);
             return Err(AppError::new(
                 ErrorCode::InvalidInput,
                 format!("Directories with more than {MAX_PACKAGED_FILES} files cannot be packaged"),
@@ -89,7 +103,39 @@ pub fn package_local_directory(directory_path: &str) -> Result<String, AppError>
     }
 
     zip.finish().map_err(package_zip_error)?;
-    Ok(archive.to_string_lossy().into_owned())
+    Ok(())
+}
+
+fn package_tar(source: &Path, name: &str, archive: &Path, gzip: bool) -> Result<(), AppError> {
+    let count = WalkDir::new(source)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .count();
+    if count > MAX_PACKAGED_FILES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            format!("Directories with more than {MAX_PACKAGED_FILES} files cannot be packaged"),
+        ));
+    }
+
+    let file = File::create(archive).map_err(package_io_error)?;
+    if gzip {
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        builder
+            .append_dir_all(name, source)
+            .map_err(package_io_error)?;
+        let encoder = builder.into_inner().map_err(package_io_error)?;
+        encoder.finish().map_err(package_io_error)?;
+    } else {
+        let mut builder = Builder::new(file);
+        builder
+            .append_dir_all(name, source)
+            .map_err(package_io_error)?;
+        builder.finish().map_err(package_io_error)?;
+    }
+    Ok(())
 }
 
 fn package_io_error(source: std::io::Error) -> AppError {
@@ -110,6 +156,7 @@ fn package_zip_error(source: zip::result::ZipError) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::package_local_directory;
+    use siftlane_core::ArchiveFormat;
     use std::{fs, path::PathBuf};
 
     #[test]
@@ -120,8 +167,35 @@ mod tests {
         fs::write(folder.join("readme.txt"), b"hello").expect("write");
         fs::write(folder.join("src/main.rs"), b"fn main() {}").expect("write");
 
-        let archive = package_local_directory(folder.to_str().expect("utf8")).expect("package");
+        let archive = package_local_directory(folder.to_str().expect("utf8"), ArchiveFormat::Zip)
+            .expect("package");
         assert!(PathBuf::from(&archive).exists());
         assert!(archive.ends_with("project.zip"));
+    }
+
+    #[test]
+    fn packages_local_directory_into_tar_gz() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let folder = root.path().join("project");
+        fs::create_dir_all(&folder).expect("mkdir");
+        fs::write(folder.join("readme.txt"), b"hello").expect("write");
+
+        let archive = package_local_directory(folder.to_str().expect("utf8"), ArchiveFormat::TarGz)
+            .expect("package");
+        assert!(PathBuf::from(&archive).exists());
+        assert!(archive.ends_with("project.tar.gz"));
+    }
+
+    #[test]
+    fn packages_local_directory_into_tar() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let folder = root.path().join("project");
+        fs::create_dir_all(&folder).expect("mkdir");
+        fs::write(folder.join("readme.txt"), b"hello").expect("write");
+
+        let archive = package_local_directory(folder.to_str().expect("utf8"), ArchiveFormat::Tar)
+            .expect("package");
+        assert!(PathBuf::from(&archive).exists());
+        assert!(archive.ends_with("project.tar"));
     }
 }
