@@ -104,8 +104,16 @@ export interface TransferProgress {
   error: string | null;
 }
 
+export type Theme =
+  | "system"
+  | "light"
+  | "dark"
+  | "midnight"
+  | "ocean"
+  | "graphite";
+
 export interface Preferences {
-  theme: "system" | "light" | "dark";
+  theme: Theme;
   default_layout: "dual_pane" | "remote_focused";
   show_hidden_files: boolean;
   global_parallel_transfers: number;
