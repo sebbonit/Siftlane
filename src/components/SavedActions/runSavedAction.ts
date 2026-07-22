@@ -1,6 +1,7 @@
 import { api } from "../../lib/ipc";
 import { joinPath } from "../../lib/paths";
-import type { SavedAction, SessionTab, TransferJob, UUID } from "../../types";
+import type { ArchiveFormat, SavedAction, SessionTab, TransferJob, UUID } from "../../types";
+import { archiveExtension, defaultArchiveFormat } from "./kinds";
 
 export type RunSavedActionResult = {
   message?: string;
@@ -33,7 +34,8 @@ export async function runSavedAction(
       return enqueueDirectoryTransfer(action, context, "download");
     case "package_local": {
       const localPath = requirePath(action.local_path, "local");
-      const archive = await api.packageLocalDirectory(localPath);
+      const format = resolveFormat(action);
+      const archive = await api.packageLocalDirectory(localPath, format);
       return {
         message: `Created ${archive}`,
         refreshLocal: true,
@@ -42,13 +44,41 @@ export async function runSavedAction(
     case "package_remote": {
       const tab = requireTab(context.tab);
       const remotePath = requirePath(action.remote_path, "remote");
-      const archive = await api.packageRemoteDirectory(tab.id, remotePath);
+      const format = resolveFormat(action);
+      const archive = await api.packageRemoteDirectory(tab.id, remotePath, format);
       return {
         message: `Created ${archive}`,
         refreshRemote: true,
       };
     }
+    case "package_and_download": {
+      const tab = requireTab(context.tab);
+      const localPath = requirePath(action.local_path, "local");
+      const remotePath = requirePath(action.remote_path, "remote");
+      const format = resolveFormat(action);
+      await context.navigate("local", localPath);
+      await context.navigate("remote", remotePath);
+      const archive = await api.packageRemoteDirectory(tab.id, remotePath, format);
+      const archiveName = archive.split("/").pop() ?? `archive.${archiveExtension(format)}`;
+      const job = await api.enqueueTransfer({
+        profileId: tab.profileId,
+        direction: "download",
+        sourcePath: archive,
+        destinationPath: joinPath(localPath, archiveName, false),
+        conflictPolicy: "ask",
+      });
+      return {
+        message: `Created ${archive} and queued download`,
+        transfers: [job],
+        refreshLocal: true,
+        refreshRemote: true,
+      };
+    }
   }
+}
+
+function resolveFormat(action: SavedAction): ArchiveFormat {
+  return action.archive_format ?? defaultArchiveFormat(action.kind);
 }
 
 async function requireLocal(

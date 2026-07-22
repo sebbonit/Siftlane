@@ -17,7 +17,7 @@ use russh_sftp::{
 };
 use secrecy::{ExposeSecret, SecretString};
 use siftlane_core::{
-    AppError, EntryKind, ErrorCode, FileEntry, RemoteCapabilities, RemoteFilesystem,
+    AppError, ArchiveFormat, EntryKind, ErrorCode, FileEntry, RemoteCapabilities, RemoteFilesystem,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
@@ -768,7 +768,11 @@ impl RemoteFilesystem for SftpClient {
         Ok(())
     }
 
-    async fn package_directory(&self, directory_path: &str) -> Result<String, AppError> {
+    async fn package_directory(
+        &self,
+        directory_path: &str,
+        format: ArchiveFormat,
+    ) -> Result<String, AppError> {
         let path = directory_path.trim_end_matches('/');
         if path.is_empty() || path == "/" {
             return Err(AppError::new(
@@ -793,16 +797,33 @@ impl RemoteFilesystem for SftpClient {
             ));
         }
         let archive = if parent == "/" {
-            format!("/{name}.tar.gz")
+            format!("/{name}.{}", format.extension())
         } else {
-            format!("{parent}/{name}.tar.gz")
+            format!("{parent}/{name}.{}", format.extension())
+        };
+        let pack = match format {
+            ArchiveFormat::Zip => format!(
+                "(cd {parent} && zip -rq {archive_name} {name})",
+                parent = shell_quote(parent),
+                archive_name = shell_quote(&format!("{name}.zip")),
+                name = shell_quote(name),
+            ),
+            ArchiveFormat::Tar => format!(
+                "tar -cf {archive} -C {parent} {name}",
+                archive = shell_quote(&archive),
+                parent = shell_quote(parent),
+                name = shell_quote(name),
+            ),
+            ArchiveFormat::TarGz => format!(
+                "tar -czf {archive} -C {parent} {name}",
+                archive = shell_quote(&archive),
+                parent = shell_quote(parent),
+                name = shell_quote(name),
+            ),
         };
         let command = format!(
-            "if [ ! -d {dir} ]; then exit 18; fi; tar -czf {archive} -C {parent} {name}",
+            "if [ ! -d {dir} ]; then exit 18; fi; {pack}",
             dir = shell_quote(path),
-            archive = shell_quote(&archive),
-            parent = shell_quote(parent),
-            name = shell_quote(name),
         );
         let output = self.execute_command(command, None).await?;
         if output.status == Some(18) {
@@ -816,7 +837,7 @@ impl RemoteFilesystem for SftpClient {
             return Err(
                 AppError::new(ErrorCode::Io, "Could not package the remote directory").with_detail(
                     if detail.is_empty() {
-                        format!("tar exited with status {:?}", output.status)
+                        format!("packager exited with status {:?}", output.status)
                     } else {
                         detail
                     },

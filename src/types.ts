@@ -149,7 +149,10 @@ export type SavedActionKind =
   | "upload_dir"
   | "download_dir"
   | "package_local"
-  | "package_remote";
+  | "package_remote"
+  | "package_and_download";
+
+export type ArchiveFormat = "zip" | "tar" | "tar_gz";
 
 export interface SavedAction {
   id: UUID;
@@ -157,6 +160,7 @@ export interface SavedAction {
   kind: SavedActionKind;
   local_path: string | null;
   remote_path: string | null;
+  archive_format?: ArchiveFormat | null;
   created_at: string;
   updated_at: string;
 }

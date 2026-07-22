@@ -52,5 +52,9 @@ pub trait RemoteFilesystem: Send + Sync {
         password: Option<&SecretString>,
     ) -> Result<(), AppError>;
     /// Create an archive of `directory_path` next to it and return the archive path.
-    async fn package_directory(&self, directory_path: &str) -> Result<String, AppError>;
+    async fn package_directory(
+        &self,
+        directory_path: &str,
+        format: crate::ArchiveFormat,
+    ) -> Result<String, AppError>;
 }

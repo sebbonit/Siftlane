@@ -5,6 +5,7 @@ import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppError,
+  ArchiveFormat,
   ConflictPolicy,
   ConnectResult,
   ConnectionProfile,
@@ -400,14 +401,18 @@ export const api = {
     if (desktop) return call<void>("delete_saved_action", { id });
     browserSavedActions = browserSavedActions.filter((action) => action.id !== id);
   },
-  async packageLocalDirectory(path: string) {
-    if (desktop) return call<string>("package_local_directory", { path });
-    return `${path.replace(/\/+$/, "")}.zip`;
+  async packageLocalDirectory(path: string, format: ArchiveFormat = "zip") {
+    if (desktop) return call<string>("package_local_directory", { path, format });
+    return `${path.replace(/\/+$/, "")}.${format === "tar_gz" ? "tar.gz" : format}`;
   },
-  async packageRemoteDirectory(sessionId: UUID, path: string) {
-    if (desktop) return call<string>("package_remote_directory", { sessionId, path });
+  async packageRemoteDirectory(
+    sessionId: UUID,
+    path: string,
+    format: ArchiveFormat = "tar_gz",
+  ) {
+    if (desktop) return call<string>("package_remote_directory", { sessionId, path, format });
     void sessionId;
-    return `${path.replace(/\/+$/, "") || "/"}.tar.gz`;
+    return `${path.replace(/\/+$/, "") || "/"}.${format === "tar_gz" ? "tar.gz" : format}`;
   },
 };
 

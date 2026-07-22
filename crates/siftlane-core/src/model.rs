@@ -102,6 +102,24 @@ pub struct FileEntry {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Zip,
+    Tar,
+    TarGz,
+}
+
+impl ArchiveFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::Tar => "tar",
+            Self::TarGz => "tar.gz",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SavedActionKind {
     OpenLocal,
     OpenRemote,
@@ -110,6 +128,7 @@ pub enum SavedActionKind {
     DownloadDir,
     PackageLocal,
     PackageRemote,
+    PackageAndDownload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,6 +138,8 @@ pub struct SavedAction {
     pub kind: SavedActionKind,
     pub local_path: Option<String>,
     pub remote_path: Option<String>,
+    #[serde(default)]
+    pub archive_format: Option<ArchiveFormat>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -137,6 +158,7 @@ impl SavedAction {
             kind,
             local_path,
             remote_path,
+            archive_format: None,
             created_at: now,
             updated_at: now,
         }

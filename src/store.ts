@@ -24,6 +24,7 @@ export const useAppStore = create<AppStore>((set) => ({
     set((state) => ({
       tabs: [...state.tabs.filter((item) => item.profileId !== tab.profileId), tab],
       activeTabId: tab.id,
+      ...(state.transfers.length === 0 ? { transferPanelOpen: false } : {}),
     })),
   closeTab: (id) =>
     set((state) => {
