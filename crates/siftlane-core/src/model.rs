@@ -247,6 +247,9 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    Midnight,
+    Ocean,
+    Graphite,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

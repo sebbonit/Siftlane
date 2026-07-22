@@ -37,7 +37,7 @@ function GeneralPanel({
     <SettingsList title="General">
       <SettingsRow
         label="Appearance"
-        description="Choose how Siftlane looks across the app."
+        description="Choose a light, dark, or accent color scheme for the app."
         htmlFor="settings-theme"
       >
         <select
@@ -50,6 +50,9 @@ function GeneralPanel({
           <option value="system">Use system setting</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
+          <option value="midnight">Midnight</option>
+          <option value="ocean">Ocean</option>
+          <option value="graphite">Graphite</option>
         </select>
       </SettingsRow>
       <SettingsRow

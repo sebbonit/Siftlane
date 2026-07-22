@@ -14,6 +14,9 @@ describe("Settings", () => {
     expect(screen.getByRole("button", { name: /restore defaults/i })).toBeDisabled();
     expect(screen.getByRole("heading", { level: 2, name: "General" })).toBeInTheDocument();
     expect(screen.getByLabelText(/appearance/i)).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Midnight" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Ocean" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Graphite" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByText("Move files without the noise.")).not.toBeInTheDocument();
 
