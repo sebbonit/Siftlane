@@ -34,6 +34,8 @@ describe("Siftlane shell", () => {
     await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
     await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+    expect(document.querySelector(".transfer-panel")).toHaveClass("closed");
+    expect(screen.queryByText("No transfers")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     const addFavorite = await screen.findByRole("button", {
