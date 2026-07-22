@@ -79,7 +79,7 @@ type InfoTarget = { entry: FileEntry; side: PaneSide };
 
 const editorTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
-  ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: "12px", lineHeight: "1.65" },
+  ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "11px", lineHeight: "1.65" },
   ".cm-content": { padding: "14px 0 18px", caretColor: "var(--teal)" },
   ".cm-line": { padding: "0 18px" },
   ".cm-gutters": { color: "var(--faint)", backgroundColor: "var(--surface-soft)", borderRight: "1px solid var(--border)" },
