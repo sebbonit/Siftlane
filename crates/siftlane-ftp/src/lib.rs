@@ -277,6 +277,13 @@ impl RemoteFilesystem for FtpClient {
             "FTP connections do not support sudo file operations",
         ))
     }
+
+    async fn package_directory(&self, _directory_path: &str) -> Result<String, AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Packaging remote directories requires an SFTP connection",
+        ))
+    }
 }
 
 async fn read_chunk<T: suppaftp::tokio::TokioTlsStream + Send>(

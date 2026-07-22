@@ -1,7 +1,9 @@
 use std::{fs, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, params};
-use siftlane_core::{AppError, ConnectionProfile, ErrorCode, Preferences, TransferJob};
+use siftlane_core::{
+    AppError, ConnectionProfile, ErrorCode, Preferences, SavedAction, TransferJob,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -250,6 +252,59 @@ impl Storage {
             Ok(())
         })
     }
+
+    pub fn list_saved_actions(&self) -> Result<Vec<SavedAction>, AppError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT action_json FROM saved_actions ORDER BY label COLLATE NOCASE, updated_at DESC",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .map(|row| {
+                    let json = row?;
+                    serde_json::from_str(&json).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                })
+                .collect()
+        })
+    }
+
+    pub fn save_saved_action(&self, action: &SavedAction) -> Result<(), AppError> {
+        let json = serde_json::to_string(action).map_err(serialization_error)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO saved_actions (id, label, action_json, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET label=excluded.label,
+                 action_json=excluded.action_json, updated_at=excluded.updated_at",
+                params![
+                    action.id.to_string(),
+                    action.label,
+                    json,
+                    action.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_saved_action(&self, id: Uuid) -> Result<(), AppError> {
+        let removed = self.with_connection(|connection| {
+            connection.execute("DELETE FROM saved_actions WHERE id = ?1", [id.to_string()])
+        })?;
+        if removed == 0 {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "The saved action was not found",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn migrate(connection: &mut Connection) -> rusqlite::Result<()> {
@@ -309,6 +364,12 @@ fn migrate(connection: &mut Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS preferences (
            key TEXT PRIMARY KEY,
            value_json TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS saved_actions (
+           id TEXT PRIMARY KEY,
+           label TEXT NOT NULL,
+           action_json TEXT NOT NULL,
+           updated_at TEXT NOT NULL
          );
          INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
          COMMIT;",

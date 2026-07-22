@@ -100,6 +100,49 @@ pub struct FileEntry {
     pub hidden: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedActionKind {
+    OpenLocal,
+    OpenRemote,
+    OpenBoth,
+    UploadDir,
+    DownloadDir,
+    PackageLocal,
+    PackageRemote,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedAction {
+    pub id: Uuid,
+    pub label: String,
+    pub kind: SavedActionKind,
+    pub local_path: Option<String>,
+    pub remote_path: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl SavedAction {
+    pub fn new(
+        label: String,
+        kind: SavedActionKind,
+        local_path: Option<String>,
+        remote_path: Option<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            label,
+            kind,
+            local_path,
+            remote_path,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HostKeyChallenge {
     pub challenge_id: Uuid,

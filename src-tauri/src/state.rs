@@ -152,6 +152,11 @@ pub fn run() {
             crate::commands::enqueue_transfer,
             crate::commands::control_transfer,
             crate::commands::resolve_transfer_conflict,
+            crate::commands::list_saved_actions,
+            crate::commands::save_saved_action,
+            crate::commands::delete_saved_action,
+            crate::commands::package_local_directory,
+            crate::commands::package_remote_directory,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Siftlane");
