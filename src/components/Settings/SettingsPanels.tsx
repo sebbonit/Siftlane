@@ -1,12 +1,11 @@
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import appIcon from "../../../src-tauri/icons/128x128.png";
+import { useAppVersion } from "../../hooks/useAppVersion";
 import { desktop } from "../../lib/ipc";
 import type { Preferences } from "../../types";
 import { UpdateDialog, useManualUpdater } from "../Updater";
 import type { SettingsCategoryId } from "./categories";
 import { SettingsList, SettingsRow } from "./SettingsRow";
-
-const APP_VERSION = "0.1.0";
 
 export function SettingsPanel({
   category,
@@ -220,6 +219,7 @@ function ConnectionPanel({
 }
 
 function AboutPanel() {
+  const version = useAppVersion();
   const updater = useManualUpdater();
   const checking = updater.phase === "checking";
 
@@ -227,7 +227,7 @@ function AboutPanel() {
     <div className="settings-about">
       <img src={appIcon} alt="" width={72} height={72} />
       <h3>Siftlane</h3>
-      <p>Version {APP_VERSION}</p>
+      <p>Version {version}</p>
       <p className="settings-about-copy">
         A lightweight open-source file transfer client for SFTP, FTP, and explicit FTPS.
       </p>
