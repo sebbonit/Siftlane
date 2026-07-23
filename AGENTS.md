@@ -3,7 +3,8 @@
 ## Mandatory: verify before commit / push
 
 Do **not** commit or push until the same checks as `.github/workflows/ci.yml` pass locally.
-Failed CI wastes GitHub Actions minutes. `cargo check` alone is **not** enough.
+GitHub Actions CI only runs for **fork PRs** (external contributors); your own same-repo PRs skip Actions to conserve quota — local checks are the gate.
+`cargo check` alone is **not** enough.
 
 ### Always run (changed surface)
 

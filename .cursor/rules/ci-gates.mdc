@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Pre-push CI gates and commit attribution
 
-Before committing or pushing, run the same checks as `.github/workflows/ci.yml`. Failed CI wastes GitHub compute. See root `AGENTS.md`.
+Before committing or pushing, run the same checks as `.github/workflows/ci.yml`. GitHub CI only runs for fork/external PRs; your own PRs skip Actions, so local checks are the gate. See root `AGENTS.md`.
 
 Rust changes (`src-tauri/`, `crates/`, Cargo files):
 

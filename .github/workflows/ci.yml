@@ -6,8 +6,11 @@ on:
 permissions:
   contents: read
 
+# Skip for the repo owner's own PRs (same-repo branches) to conserve Actions minutes.
+# Still runs for fork PRs from external contributors.
 jobs:
   frontend:
+    if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +26,7 @@ jobs:
       - run: pnpm test
 
   rust:
+    if: github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
