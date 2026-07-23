@@ -3,6 +3,9 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { desktop } from "../../lib/ipc";
 
+/** Packaged apps only — never auto-update from `tauri dev`. */
+export const updatesEnabled = desktop && import.meta.env.PROD;
+
 export type UpdatePhase =
   | "idle"
   | "checking"
@@ -41,7 +44,13 @@ export function useAppUpdater(checkOnLaunch = true): AppUpdaterState {
   const launched = useRef(false);
 
   async function checkForUpdates(manual = false) {
-    if (!desktop) return;
+    if (!updatesEnabled) {
+      if (manual) {
+        setPhase("error");
+        setError("Updates are only available in packaged release builds.");
+      }
+      return;
+    }
     setPhase("checking");
     setError(null);
     try {
@@ -68,7 +77,7 @@ export function useAppUpdater(checkOnLaunch = true): AppUpdaterState {
   }
 
   async function installUpdate() {
-    if (!update) return;
+    if (!updatesEnabled || !update) return;
     setPhase("downloading");
     setError(null);
     setProgress(0);
@@ -104,7 +113,7 @@ export function useAppUpdater(checkOnLaunch = true): AppUpdaterState {
   }
 
   useEffect(() => {
-    if (!checkOnLaunch || !desktop || launched.current) return;
+    if (!checkOnLaunch || !updatesEnabled || launched.current) return;
     launched.current = true;
     void checkForUpdates(false);
   }, [checkOnLaunch]);

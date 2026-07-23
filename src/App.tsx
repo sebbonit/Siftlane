@@ -52,6 +52,7 @@ import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { GoToPathDialog } from "./components/GoToPathDialog";
 import { ImagePreview } from "./components/ImagePreview";
+import { LoadingOverlay } from "./components/LoadingOverlay";
 import { MarkdownPreview } from "./components/MarkdownPreview";
 import {
   SavedActionDialog,
@@ -128,6 +129,8 @@ export default function App() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<{ name: string; remote: boolean } | null>(null);
+  const previewRequestId = useRef(0);
   const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [pathJump, setPathJump] = useState<PaneSide | null>(null);
@@ -461,19 +464,30 @@ export default function App() {
   async function openFile(entry: FileEntry, side: PaneSide) {
     if (!activeTab || entry.kind !== "file") return;
     if (isImageFile(entry.name)) {
+      const requestId = ++previewRequestId.current;
       setError(null);
+      setPreviewLoading({ name: entry.name, remote: side === "remote" });
       try {
         const file =
           side === "remote"
             ? await api.readRemotePreview(activeTab.id, entry.path)
             : await api.readLocalPreview(entry.path);
+        if (requestId !== previewRequestId.current) return;
         setPreviewFile(file);
       } catch (reason) {
+        if (requestId !== previewRequestId.current) return;
         setError(errorMessage(reason));
+      } finally {
+        if (requestId === previewRequestId.current) setPreviewLoading(null);
       }
       return;
     }
     await openEditor(entry, side);
+  }
+
+  function cancelPreviewLoading() {
+    previewRequestId.current += 1;
+    setPreviewLoading(null);
   }
 
   async function openEditor(entry: FileEntry, side: PaneSide) {
@@ -844,6 +858,13 @@ export default function App() {
         />
       )}
       {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {previewLoading && (
+        <LoadingOverlay
+          label={previewLoading.remote ? "Downloading preview…" : "Opening preview…"}
+          detail={previewLoading.name}
+          onCancel={cancelPreviewLoading}
+        />
+      )}
       {previewFile && <ImagePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
       {sudoPrompt && <SudoPasswordDialog prompt={sudoPrompt} onClose={() => { sudoPrompt.resolve(null); setSudoPrompt(null); }} onSubmit={(password) => { sudoPrompt.resolve(password); setSudoPrompt(null); }} />}
     </div>

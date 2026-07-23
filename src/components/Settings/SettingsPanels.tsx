@@ -1,9 +1,8 @@
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { useAppVersion } from "../../hooks/useAppVersion";
-import { desktop } from "../../lib/ipc";
 import type { Preferences } from "../../types";
-import { UpdateDialog, useManualUpdater } from "../Updater";
+import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
 import type { SettingsCategoryId } from "./categories";
 import { SettingsList, SettingsRow } from "./SettingsRow";
 
@@ -231,7 +230,7 @@ function AboutPanel() {
       <p className="settings-about-copy">
         A lightweight open-source file transfer client for SFTP, FTP, and explicit FTPS.
       </p>
-      {desktop && (
+      {updatesEnabled && (
         <button
           type="button"
           className="secondary"
@@ -242,7 +241,7 @@ function AboutPanel() {
           {checking ? "Checking…" : "Check for updates"}
         </button>
       )}
-      <UpdateDialog updater={updater} />
+      {updatesEnabled && <UpdateDialog updater={updater} />}
     </div>
   );
 }
