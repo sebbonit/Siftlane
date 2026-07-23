@@ -29,7 +29,7 @@ describe("Settings", () => {
     expect(screen.getByLabelText(/connect timeout/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "About" }));
-    expect(screen.getByText(/version 0\.1\.0/i)).toBeInTheDocument();
+    expect(screen.getByText(/version 0\.2\.1/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back/i })).toBeInTheDocument();
   });
 

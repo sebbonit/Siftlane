@@ -4715,7 +4715,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "siftlane-app"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4750,7 +4750,7 @@ dependencies = [
 
 [[package]]
 name = "siftlane-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4764,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "siftlane-ftp"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-native-tls",
  "async-trait",
@@ -4777,7 +4777,7 @@ dependencies = [
 
 [[package]]
 name = "siftlane-sftp"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
