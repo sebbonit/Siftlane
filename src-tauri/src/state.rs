@@ -94,6 +94,30 @@ impl HostKeyVerifier for StoredKeyVerifier {
     }
 }
 
+fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_log::{Target, TargetKind};
+
+    let log_dir = Target::new(TargetKind::LogDir {
+        file_name: Some("siftlane".into()),
+    });
+
+    #[cfg(debug_assertions)]
+    {
+        tauri_plugin_log::Builder::new()
+            .targets([Target::new(TargetKind::Stdout), log_dir])
+            .build()
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        // Keep release logs in the app log directory only (no stdout).
+        tauri_plugin_log::Builder::new()
+            .clear_targets()
+            .target(log_dir)
+            .build()
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -107,7 +131,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(build_log_plugin())
         .setup(|app| {
             let state = AppState::initialize(app.handle())?;
             app.manage(state);

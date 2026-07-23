@@ -466,6 +466,74 @@ button:disabled { cursor: default; opacity: .38; }
 .pane-message { height: 120px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--faint); font-size: 10px; animation: fade-up var(--dur) var(--ease-out) both; }
 .pane-footer { min-height: 29px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 9px; }
 .editor-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 7vh 6vw; background: rgba(20, 27, 25, .48); backdrop-filter: blur(3px); animation: backdrop-in var(--dur) var(--ease-out) both; }
+.loading-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(360px, calc(100vw - 36px));
+  padding: 12px 12px 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: loading-toast-in var(--dur-slow) var(--ease-out) both;
+}
+.loading-toast-spinner {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--teal);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--teal-soft) 80%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 22%, transparent);
+}
+.loading-toast-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.loading-toast-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+.loading-toast-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.loading-toast-cancel {
+  flex: 0 0 auto;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+}
+.loading-toast-cancel:hover {
+  color: var(--text);
+  background: var(--surface-soft);
+}
 .editor-dialog { width: min(1100px, 100%); height: min(760px, 86vh); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); animation: dialog-in var(--dur-slow) var(--ease-bounce) both; }
 .image-preview-dialog { width: min(980px, 100%); height: min(760px, 86vh); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); animation: dialog-in var(--dur-slow) var(--ease-bounce) both; }
 .image-preview-stage { min-height: 0; flex: 1; display: grid; place-items: center; padding: 18px; background:
@@ -1021,6 +1089,10 @@ button:disabled { cursor: default; opacity: .38; }
 @keyframes slide-down {
   from { opacity: 0; transform: translateY(-100%); }
   to { opacity: 1; transform: translateY(0); }
+}
+@keyframes loading-toast-in {
+  from { opacity: 0; transform: translate(28px, 24px); }
+  to { opacity: 1; transform: translate(0, 0); }
 }
 @keyframes tab-in {
   from { opacity: 0; transform: translateY(8px) scale(.96); }
