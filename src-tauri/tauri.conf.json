@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +43,17 @@
     "longDescription": "Siftlane is a lightweight, secure SFTP client for macOS, Windows and Linux.",
     "macOS": {
       "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFOURCRDJCQzI2RTgzM0QKUldROWcyN0NLNzJkamx0MEJPbEd0a1hZYzFCcE1MWlVrcDVtdTZEWWkvd0J3ZFdUOTB0MDEwdTcK",
+      "endpoints": [
+        "https://github.com/sebbonit/Siftlane/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

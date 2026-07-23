@@ -947,6 +947,39 @@ button:disabled { cursor: default; opacity: .38; }
   outline: 2px solid color-mix(in srgb, var(--teal) 70%, transparent);
   outline-offset: 2px;
 }
+.update-dialog { width: min(460px, 100%); }
+.update-dialog-body { display: grid; gap: 12px; padding: 16px 20px 0; }
+.update-dialog-body > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.update-notes {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.update-progress { display: grid; gap: 8px; }
+.update-progress-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.update-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--teal-strong));
+  transition: width var(--dur) var(--ease-out);
+}
+.update-progress p { margin: 0; color: var(--muted); font-size: 10px; }
+
 .settings-about {
   display: flex;
   flex-direction: column;
@@ -961,6 +994,7 @@ button:disabled { cursor: default; opacity: .38; }
 .settings-about h3 { margin: 0; font-size: 16px; letter-spacing: -.02em; }
 .settings-about p { margin: 0; color: var(--muted); font-size: 11px; }
 .settings-about-copy { max-width: 360px; line-height: 1.45; }
+.settings-about > .secondary { margin-top: 10px; }
 
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

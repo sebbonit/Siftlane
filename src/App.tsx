@@ -61,6 +61,7 @@ import {
 } from "./components/SavedActions";
 import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
+import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
 import { isImageFile } from "./lib/media";
 import { joinPath } from "./lib/paths";
@@ -572,8 +573,10 @@ export default function App() {
     }
   }
 
-  if (settingsOpen && preferences) {
-    return (
+  return (
+    <>
+    <AppUpdater />
+    {settingsOpen && preferences ? (
       <SettingsView
         value={preferences}
         onBack={() => setSettingsOpen(false)}
@@ -583,10 +586,7 @@ export default function App() {
           void api.savePreferences(next);
         }}
       />
-    );
-  }
-
-  return (
+    ) : (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <div
         className="window-drag-region"
@@ -847,6 +847,8 @@ export default function App() {
       {previewFile && <ImagePreview file={previewFile} onClose={() => setPreviewFile(null)} />}
       {sudoPrompt && <SudoPasswordDialog prompt={sudoPrompt} onClose={() => { sudoPrompt.resolve(null); setSudoPrompt(null); }} onSubmit={(password) => { sudoPrompt.resolve(password); setSudoPrompt(null); }} />}
     </div>
+    )}
+    </>
   );
 }
 

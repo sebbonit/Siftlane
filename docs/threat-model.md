@@ -24,7 +24,8 @@ The operating system, logged-in user account, system keyring, and SSH cryptograp
 
 ## Known limitations before stable release
 
-- Release signing and update-key rotation procedures are not yet operational.
+- Update packages are signed with a Tauri/minisign keypair. Apple notarization is not used; macOS Gatekeeper may still warn on first install of unsigned `.dmg`/`.app` builds.
+- Update-key rotation procedures are not yet documented.
 - The current queue limits global concurrency; its per-host preference is reserved for scheduler refinement.
 - Conflict `rename` requires choosing a new destination; automatic name generation is not yet implemented.
 - End-to-end interoperability tests against multiple OpenSSH server versions are still required.

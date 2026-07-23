@@ -6,7 +6,7 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 
 ![Siftlane dual-pane SFTP client](docs/images/siftlane-app.png)
 
-> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Recursive directory transfers, remote search, bookmarks, implicit FTPS, and signed release updates remain roadmap items.
+> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Recursive directory transfers, remote search, bookmarks, and implicit FTPS remain roadmap items.
 
 ## Features
 
@@ -20,6 +20,7 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Explicit sudo editing for protected local Unix files and SFTP files
 - Persistent preferences, window state, transfer history, and recent connections
 - Native macOS, Windows, and Linux packaging configuration
+- Signed in-app updates from GitHub Releases (Tauri updater; no Apple Developer account required)
 - Browser demo mode for fast UI work without a running Tauri backend
 
 ## Project structure
