@@ -13,6 +13,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   show_hidden_files: true,
   global_parallel_transfers: 3,
   per_host_parallel_transfers: 2,
+  expand_transfers_on_new: true,
   connect_timeout_seconds: 15,
   response_timeout_seconds: 30,
   keepalive_seconds: 30,
@@ -25,6 +26,7 @@ function preferencesEqual(left: Preferences, right: Preferences) {
     left.show_hidden_files === right.show_hidden_files &&
     left.global_parallel_transfers === right.global_parallel_transfers &&
     left.per_host_parallel_transfers === right.per_host_parallel_transfers &&
+    left.expand_transfers_on_new === right.expand_transfers_on_new &&
     left.connect_timeout_seconds === right.connect_timeout_seconds &&
     left.response_timeout_seconds === right.response_timeout_seconds &&
     left.keepalive_seconds === right.keepalive_seconds

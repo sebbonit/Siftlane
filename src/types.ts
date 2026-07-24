@@ -119,6 +119,7 @@ export interface Preferences {
   show_hidden_files: boolean;
   global_parallel_transfers: number;
   per_host_parallel_transfers: number;
+  expand_transfers_on_new: boolean;
   connect_timeout_seconds: number;
   response_timeout_seconds: number;
   keepalive_seconds: number;

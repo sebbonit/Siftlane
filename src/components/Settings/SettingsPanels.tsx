@@ -143,6 +143,23 @@ function TransfersPanel({
           }
         />
       </SettingsRow>
+      <SettingsRow
+        label="Expand on new transfer"
+        description="Automatically open the transfers panel when a new transfer is queued."
+        htmlFor="settings-expand-transfers"
+      >
+        <span className="settings-toggle">
+          <input
+            id="settings-expand-transfers"
+            type="checkbox"
+            checked={draft.expand_transfers_on_new}
+            onChange={(event) =>
+              onChange({ ...draft, expand_transfers_on_new: event.target.checked })
+            }
+          />
+          <span />
+        </span>
+      </SettingsRow>
     </SettingsList>
   );
 }
