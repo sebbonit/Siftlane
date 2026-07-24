@@ -1,13 +1,28 @@
 name: Publish release
+run-name: >-
+  Publish ${{
+    inputs.bump == 'custom' && format('v{0}', inputs.version)
+    || format('{0} (from latest release)', inputs.bump)
+  }}${{ inputs.prerelease && ' · prerelease' || '' }}
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Version to publish (for example, 0.1.0)
+      bump:
+        description: Next version relative to the latest GitHub release (patch = 0.2.3 → 0.2.4)
         required: true
-        default: 0.1.0
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+        default: patch
+      version:
+        description: Exact version when bump is custom (e.g. 0.3.0). Leave empty for patch/minor/major.
+        required: false
         type: string
+        default: ""
       prerelease:
         description: Mark the GitHub Release as a prerelease
         required: true
@@ -18,12 +33,100 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-release-${{ inputs.version }}
+  group: publish-release
   cancel-in-progress: false
 
 jobs:
+  resolve-version:
+    name: Resolve next version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      previous: ${{ steps.resolve.outputs.previous }}
+    steps:
+      - name: Resolve version from latest release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          CUSTOM_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if [ -z "${latest_tag}" ] || [ "${latest_tag}" = "null" ]; then
+            latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=1" --jq '.[0].tag_name // empty' 2>/dev/null || true)"
+          fi
+          previous="${latest_tag#v}"
+          if [ -z "${previous}" ]; then
+            previous="0.0.0"
+          fi
+
+          if [ "${BUMP}" = "custom" ]; then
+            version="${CUSTOM_VERSION}"
+            if [ -z "${version}" ]; then
+              echo "::error::Custom bump requires an exact version input (for example 0.3.0)."
+              exit 1
+            fi
+          else
+            base="${previous%%[-+]*}"
+            IFS=. read -r major minor patch <<< "${base}"
+            major="${major:-0}"
+            minor="${minor:-0}"
+            patch="${patch:-0}"
+
+            case "${BUMP}" in
+              patch)
+                patch=$((patch + 1))
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              *)
+                echo "::error::Unknown bump type: ${BUMP}"
+                exit 1
+                ;;
+            esac
+            version="${major}.${minor}.${patch}"
+          fi
+
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-].+)?$ ]]; then
+            echo "::error::Invalid version '${version}'. Expected semver like 0.2.4."
+            exit 1
+          fi
+
+          tag="v${version}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::Tag ${tag} already exists. Choose a different bump or custom version."
+            exit 1
+          fi
+
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "previous=${previous}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "## Release version"
+            echo ""
+            echo "- Previous release: \`v${previous}\`"
+            echo "- Bump: \`${BUMP}\`"
+            echo "- Publishing: **${tag}**"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "Resolved ${tag} (previous v${previous}, bump=${BUMP})"
+
   publish:
-    name: Publish ${{ matrix.platform }} release
+    name: Publish ${{ matrix.platform }} ${{ needs.resolve-version.outputs.tag }}
+    needs: resolve-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -69,7 +172,7 @@ jobs:
       # Write version config to a file so Windows shells cannot strip JSON quotes.
       - name: Write release version config
         env:
-          SIFTLANE_VERSION: ${{ inputs.version }}
+          SIFTLANE_VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           node -e 'require("fs").writeFileSync("tauri.release.json", JSON.stringify({ version: process.env.SIFTLANE_VERSION }))'
 
@@ -82,11 +185,15 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
+          PREVIOUS: ${{ needs.resolve-version.outputs.previous }}
         run: |
+          ARGS=(-f "tag_name=v${VERSION}" -f "target_commitish=${GITHUB_SHA}")
+          if [ "${PREVIOUS}" != "0.0.0" ]; then
+            ARGS+=(-f "previous_tag_name=v${PREVIOUS}")
+          fi
           NOTES="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="v${VERSION}" \
-            -f target_commitish="${GITHUB_SHA}" \
+            "${ARGS[@]}" \
             --jq .body)"
           {
             echo "body<<SIFTLANE_NOTES_EOF"
@@ -101,8 +208,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v${{ inputs.version }}
-          releaseName: Siftlane v${{ inputs.version }}
+          tagName: ${{ needs.resolve-version.outputs.tag }}
+          releaseName: Siftlane ${{ needs.resolve-version.outputs.tag }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: ${{ inputs.prerelease }}
