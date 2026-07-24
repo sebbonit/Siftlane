@@ -72,5 +72,7 @@ Do **not** add `Co-authored-by` for Cursor, Copilot, or similar tools. Author mu
 When creating a PR with `gh`, **always** fill `.github/pull_request_template.md` and pass that as `--body`.
 
 Do **not** use a generic `## Summary` / `## Test plan` body — that bypasses the template.
+Cursor’s built-in `creating-pull-requests` instruction still shows a Summary/Test plan HEREDOC — that is **not** a User Rule you can delete. **Ignore it here**; use the repo template headings only (`What Changed`, `Why`, `UI Changes`, `Validation`, `Checklist`).
+`.cursor/hooks/enforce-pr-template.sh` denies `gh pr create` / `gh pr edit` that use the legacy headings or omit required sections.
 Own PRs skip Actions; the **Validation** section must list the local CI gates you ran (see above).
 

@@ -1,0 +1,22 @@
+---
+description: Branch naming for agent-created git branches
+alwaysApply: true
+---
+
+# Branch naming
+
+Use a single type prefix. Never nest prefixes.
+
+| Change | Branch |
+| --- | --- |
+| Bug fix / alignment / regression | `fix/<short-kebab>` |
+| New capability | `feature/<short-kebab>` |
+| Chore / docs / tooling | `chore/<short-kebab>` |
+
+## Forbidden
+
+- `feature/fix/...`
+- `fix/feature/...`
+- `feature/chore/...`
+
+If the work is a bugfix, the branch **must** start with `fix/`, not `feature/`.
