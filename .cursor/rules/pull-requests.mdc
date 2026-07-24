@@ -1,0 +1,49 @@
+---
+description: Create GitHub PRs using the repo pull request template
+alwaysApply: true
+---
+
+# Pull requests
+
+When the user asks to create a pull request, follow the usual `gh` flow (status, diff, push if needed), but **do not** invent a custom `## Summary` / `## Test plan` body.
+
+## Body must use the repo template
+
+1. Read `.github/pull_request_template.md`.
+2. Fill every section with concrete content for this PR (remove HTML comments once filled).
+3. Pass that filled markdown as `--body` via a HEREDOC (or `--body-file`).
+
+```bash
+gh pr create --title "…" --body "$(cat <<'EOF'
+## What Changed
+
+- …
+
+## Why
+
+- …
+
+## UI Changes
+
+- …   # screenshots/video, or explicit “no visual styling changes”
+
+## Validation
+
+- `cargo fmt --all -- --check` — pass/fail (if Rust changed)
+- `cargo clippy --workspace --all-targets -- -D warnings` — …
+- `cargo test --workspace` — …
+- `pnpm build` / `pnpm test` — … (if frontend changed)
+
+## Checklist
+
+- [x] …
+EOF
+)"
+```
+
+## Rules
+
+- Never skip the template because a generic agent rule suggests Summary/Test plan.
+- Never create a PR with an empty or placeholder-only body.
+- Own PRs skip GitHub Actions — Validation must list the **local** CI gates from `AGENTS.md` that you actually ran.
+- Return the PR URL when done.

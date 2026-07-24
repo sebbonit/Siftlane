@@ -66,3 +66,11 @@ Do **not** add `Co-authored-by` for Cursor, Copilot, or similar tools. Author mu
 3. Prefer fixing fmt/clippy locally over relying on a follow-up CI fix commit.
 4. Do not weaken CI (skip fmt/clippy, relax `-D warnings`) to make failures pass.
 5. Never push commits that credit Cursor as co-author.
+
+## Pull requests
+
+When creating a PR with `gh`, **always** fill `.github/pull_request_template.md` and pass that as `--body`.
+
+Do **not** use a generic `## Summary` / `## Test plan` body — that bypasses the template.
+Own PRs skip Actions; the **Validation** section must list the local CI gates you ran (see above).
+
