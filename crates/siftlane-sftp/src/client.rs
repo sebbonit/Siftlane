@@ -759,9 +759,9 @@ impl RemoteFilesystem for SftpClient {
         password: Option<&SecretString>,
     ) -> Result<(), AppError> {
         let operation = if directory {
-            "if [ ! -e \"$1\" ]; then exit 18; fi; rmdir \"$1\""
+            "if [ ! -e \"$1\" ]; then exit 18; fi; rm -rf \"$1\""
         } else {
-            "if [ ! -e \"$1\" ]; then exit 18; fi; rm \"$1\""
+            "if [ ! -e \"$1\" ]; then exit 18; fi; rm -f \"$1\""
         };
         let output = self
             .execute_with_sudo(

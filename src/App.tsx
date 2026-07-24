@@ -51,6 +51,7 @@ import {
 import { BookmarksSection } from "./components/BookmarksSection";
 import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
+import { FilePaneDragGhost } from "./components/FilePaneDragGhost";
 import { GoToPathDialog } from "./components/GoToPathDialog";
 import { ImagePreview } from "./components/ImagePreview";
 import { LoadingOverlay } from "./components/LoadingOverlay";
@@ -362,7 +363,11 @@ export default function App() {
     }
   }
 
-  async function addTransfer(direction: "upload" | "download", entry?: FileEntry | null) {
+  async function addTransfer(
+    direction: "upload" | "download",
+    entry?: FileEntry | null,
+    destinationOverride?: string,
+  ) {
     if (!activeTab || !activeProfile) return;
     const selected = entry ?? (direction === "upload" ? selectedLocal : selectedRemote);
     if (!selected || (selected.kind !== "file" && selected.kind !== "directory")) {
@@ -371,7 +376,9 @@ export default function App() {
     }
     setError(null);
     try {
-      const destinationBase = direction === "upload" ? activeTab.remotePath : activeTab.localPath;
+      const destinationBase =
+        destinationOverride ??
+        (direction === "upload" ? activeTab.remotePath : activeTab.localPath);
       if (selected.kind === "directory") {
         const jobs = await api.enqueueDirectoryTransfer({
           profileId: activeProfile.id,
@@ -395,6 +402,53 @@ export default function App() {
     } catch (reason) {
       setError(errorMessage(reason));
     }
+  }
+
+  function handleDropTransfer(entry: FileEntry, sourceSide: PaneSide, destinationBase: string) {
+    void addTransfer(
+      sourceSide === "local" ? "upload" : "download",
+      entry,
+      destinationBase,
+    );
+  }
+
+  async function moveEntry(side: PaneSide, entry: FileEntry, destinationFolder: string) {
+    if (!activeTab) return;
+    const remote = side === "remote";
+    const destinationPath = joinPath(destinationFolder, entry.name, remote);
+    setError(null);
+    try {
+      if (side === "local") {
+        await api.renameLocalEntry(entry.path, destinationPath);
+        setSelectedLocal(null);
+        await loadPane("local", activeTab.localPath);
+      } else {
+        await api.renameRemoteEntry(activeTab.id, entry.path, destinationPath);
+        setSelectedRemote(null);
+        await loadPane("remote", activeTab.remotePath);
+      }
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  function handlePaneDrop({
+    entry,
+    sourceSide,
+    destinationPath,
+    mode,
+  }: {
+    entry: FileEntry;
+    sourceSide: PaneSide;
+    destinationSide: PaneSide;
+    destinationPath: string;
+    mode: "transfer" | "move";
+  }) {
+    if (mode === "move") {
+      void moveEntry(sourceSide, entry, destinationPath);
+      return;
+    }
+    handleDropTransfer(entry, sourceSide, destinationPath);
   }
 
   async function handleRunSavedAction(action: SavedAction) {
@@ -497,9 +551,9 @@ export default function App() {
     const selected = entry ?? (side === "local" ? selectedLocal : selectedRemote);
     if (!selected) return;
     const directory = selected.kind === "directory";
-    if (!(await api.confirmDelete(selected.name, directory))) return;
     setError(null);
     try {
+      if (!(await api.confirmDelete(selected.name, directory))) return;
       const remove = (password?: string) => {
         if (privileged) {
           return side === "local"
@@ -746,8 +800,9 @@ export default function App() {
 
   return (
     <>
-    <AppUpdater />
-    {settingsOpen && preferences ? (
+      <AppUpdater />
+      <FilePaneDragGhost />
+      {settingsOpen && preferences ? (
       <SettingsView
         value={preferences}
         onBack={() => setSettingsOpen(false)}
@@ -856,6 +911,7 @@ export default function App() {
                   onRevealInFileManager={(path) => void revealInFileManager(path)}
                   transferLabel="Upload"
                   onTransfer={(entry) => void addTransfer("upload", entry)}
+                  onPaneDrop={handlePaneDrop}
                   bookmarked={!!findBookmark("local", activeTab.localPath, activeTab.profileId)}
                   onToggleBookmark={() => void toggleBookmark("local")}
                 />
@@ -901,6 +957,7 @@ export default function App() {
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
                   transferLabel="Download"
                   onTransfer={(entry) => void addTransfer("download", entry)}
+                  onPaneDrop={handlePaneDrop}
                   bookmarked={!!findBookmark("remote", activeTab.remotePath, activeTab.profileId)}
                   onToggleBookmark={() => void toggleBookmark("remote")}
                 />

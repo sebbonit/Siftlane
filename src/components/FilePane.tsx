@@ -1,29 +1,27 @@
 import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ArrowLeft,
+  Bookmark,
   ChevronDown,
   ChevronUp,
   Eye,
   EyeOff,
-  File,
-  FileCode2,
   Folder,
   FolderOpen,
-  Image as ImageIcon,
-  LoaderCircle,
   RefreshCw,
   Search,
-  Star,
   X,
 } from "lucide-react";
-import { formatBytes, formatDate, formatPermissions } from "../lib/format";
+import { formatBytes } from "../lib/format";
 import { sortEntries, type SortDir, type SortKey } from "../lib/fileSort";
-import { isImageFile } from "../lib/media";
+import type { PaneSide } from "../lib/filePaneDnD";
 import { parentPath } from "../lib/paths";
+import { useFilePaneDnD, type PaneDropHandler } from "../hooks/useFilePaneDnD";
 import type { FileEntry } from "../types";
 import { FilePaneContextMenu } from "./FilePaneContextMenu";
+import { FilePaneRows } from "./FilePaneRows";
 
-export type PaneSide = "local" | "remote";
+export type { PaneSide };
 
 const SORT_COLUMNS: Array<{ key: SortKey; label: string; ariaLabel?: string }> = [
   { key: "name", label: "Name" },
@@ -59,6 +57,7 @@ export function FilePane({
   onRevealInFileManager,
   onTransfer,
   transferLabel,
+  onPaneDrop,
   bookmarked = false,
   onToggleBookmark,
 }: {
@@ -88,6 +87,7 @@ export function FilePane({
   onRevealInFileManager?: (path: string) => void;
   onTransfer?: (entry: FileEntry) => void;
   transferLabel?: string;
+  onPaneDrop?: PaneDropHandler;
   bookmarked?: boolean;
   onToggleBookmark?: () => void;
 }) {
@@ -99,6 +99,8 @@ export function FilePane({
     y: number;
     entry: FileEntry | null;
   } | null>(null);
+
+  const dnd = useFilePaneDnD(side, onSelect, onPaneDrop);
 
   const visible = useMemo(() => {
     const filtered = entries.filter(
@@ -125,8 +127,10 @@ export function FilePane({
 
   return (
     <section
-      className="file-pane"
+      className={`file-pane${dnd.dragOverPane ? " is-drop-target" : ""}`}
       aria-label={`${title} files`}
+      data-pane-side={side}
+      data-pane-path={path}
       onFocusCapture={() => onFocus?.()}
       onMouseDown={() => onFocus?.()}
       onClick={() => setContextMenu(null)}
@@ -182,7 +186,7 @@ export function FilePane({
                 onToggleBookmark();
               }}
             >
-              <Star size={14} fill={bookmarked ? "currentColor" : "none"} />
+              <Bookmark size={14} fill={bookmarked ? "currentColor" : "none"} />
             </button>
           )}
         </div>
@@ -234,40 +238,19 @@ export function FilePane({
           ))}
         </div>
         <div className="file-rows">
-          {loading && entries.length === 0 ? (
-            <div className="pane-message">
-              <LoaderCircle className="spin" size={20} /> Loading directory…
-            </div>
-          ) : (
-            visible.map((entry) => (
-              <button
-                key={entry.path}
-                className={`file-row ${selected?.path === entry.path ? "selected" : ""}`}
-                onClick={() => onSelect(entry)}
-                onDoubleClick={() =>
-                  entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)
-                }
-                onContextMenu={(event) => {
-                  event.stopPropagation();
-                  onSelect(entry);
-                  openContextMenu(event, entry);
-                }}
-                role="row"
-              >
-                <span className="file-name">
-                  {fileIcon(entry)}
-                  <span>{entry.name}</span>
-                  {entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}
-                </span>
-                <span className="file-size">
-                  {entry.kind === "directory" && entry.size == null ? "—" : formatBytes(entry.size)}
-                </span>
-                <span className="file-modified">{formatDate(entry.modified_at)}</span>
-                <span className="permissions">{formatPermissions(entry.permissions)}</span>
-              </button>
-            ))
-          )}
-          {!loading && visible.length === 0 && <div className="pane-message">No matching files</div>}
+          <FilePaneRows
+            loading={loading}
+            entriesEmpty={entries.length === 0}
+            visible={visible}
+            selected={selected}
+            dragOverFolderPath={dnd.dragOverFolderPath}
+            draggingPath={dnd.draggingPath}
+            onSelect={onSelect}
+            onNavigate={onNavigate}
+            onOpenFile={onOpenFile}
+            onContextMenu={openContextMenu}
+            onPointerDownRow={dnd.handleRowPointerDown}
+          />
         </div>
       </div>
       <footer className="pane-footer">
@@ -297,11 +280,4 @@ export function FilePane({
       )}
     </section>
   );
-}
-
-function fileIcon(entry: FileEntry) {
-  if (entry.kind === "directory") return <Folder size={17} fill="currentColor" />;
-  if (isImageFile(entry.name)) return <ImageIcon size={16} />;
-  if (/\.(tsx?|jsx?|html|css|json|rs)$/i.test(entry.name)) return <FileCode2 size={16} />;
-  return <File size={16} />;
 }
