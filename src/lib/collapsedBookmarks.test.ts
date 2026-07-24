@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Favorite } from "../types";
-import {
-  collapsedBookmarkBudget,
-  planCollapsedBookmarks,
-  rankCollapsedBookmarks,
-} from "./collapsedBookmarks";
+import { collapsedBookmarkBudget, planCollapsedBookmarks } from "./collapsedBookmarks";
 
 function bookmark(partial: Partial<Favorite> & Pick<Favorite, "id" | "label" | "path">): Favorite {
   return {
-    profile_id: null,
+    profile_id: "p1",
     side: "local",
     ...partial,
   };
@@ -24,46 +20,21 @@ describe("collapsedBookmarkBudget", () => {
   });
 });
 
-describe("rankCollapsedBookmarks", () => {
-  it("prefers the active path, then the active profile", () => {
-    const ranked = rankCollapsedBookmarks(
-      [
-        bookmark({ id: "a", label: "Other", path: "/other", profile_id: "p2", side: "remote" }),
-        bookmark({ id: "b", label: "Profile", path: "/home", profile_id: "p1", side: "remote" }),
-        bookmark({ id: "c", label: "Active", path: "/var/www", profile_id: "p2", side: "remote" }),
-        bookmark({ id: "d", label: "Local", path: "/Users/me" }),
-      ],
-      "p1",
-      null,
-      "/var/www",
-    );
-    expect(ranked.map((item) => item.id)).toEqual(["c", "b", "d", "a"]);
-  });
-});
-
 describe("planCollapsedBookmarks", () => {
   const many = [
-    bookmark({ id: "1", label: "One", path: "/1" }),
-    bookmark({ id: "2", label: "Two", path: "/2" }),
-    bookmark({ id: "3", label: "Three", path: "/3" }),
-    bookmark({ id: "4", label: "Four", path: "/4" }),
+    bookmark({ id: "1", label: "One", path: "/1", profile_id: "p1" }),
+    bookmark({ id: "2", label: "Two", path: "/2", profile_id: "p1" }),
+    bookmark({ id: "3", label: "Three", path: "/3", profile_id: "p1" }),
+    bookmark({ id: "4", label: "Four", path: "/4", profile_id: "p1" }),
   ];
 
-  it("shows all bookmarks when they fit", () => {
-    const plan = planCollapsedBookmarks(many.slice(0, 2), 1, null, null, null);
-    expect(plan.visible).toHaveLength(2);
-    expect(plan.overflow).toHaveLength(0);
+  it("returns all bookmarks in saved order", () => {
+    const planned = planCollapsedBookmarks(many, ["4", "2", "1", "3"]);
+    expect(planned.map((item) => item.id)).toEqual(["4", "2", "1", "3"]);
   });
 
-  it("reserves a slot for overflow when over budget", () => {
-    const plan = planCollapsedBookmarks(many, 2, null, null, null);
-    expect(plan.visible).toHaveLength(2);
-    expect(plan.overflow).toHaveLength(2);
-  });
-
-  it("keeps only an overflow menu when favorites fill the rail", () => {
-    const plan = planCollapsedBookmarks(many, 6, null, null, null);
-    expect(plan.visible).toHaveLength(0);
-    expect(plan.overflow).toHaveLength(4);
+  it("appends unordered bookmarks by label", () => {
+    const planned = planCollapsedBookmarks(many, ["3"]);
+    expect(planned.map((item) => item.id)).toEqual(["3", "4", "1", "2"]);
   });
 });

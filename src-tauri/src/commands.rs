@@ -1732,19 +1732,17 @@ pub fn save_favorite(
     }
     favorite.label = label.to_string();
     favorite.path = normalize_favorite_path(&favorite.path, favorite.side)?;
-    if favorite.side == FavoriteSide::Remote && favorite.profile_id.is_none() {
-        return Err(AppError::new(
+    let profile_id = favorite.profile_id.ok_or_else(|| {
+        AppError::new(
             ErrorCode::InvalidInput,
-            "Remote bookmarks must belong to a connection",
-        ));
-    }
-    if let Some(profile_id) = favorite.profile_id {
-        state.storage.get_profile(profile_id)?;
-    }
+            "Bookmarks must belong to a connection",
+        )
+    })?;
+    state.storage.get_profile(profile_id)?;
     if let Some(existing) =
         state
             .storage
-            .find_favorite(favorite.profile_id, favorite.side, &favorite.path)?
+            .find_favorite(Some(profile_id), favorite.side, &favorite.path)?
     {
         favorite.id = existing.id;
     }

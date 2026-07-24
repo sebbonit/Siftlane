@@ -17,6 +17,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   connect_timeout_seconds: 15,
   response_timeout_seconds: 30,
   keepalive_seconds: 30,
+  bookmark_order: {},
 };
 
 function preferencesEqual(left: Preferences, right: Preferences) {
@@ -74,7 +75,9 @@ export function SettingsView({
             type="button"
             className="settings-restore"
             disabled={atDefaults}
-            onClick={() => commit(DEFAULT_PREFERENCES)}
+            onClick={() =>
+              commit({ ...DEFAULT_PREFERENCES, bookmark_order: draft.bookmark_order })
+            }
           >
             <RotateCcw size={14} />
             Restore defaults

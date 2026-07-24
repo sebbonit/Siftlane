@@ -4,12 +4,14 @@ import type { Favorite } from "../types";
 
 export function BookmarksSection({
   bookmarks,
+  hasActiveConnection = false,
   activeLocalPath,
   activeRemotePath,
   onOpen,
   onRemove,
 }: {
   bookmarks: Favorite[];
+  hasActiveConnection?: boolean;
   activeLocalPath?: string | null;
   activeRemotePath?: string | null;
   onOpen: (bookmark: Favorite) => void;
@@ -18,7 +20,11 @@ export function BookmarksSection({
   return (
     <CollapsibleSection title="Bookmarks" icon={<Bookmark size={14} />}>
       {bookmarks.length === 0 && (
-        <p className="empty-note">Bookmark a folder in the path bar</p>
+        <p className="empty-note">
+          {hasActiveConnection
+            ? "Bookmark a folder in the path bar"
+            : "Connect to a server to see its bookmarks"}
+        </p>
       )}
       {bookmarks.map((bookmark) => {
         const active =
