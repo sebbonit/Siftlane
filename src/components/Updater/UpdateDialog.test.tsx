@@ -38,7 +38,7 @@ describe("UpdateDialog", () => {
 
     expect(screen.getByRole("dialog", { name: /update available/i })).toBeInTheDocument();
     expect(screen.getByText(/version 0\.2\.0/i)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /what's changed/i })).toBeInTheDocument();
+    expect(screen.queryByText(/what's changed/i)).not.toBeInTheDocument();
     expect(screen.getByText(/bug fixes/i)).toBeInTheDocument();
     const prLink = screen.getByRole("link", { name: "#1" });
     expect(prLink).toHaveClass("md-ref-pr");

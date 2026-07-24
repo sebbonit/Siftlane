@@ -1,7 +1,6 @@
 import { CircleAlert, Download, LoaderCircle, X } from "lucide-react";
-import { formatGithubReleaseNotes } from "../../lib/githubReleaseNotes";
-import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
 import type { AppUpdaterState } from "./useAppUpdater";
+import { UpdateReleaseNotes } from "./UpdateReleaseNotes";
 
 export function UpdateDialog({ updater }: { updater: AppUpdaterState }) {
   const { phase, update, progress, error, installUpdate, dismiss } = updater;
@@ -72,11 +71,7 @@ export function UpdateDialog({ updater }: { updater: AppUpdaterState }) {
             {update.date ? ` (published ${new Date(update.date).toLocaleDateString()})` : ""}. Download and install it
             to stay current.
           </p>
-          <MarkdownPreview
-            content={formatGithubReleaseNotes(update.body ?? "")}
-            className="update-notes"
-            emptyLabel={null}
-          />
+          <UpdateReleaseNotes body={update.body} />
           {busy && (
             <div className="update-progress" role="status" aria-live="polite">
               <div className="update-progress-bar">
