@@ -1,14 +1,31 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function MarkdownPreview({ content }: { content: string }) {
+type MarkdownPreviewProps = {
+  content: string;
+  className?: string;
+  /** When null, blank content renders nothing instead of an empty-state message. */
+  emptyLabel?: string | null;
+};
+
+export function MarkdownPreview({
+  content,
+  className = "markdown-preview",
+  emptyLabel = "This file is empty.",
+}: MarkdownPreviewProps) {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    if (emptyLabel == null) return null;
+    return (
+      <div className={className} aria-label="Markdown preview">
+        <p className="markdown-preview-empty">{emptyLabel}</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="markdown-preview" aria-label="Markdown preview">
-      {content.trim() ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-      ) : (
-        <p className="markdown-preview-empty">This file is empty.</p>
-      )}
+    <div className={className} aria-label="Markdown preview">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{trimmed}</ReactMarkdown>
     </div>
   );
 }

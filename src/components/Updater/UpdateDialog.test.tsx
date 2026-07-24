@@ -28,7 +28,7 @@ describe("UpdateDialog", () => {
           update: {
             version: "0.2.0",
             date: "2026-07-23T00:00:00Z",
-            body: "Bug fixes",
+            body: "## What's Changed\n* Bug fixes by @dev in https://example.com/pull/1",
           } as AppUpdaterState["update"],
           installUpdate,
           dismiss,
@@ -38,6 +38,7 @@ describe("UpdateDialog", () => {
 
     expect(screen.getByRole("dialog", { name: /update available/i })).toBeInTheDocument();
     expect(screen.getByText(/version 0\.2\.0/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /what's changed/i })).toBeInTheDocument();
     expect(screen.getByText(/bug fixes/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /install update/i }));

@@ -73,6 +73,27 @@ jobs:
         run: |
           node -e 'require("fs").writeFileSync("tauri.release.json", JSON.stringify({ version: process.env.SIFTLANE_VERSION }))'
 
+      # Generate notes ourselves and pass as releaseBody so both the GitHub Release
+      # page and latest.json (in-app updater) get the same commits/PRs changelog.
+      # generateReleaseNotes alone only fills the GitHub Release body — tauri-action
+      # copies the releaseBody input into latest.json notes, not the generated body.
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          NOTES="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="v${VERSION}" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq .body)"
+          {
+            echo "body<<SIFTLANE_NOTES_EOF"
+            printf '%s\n' "$NOTES"
+            echo "SIFTLANE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish bundles
         uses: tauri-apps/tauri-action@v0
         env:
@@ -82,7 +103,7 @@ jobs:
         with:
           tagName: v${{ inputs.version }}
           releaseName: Siftlane v${{ inputs.version }}
-          releaseBody: Siftlane v${{ inputs.version }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: ${{ inputs.prerelease }}
           includeUpdaterJson: true
