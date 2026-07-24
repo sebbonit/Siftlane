@@ -166,6 +166,7 @@ export default function App() {
     updateTab,
     setTransfers,
     updateTransfer,
+    setExpandTransfersOnNew,
   } = useAppStore();
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const activeProfile = profiles.find((profile) => profile.id === activeTab?.profileId) ?? null;
@@ -182,7 +183,8 @@ export default function App() {
     ])
       .then(async ([nextProfiles, nextTransfers, nextPreferences, nextActions, nextFavorites]) => {
         setProfiles(nextProfiles);
-        setTransfers(nextTransfers);
+        setExpandTransfersOnNew(nextPreferences.expand_transfers_on_new);
+        setTransfers(nextTransfers, { expandOnNew: false });
         setPreferences(nextPreferences);
         setSavedActions(nextActions);
         setFavorites(nextFavorites);
@@ -198,7 +200,7 @@ export default function App() {
       stop?.();
       if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
     };
-  }, [setTransfers, updateTransfer]);
+  }, [setExpandTransfersOnNew, setTransfers, updateTransfer]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -808,6 +810,7 @@ export default function App() {
         onBack={() => setSettingsOpen(false)}
         onChange={(next) => {
           setPreferences(next);
+          setExpandTransfersOnNew(next.expand_transfers_on_new);
           applyTheme(next.theme);
           void api.savePreferences(next);
         }}

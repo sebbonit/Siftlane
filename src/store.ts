@@ -6,13 +6,19 @@ interface AppStore {
   activeTabId: UUID | null;
   transfers: TransferJob[];
   transferPanelOpen: boolean;
+  expandTransfersOnNew: boolean;
   addTab: (tab: SessionTab) => void;
   closeTab: (id: UUID) => void;
   setActiveTab: (id: UUID) => void;
   updateTab: (id: UUID, patch: Partial<SessionTab>) => void;
-  setTransfers: (transfers: TransferJob[]) => void;
+  setTransfers: (transfers: TransferJob[], options?: { expandOnNew?: boolean }) => void;
   updateTransfer: (progress: TransferProgress) => void;
   toggleTransfers: () => void;
+  setExpandTransfersOnNew: (value: boolean) => void;
+}
+
+function hasNewTransfer(previous: TransferJob[], next: TransferJob[]) {
+  return next.some((job) => !previous.some((existing) => existing.id === job.id));
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -20,6 +26,7 @@ export const useAppStore = create<AppStore>((set) => ({
   activeTabId: null,
   transfers: [],
   transferPanelOpen: true,
+  expandTransfersOnNew: true,
   addTab: (tab) =>
     set((state) => ({
       tabs: [...state.tabs.filter((item) => item.profileId !== tab.profileId), tab],
@@ -39,7 +46,18 @@ export const useAppStore = create<AppStore>((set) => ({
     set((state) => ({
       tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
     })),
-  setTransfers: (transfers) => set({ transfers }),
+  setTransfers: (transfers, options) =>
+    set((state) => {
+      const shouldExpand =
+        options?.expandOnNew !== false &&
+        state.expandTransfersOnNew &&
+        !state.transferPanelOpen &&
+        hasNewTransfer(state.transfers, transfers);
+      return {
+        transfers,
+        ...(shouldExpand ? { transferPanelOpen: true } : {}),
+      };
+    }),
   updateTransfer: (progress) =>
     set((state) => ({
       transfers: state.transfers.map((job) =>
@@ -47,4 +65,5 @@ export const useAppStore = create<AppStore>((set) => ({
       ),
     })),
   toggleTransfers: () => set((state) => ({ transferPanelOpen: !state.transferPanelOpen })),
+  setExpandTransfersOnNew: (value) => set({ expandTransfersOnNew: value }),
 }));

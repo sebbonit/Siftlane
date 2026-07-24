@@ -312,6 +312,10 @@ pub struct TransferProgress {
     pub error: Option<String>,
 }
 
+fn default_expand_transfers_on_new() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Preferences {
     pub theme: Theme,
@@ -319,6 +323,8 @@ pub struct Preferences {
     pub show_hidden_files: bool,
     pub global_parallel_transfers: u8,
     pub per_host_parallel_transfers: u8,
+    #[serde(default = "default_expand_transfers_on_new")]
+    pub expand_transfers_on_new: bool,
     pub connect_timeout_seconds: u64,
     pub response_timeout_seconds: u64,
     pub keepalive_seconds: u64,
@@ -332,6 +338,7 @@ impl Default for Preferences {
             show_hidden_files: true,
             global_parallel_transfers: 3,
             per_host_parallel_transfers: 2,
+            expand_transfers_on_new: true,
             connect_timeout_seconds: 15,
             response_timeout_seconds: 30,
             keepalive_seconds: 30,

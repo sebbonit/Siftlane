@@ -24,6 +24,7 @@ describe("Settings", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Transfers" })).toBeInTheDocument();
     expect(screen.getByLabelText(/global parallel transfers/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/per-host parallel transfers/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/expand on new transfer/i)).toBeChecked();
 
     await userEvent.click(screen.getByRole("button", { name: "Connection" }));
     expect(screen.getByLabelText(/connect timeout/i)).toBeInTheDocument();
