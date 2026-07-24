@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  Star,
   X,
 } from "lucide-react";
 import { formatBytes, formatDate, formatPermissions } from "../lib/format";
@@ -57,6 +58,8 @@ export function FilePane({
   onRevealInFileManager,
   onTransfer,
   transferLabel,
+  bookmarked = false,
+  onToggleBookmark,
 }: {
   title: string;
   subtitle?: string;
@@ -83,6 +86,8 @@ export function FilePane({
   onRevealInFileManager?: (path: string) => void;
   onTransfer?: (entry: FileEntry) => void;
   transferLabel?: string;
+  bookmarked?: boolean;
+  onToggleBookmark?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -159,6 +164,21 @@ export function FilePane({
               }}
             >
               <FolderOpen size={14} />
+            </button>
+          )}
+          {onToggleBookmark && (
+            <button
+              type="button"
+              className="path-bookmark"
+              title={bookmarked ? "Remove bookmark" : "Bookmark this folder"}
+              aria-label={bookmarked ? "Remove bookmark" : "Bookmark this folder"}
+              aria-pressed={bookmarked}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleBookmark();
+              }}
+            >
+              <Star size={14} fill={bookmarked ? "currentColor" : "none"} />
             </button>
           )}
         </div>

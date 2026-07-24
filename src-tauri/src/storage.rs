@@ -2,7 +2,8 @@ use std::{fs, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use siftlane_core::{
-    AppError, ConnectionProfile, ErrorCode, Preferences, SavedAction, TransferJob,
+    AppError, ConnectionProfile, ErrorCode, Favorite, FavoriteSide, Preferences, SavedAction,
+    TransferJob,
 };
 use uuid::Uuid;
 
@@ -253,6 +254,111 @@ impl Storage {
         })
     }
 
+    pub fn list_favorites(&self) -> Result<Vec<Favorite>, AppError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, profile_id, side, label, path FROM favorites
+                 ORDER BY label COLLATE NOCASE, path COLLATE NOCASE",
+            )?;
+            statement
+                .query_map([], |row| {
+                    let id: String = row.get(0)?;
+                    let profile_id: Option<String> = row.get(1)?;
+                    let side: String = row.get(2)?;
+                    let label: String = row.get(3)?;
+                    let path: String = row.get(4)?;
+                    Ok((id, profile_id, side, label, path))
+                })?
+                .map(|row| {
+                    let (id, profile_id, side, label, path) = row?;
+                    parse_favorite(id, profile_id, side, label, path)
+                })
+                .collect()
+        })
+    }
+
+    pub fn find_favorite(
+        &self,
+        profile_id: Option<Uuid>,
+        side: FavoriteSide,
+        path: &str,
+    ) -> Result<Option<Favorite>, AppError> {
+        self.with_connection(|connection| {
+            let side_value = favorite_side_value(side);
+            let row = if let Some(profile_id) = profile_id {
+                connection
+                    .query_row(
+                        "SELECT id, profile_id, side, label, path FROM favorites
+                         WHERE profile_id = ?1 AND side = ?2 AND path = ?3",
+                        params![profile_id.to_string(), side_value, path],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, String>(3)?,
+                                row.get::<_, String>(4)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+            } else {
+                connection
+                    .query_row(
+                        "SELECT id, profile_id, side, label, path FROM favorites
+                         WHERE profile_id IS NULL AND side = ?1 AND path = ?2",
+                        params![side_value, path],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, String>(3)?,
+                                row.get::<_, String>(4)?,
+                            ))
+                        },
+                    )
+                    .optional()?
+            };
+            row.map(|(id, profile_id, side, label, path)| {
+                parse_favorite(id, profile_id, side, label, path)
+            })
+            .transpose()
+        })
+    }
+
+    pub fn save_favorite(&self, favorite: &Favorite) -> Result<(), AppError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO favorites (id, profile_id, side, label, path)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET profile_id=excluded.profile_id,
+                 side=excluded.side, label=excluded.label, path=excluded.path",
+                params![
+                    favorite.id.to_string(),
+                    favorite.profile_id.map(|id| id.to_string()),
+                    favorite_side_value(favorite.side),
+                    favorite.label,
+                    favorite.path,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_favorite(&self, id: Uuid) -> Result<(), AppError> {
+        let removed = self.with_connection(|connection| {
+            connection.execute("DELETE FROM favorites WHERE id = ?1", [id.to_string()])
+        })?;
+        if removed == 0 {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "The bookmark was not found",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn list_saved_actions(&self) -> Result<Vec<SavedAction>, AppError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -397,9 +503,60 @@ fn serialization_error(source: serde_json::Error) -> AppError {
         .with_detail(source.to_string())
 }
 
+fn favorite_side_value(side: FavoriteSide) -> &'static str {
+    match side {
+        FavoriteSide::Local => "local",
+        FavoriteSide::Remote => "remote",
+    }
+}
+
+fn parse_favorite(
+    id: String,
+    profile_id: Option<String>,
+    side: String,
+    label: String,
+    path: String,
+) -> rusqlite::Result<Favorite> {
+    let id = Uuid::parse_str(&id).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let profile_id = profile_id
+        .map(|value| {
+            Uuid::parse_str(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()?;
+    let side = match side.as_str() {
+        "local" => FavoriteSide::Local,
+        "remote" => FavoriteSide::Remote,
+        other => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unknown favorite side: {other}"),
+                )),
+            ));
+        }
+    };
+    Ok(Favorite {
+        id,
+        profile_id,
+        side,
+        label,
+        path,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use siftlane_core::{AuthRef, ConnectionProfile};
+    use siftlane_core::{AuthRef, ConnectionProfile, Favorite, FavoriteSide};
 
     use super::Storage;
 
@@ -415,5 +572,55 @@ mod tests {
         );
         storage.save_profile(&profile).unwrap();
         assert_eq!(storage.list_profiles().unwrap(), vec![profile]);
+    }
+
+    #[test]
+    fn favorites_round_trip_and_lookup() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open(temp.path().join("siftlane.sqlite3")).unwrap();
+        let profile = ConnectionProfile::new(
+            "Test".into(),
+            "example.com".into(),
+            "deploy".into(),
+            AuthRef::Password { remember: true },
+        );
+        storage.save_profile(&profile).unwrap();
+
+        let remote = Favorite::new(
+            Some(profile.id),
+            FavoriteSide::Remote,
+            "html".into(),
+            "/var/www/html".into(),
+        );
+        let local = Favorite::new(
+            None,
+            FavoriteSide::Local,
+            "Projects".into(),
+            "/Users/me/Projects".into(),
+        );
+        storage.save_favorite(&remote).unwrap();
+        storage.save_favorite(&local).unwrap();
+
+        let listed = storage.list_favorites().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(
+            storage
+                .find_favorite(Some(profile.id), FavoriteSide::Remote, "/var/www/html")
+                .unwrap()
+                .unwrap()
+                .id,
+            remote.id
+        );
+        assert_eq!(
+            storage
+                .find_favorite(None, FavoriteSide::Local, "/Users/me/Projects")
+                .unwrap()
+                .unwrap()
+                .id,
+            local.id
+        );
+
+        storage.delete_favorite(remote.id).unwrap();
+        assert_eq!(storage.list_favorites().unwrap(), vec![local]);
     }
 }

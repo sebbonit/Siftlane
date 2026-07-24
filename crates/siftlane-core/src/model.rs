@@ -63,6 +63,39 @@ impl ConnectionProfile {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FavoriteSide {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Favorite {
+    pub id: Uuid,
+    pub profile_id: Option<ProfileId>,
+    pub side: FavoriteSide,
+    pub label: String,
+    pub path: String,
+}
+
+impl Favorite {
+    pub fn new(
+        profile_id: Option<ProfileId>,
+        side: FavoriteSide,
+        label: String,
+        path: String,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            profile_id,
+            side,
+            label,
+            path,
+        }
+    }
+}
+
 impl Protocol {
     pub const fn default_port(self) -> u16 {
         match self {

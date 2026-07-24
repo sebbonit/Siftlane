@@ -63,6 +63,45 @@ describe("Siftlane shell", () => {
     expect(document.querySelector(".session-tabs")).toHaveClass("empty");
   });
 
+  it("bookmarks the remote path and opens it from the sidebar", async () => {
+    render(<App />);
+    const newButtons = await screen.findAllByRole("button", { name: /new connection/i });
+    await userEvent.click(newButtons[0]!);
+    await userEvent.type(screen.getByLabelText(/display name/i), "Bookmark server");
+    await userEvent.type(screen.getByLabelText(/^host$/i), "bookmark.example.com");
+    await userEvent.type(screen.getByLabelText(/username/i), "deploy");
+    const initialPath = screen.getByLabelText(/initial path/i);
+    await userEvent.clear(initialPath);
+    await userEvent.type(initialPath, "/var/www/html");
+    await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
+    await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
+    await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
+
+    const remotePane = screen.getByRole("region", { name: "Remote files" });
+    const bookmarkButtons = within(remotePane).getAllByRole("button", {
+      name: "Bookmark this folder",
+    });
+    await userEvent.click(bookmarkButtons[0]!);
+    expect(
+      await within(remotePane).findByRole("button", { name: "Remove bookmark" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    const bookmarks = screen.getByRole("button", { name: "Bookmarks" }).closest("section");
+    expect(bookmarks).not.toBeNull();
+    expect(within(bookmarks!).getByText("html")).toBeInTheDocument();
+    expect(within(bookmarks!).getByText("/var/www/html")).toBeInTheDocument();
+
+    await userEvent.click(within(remotePane).getByRole("button", { name: "Parent folder" }));
+    await waitFor(() => {
+      expect(within(remotePane).getByTitle("/var/www")).toBeInTheDocument();
+    });
+    await userEvent.click(within(bookmarks!).getByTitle("/var/www/html"));
+    await waitFor(() => {
+      expect(within(remotePane).getByTitle("/var/www/html")).toBeInTheDocument();
+    });
+  });
+
   it("offers FTP and FTPS with protocol-appropriate sign-in options", async () => {
     render(<App />);
     const newButtons = await screen.findAllByRole("button", { name: /new connection/i });

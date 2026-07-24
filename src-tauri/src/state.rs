@@ -182,6 +182,9 @@ pub fn run() {
             crate::commands::list_saved_actions,
             crate::commands::save_saved_action,
             crate::commands::delete_saved_action,
+            crate::commands::list_favorites,
+            crate::commands::save_favorite,
+            crate::commands::delete_favorite,
             crate::commands::package_local_directory,
             crate::commands::package_remote_directory,
         ])
