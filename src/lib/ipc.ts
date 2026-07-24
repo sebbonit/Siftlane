@@ -10,6 +10,7 @@ import type {
   ConnectResult,
   ConnectionProfile,
   DirectoryTransferMode,
+  Favorite,
   FileEntry,
   EditableFile,
   Preferences,
@@ -78,6 +79,7 @@ let browserTransfers: TransferJob[] = demoMode
     ]
   : [];
 let browserSavedActions: SavedAction[] = [];
+let browserFavorites: Favorite[] = [];
 
 function demoEntries(base: string, local: boolean): FileEntry[] {
   const values: Array<[string, FileEntry["kind"], number | null]> = [
@@ -435,6 +437,40 @@ export const api = {
   async deleteSavedAction(id: UUID) {
     if (desktop) return call<void>("delete_saved_action", { id });
     browserSavedActions = browserSavedActions.filter((action) => action.id !== id);
+  },
+  async listFavorites() {
+    return desktop ? call<Favorite[]>("list_favorites") : browserFavorites;
+  },
+  async saveFavorite(favorite: Favorite) {
+    if (desktop) return call<Favorite>("save_favorite", { favorite });
+    const normalizedPath =
+      favorite.side === "remote"
+        ? `/${favorite.path
+            .split("/")
+            .filter((segment) => segment && segment !== ".")
+            .join("/")}`
+        : favorite.path.replace(/[\\/]+$/, "") || favorite.path;
+    const existing = browserFavorites.find(
+      (item) =>
+        item.profile_id === favorite.profile_id &&
+        item.side === favorite.side &&
+        item.path === normalizedPath,
+    );
+    const saved = {
+      ...favorite,
+      id: existing?.id ?? favorite.id,
+      path: normalizedPath,
+      label: favorite.label.trim() || favorite.label,
+    };
+    browserFavorites = [
+      ...browserFavorites.filter((item) => item.id !== saved.id),
+      saved,
+    ].sort((left, right) => left.label.localeCompare(right.label));
+    return saved;
+  },
+  async deleteFavorite(id: UUID) {
+    if (desktop) return call<void>("delete_favorite", { id });
+    browserFavorites = browserFavorites.filter((favorite) => favorite.id !== id);
   },
   async packageLocalDirectory(path: string, format: ArchiveFormat = "zip") {
     if (desktop) return call<string>("package_local_directory", { path, format });

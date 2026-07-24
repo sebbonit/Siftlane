@@ -48,6 +48,7 @@ import {
   Star,
   X,
 } from "lucide-react";
+import { BookmarksSection } from "./components/BookmarksSection";
 import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { GoToPathDialog } from "./components/GoToPathDialog";
@@ -65,12 +66,13 @@ import { TransferPanel } from "./components/TransferPanel";
 import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
 import { isImageFile } from "./lib/media";
-import { joinPath } from "./lib/paths";
+import { joinPath, normalizeBookmarkPath, pathBasename } from "./lib/paths";
 import { useAppStore } from "./store";
 import type {
   AppError,
   AuthRef,
   ConnectionProfile,
+  Favorite,
   FileEntry,
   HostKeyChallenge,
   Preferences,
@@ -137,6 +139,7 @@ export default function App() {
   const [infoTarget, setInfoTarget] = useState<InfoTarget | null>(null);
   const [infoSaving, setInfoSaving] = useState(false);
   const [savedActions, setSavedActions] = useState<SavedAction[]>([]);
+  const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
@@ -165,12 +168,19 @@ export default function App() {
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-    void Promise.all([api.listProfiles(), api.listTransfers(), api.getPreferences(), api.listSavedActions()])
-      .then(async ([nextProfiles, nextTransfers, nextPreferences, nextActions]) => {
+    void Promise.all([
+      api.listProfiles(),
+      api.listTransfers(),
+      api.getPreferences(),
+      api.listSavedActions(),
+      api.listFavorites(),
+    ])
+      .then(async ([nextProfiles, nextTransfers, nextPreferences, nextActions, nextFavorites]) => {
         setProfiles(nextProfiles);
         setTransfers(nextTransfers);
         setPreferences(nextPreferences);
         setSavedActions(nextActions);
+        setFavorites(nextFavorites);
         applyTheme(nextPreferences.theme);
         if (!desktop && nextProfiles[0]) await connect(nextProfiles[0]);
       })
@@ -212,7 +222,11 @@ export default function App() {
     }
   }, [transfers, activeTab?.id, activeTab?.localPath, activeTab?.remotePath]);
 
-  async function connect(profile: ConnectionProfile, credential?: string) {
+  async function connect(
+    profile: ConnectionProfile,
+    credential?: string,
+    paths?: { localPath?: string; remotePath?: string },
+  ) {
     setConnectingId(profile.id);
     setError(null);
     try {
@@ -225,7 +239,7 @@ export default function App() {
         setConnectionDialog(profile);
         return;
       }
-      const localPath = await api.defaultLocalPath();
+      const localPath = paths?.localPath ?? (await api.defaultLocalPath());
       const tab: SessionTab = {
         id: result.session_id,
         profileId: profile.id,
@@ -233,7 +247,7 @@ export default function App() {
         host: profile.host,
         protocol: profile.protocol,
         localPath,
-        remotePath: profile.initial_remote_path,
+        remotePath: paths?.remotePath ?? profile.initial_remote_path,
         layout: preferences?.default_layout ?? "dual_pane",
         connected: true,
       };
@@ -254,15 +268,16 @@ export default function App() {
     }
   }
 
-  async function loadPane(side: PaneSide, path: string) {
-    if (!activeTab) return;
+  async function loadPane(side: PaneSide, path: string, sessionId?: UUID) {
+    const tabId = sessionId ?? useAppStore.getState().activeTabId;
+    if (!tabId) return;
     setLoadingPane(side);
     setError(null);
     try {
       const entries =
         side === "local"
           ? await api.listLocal(path)
-          : await api.listRemote(activeTab.id, path);
+          : await api.listRemote(tabId, path);
       const normalized = entries.map((entry) =>
         entry.kind === "directory" ? { ...entry, size: null } : entry,
       );
@@ -280,10 +295,11 @@ export default function App() {
     }
   }
 
-  async function navigate(side: PaneSide, path: string) {
-    if (!activeTab) return;
-    updateTab(activeTab.id, side === "local" ? { localPath: path } : { remotePath: path });
-    await loadPane(side, path);
+  async function navigate(side: PaneSide, path: string, sessionId?: UUID) {
+    const tabId = sessionId ?? useAppStore.getState().activeTabId;
+    if (!tabId) return;
+    updateTab(tabId, side === "local" ? { localPath: path } : { remotePath: path });
+    await loadPane(side, path, tabId);
   }
 
   async function browseFolder(side: PaneSide) {
@@ -595,6 +611,94 @@ export default function App() {
     }
   }
 
+  function findBookmark(side: PaneSide, path: string, profileId: UUID | null) {
+    const normalized = normalizeBookmarkPath(path, side === "remote");
+    const matches = favorites.filter((favorite) => {
+      if (favorite.side !== side || favorite.path !== normalized) return false;
+      if (side === "remote") return favorite.profile_id === profileId;
+      return favorite.profile_id === profileId || favorite.profile_id == null;
+    });
+    return (
+      matches.find((favorite) => favorite.profile_id === profileId) ??
+      matches.find((favorite) => favorite.profile_id == null) ??
+      null
+    );
+  }
+
+  async function toggleBookmark(side: PaneSide) {
+    if (!activeTab) return;
+    setError(null);
+    const path = side === "local" ? activeTab.localPath : activeTab.remotePath;
+    const normalized = normalizeBookmarkPath(path, side === "remote");
+    const existing = findBookmark(side, normalized, activeTab.profileId);
+    try {
+      if (existing) {
+        await api.deleteFavorite(existing.id);
+        setFavorites((items) => items.filter((item) => item.id !== existing.id));
+        return;
+      }
+      const saved = await api.saveFavorite({
+        id: crypto.randomUUID(),
+        profile_id: activeTab.profileId,
+        side,
+        label: pathBasename(normalized, side === "remote"),
+        path: normalized,
+      });
+      setFavorites((items) =>
+        [...items.filter((item) => item.id !== saved.id), saved].sort((left, right) =>
+          left.label.localeCompare(right.label),
+        ),
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function removeBookmark(bookmark: Favorite) {
+    setError(null);
+    try {
+      await api.deleteFavorite(bookmark.id);
+      setFavorites((items) => items.filter((item) => item.id !== bookmark.id));
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function openBookmark(bookmark: Favorite) {
+    setError(null);
+    try {
+      let tabId = useAppStore.getState().activeTabId;
+      if (bookmark.profile_id) {
+        const profile = profiles.find((item) => item.id === bookmark.profile_id);
+        if (!profile) {
+          setError("The connection for this bookmark was removed");
+          return;
+        }
+        const existing = useAppStore.getState().tabs.find((tab) => tab.profileId === profile.id);
+        if (existing) {
+          setActiveTab(existing.id);
+          tabId = existing.id;
+        } else {
+          await connect(
+            profile,
+            undefined,
+            bookmark.side === "local"
+              ? { localPath: bookmark.path }
+              : { remotePath: bookmark.path },
+          );
+          return;
+        }
+      } else if (!tabId) {
+        setError("Connect to a server to open local bookmarks");
+        return;
+      }
+      if (!tabId) return;
+      await navigate(bookmark.side, bookmark.path, tabId);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
   async function closeSession(tab: SessionTab) {
     closeTab(tab.id);
     try {
@@ -630,11 +734,16 @@ export default function App() {
       </div>
       <Sidebar
         profiles={profiles}
+        favorites={favorites}
         activeProfileId={activeTab?.profileId ?? null}
+        activeLocalPath={activeTab?.localPath ?? null}
+        activeRemotePath={activeTab?.remotePath ?? null}
         connectingId={connectingId}
         collapsed={sidebarCollapsed}
         onProfileClick={handleProfileClick}
         onToggleFavorite={toggleFavorite}
+        onOpenBookmark={(bookmark) => void openBookmark(bookmark)}
+        onRemoveBookmark={(bookmark) => void removeBookmark(bookmark)}
         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
         onNew={() => setConnectionDialog("new")}
         onSettings={() => setSettingsOpen(true)}
@@ -709,6 +818,8 @@ export default function App() {
                   onRevealInFileManager={(path) => void revealInFileManager(path)}
                   transferLabel="Upload"
                   onTransfer={(entry) => void addTransfer("upload", entry)}
+                  bookmarked={!!findBookmark("local", activeTab.localPath, activeTab.profileId)}
+                  onToggleBookmark={() => void toggleBookmark("local")}
                 />
               </div>
               <div
@@ -751,6 +862,8 @@ export default function App() {
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
                   transferLabel="Download"
                   onTransfer={(entry) => void addTransfer("download", entry)}
+                  bookmarked={!!findBookmark("remote", activeTab.remotePath, activeTab.profileId)}
+                  onToggleBookmark={() => void toggleBookmark("remote")}
                 />
               </div>
             </section>
@@ -896,25 +1009,42 @@ export default function App() {
 
 function Sidebar({
   profiles,
+  favorites,
   activeProfileId,
+  activeLocalPath,
+  activeRemotePath,
   connectingId,
   collapsed,
   onProfileClick,
   onToggleFavorite,
+  onOpenBookmark,
+  onRemoveBookmark,
   onToggleCollapsed,
   onNew,
   onSettings,
 }: {
   profiles: ConnectionProfile[];
+  favorites: Favorite[];
   activeProfileId: UUID | null;
+  activeLocalPath: string | null;
+  activeRemotePath: string | null;
   connectingId: UUID | null;
   collapsed: boolean;
   onProfileClick: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
+  onOpenBookmark: (bookmark: Favorite) => void;
+  onRemoveBookmark: (bookmark: Favorite) => void;
   onToggleCollapsed: () => void;
   onNew: () => void;
   onSettings: () => void;
 }) {
+  const visibleBookmarks = favorites.filter(
+    (bookmark) =>
+      bookmark.profile_id == null ||
+      bookmark.profile_id === activeProfileId ||
+      !activeProfileId,
+  );
+
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="brand">
@@ -933,6 +1063,13 @@ function Sidebar({
         {profiles.every((profile) => !profile.favorite) && <p className="empty-note">Star a connection to keep it here</p>}
         {profiles.filter((profile) => profile.favorite).map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} compact />)}
       </SidebarSection>
+      <BookmarksSection
+        bookmarks={visibleBookmarks}
+        activeLocalPath={activeLocalPath ? normalizeBookmarkPath(activeLocalPath, false) : null}
+        activeRemotePath={activeRemotePath ? normalizeBookmarkPath(activeRemotePath, true) : null}
+        onOpen={onOpenBookmark}
+        onRemove={onRemoveBookmark}
+      />
       <SidebarSection title="Recent" icon={<FolderClock size={14} />}>
         {profiles.slice(0, 3).map((profile) => <button key={profile.id} className="nav-item" onClick={() => onProfileClick(profile)}><Clock3 size={14} /> {profile.label}</button>)}
       </SidebarSection>

@@ -11,6 +11,24 @@ export function parentPath(path: string, remote: boolean) {
   return normalized.slice(0, index) || separator;
 }
 
+export function pathBasename(path: string, remote = false) {
+  const normalized = path.replace(/[\\/]+$/, "") || (remote ? "/" : path);
+  if (normalized === "/" || normalized === "\\") return normalized;
+  const index = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return index < 0 ? normalized : normalized.slice(index + 1) || normalized;
+}
+
+export function normalizeBookmarkPath(path: string, remote: boolean) {
+  const trimmed = path.trim();
+  if (!trimmed) return remote ? "/" : trimmed;
+  if (remote) {
+    const segments = trimmed.split("/").filter((segment) => segment && segment !== ".");
+    return `/${segments.join("/")}`;
+  }
+  const stripped = trimmed.replace(/[\\/]+$/, "");
+  return stripped || (trimmed.includes("\\") ? "\\" : "/");
+}
+
 /** Split a typed path into the directory to list and the incomplete name prefix. */
 export function pathSuggestParts(path: string, remote: boolean) {
   const separator = remote ? "/" : path.includes("\\") ? "\\" : "/";

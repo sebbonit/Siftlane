@@ -12,8 +12,9 @@ use secrecy::SecretString;
 use serde::Deserialize;
 use siftlane_core::{
     AppError, ArchiveFormat, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind,
-    ErrorCode, FileEntry, HostKeyChallenge, Preferences, Protocol, RemoteFilesystem, SavedAction,
-    TransferDirection, TransferJob, TransferListFilter, TransferState,
+    ErrorCode, Favorite, FavoriteSide, FileEntry, HostKeyChallenge, Preferences, Protocol,
+    RemoteFilesystem, SavedAction, TransferDirection, TransferJob, TransferListFilter,
+    TransferState,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
@@ -1652,6 +1653,37 @@ fn normalize_remote_path(path: &str) -> Result<String, AppError> {
     Ok(format!("/{}", segments.join("/")))
 }
 
+fn normalize_favorite_path(path: &str, side: FavoriteSide) -> Result<String, AppError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "A bookmark path is required",
+        ));
+    }
+    if trimmed.contains('\0') {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Bookmark path contains a null byte",
+        ));
+    }
+    match side {
+        FavoriteSide::Remote => normalize_remote_path(trimmed),
+        FavoriteSide::Local => {
+            let stripped = trimmed.trim_end_matches(['/', '\\']);
+            if stripped.is_empty() {
+                Ok(if trimmed.contains('\\') {
+                    "\\".into()
+                } else {
+                    "/".into()
+                })
+            } else {
+                Ok(stripped.to_string())
+            }
+        }
+    }
+}
+
 fn validate_entry_name(name: &str) -> Result<(), AppError> {
     if name.trim().is_empty() || matches!(name, "." | "..") || name.contains(['/', '\\', '\0']) {
         return Err(AppError::new(
@@ -1660,6 +1692,50 @@ fn validate_entry_name(name: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_favorites(state: State<'_, AppState>) -> Result<Vec<Favorite>, AppError> {
+    state.storage.list_favorites()
+}
+
+#[tauri::command]
+pub fn save_favorite(
+    state: State<'_, AppState>,
+    mut favorite: Favorite,
+) -> Result<Favorite, AppError> {
+    let label = favorite.label.trim();
+    if label.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "A bookmark label is required",
+        ));
+    }
+    favorite.label = label.to_string();
+    favorite.path = normalize_favorite_path(&favorite.path, favorite.side)?;
+    if favorite.side == FavoriteSide::Remote && favorite.profile_id.is_none() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Remote bookmarks must belong to a connection",
+        ));
+    }
+    if let Some(profile_id) = favorite.profile_id {
+        state.storage.get_profile(profile_id)?;
+    }
+    if let Some(existing) =
+        state
+            .storage
+            .find_favorite(favorite.profile_id, favorite.side, &favorite.path)?
+    {
+        favorite.id = existing.id;
+    }
+    state.storage.save_favorite(&favorite)?;
+    Ok(favorite)
+}
+
+#[tauri::command]
+pub fn delete_favorite(state: State<'_, AppState>, id: Uuid) -> Result<(), AppError> {
+    state.storage.delete_favorite(id)
 }
 
 #[tauri::command]

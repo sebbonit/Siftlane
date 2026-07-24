@@ -453,6 +453,17 @@ button:disabled { cursor: default; opacity: .38; }
 .path-browse { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 5px; color: var(--muted); }
 .path-browse:hover { color: var(--text); background: var(--surface-soft); transform: none; }
 .path-browse:active:not(:disabled) { transform: scale(.94); }
+.path-bookmark { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 5px; color: var(--muted); }
+.path-bookmark:hover { color: var(--text); background: var(--surface-soft); transform: none; }
+.path-bookmark[aria-pressed="true"] { color: var(--teal); }
+.path-bookmark:active:not(:disabled) { transform: scale(.94); }
+.bookmark-item { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.bookmark-item.active { background: color-mix(in srgb, var(--teal-soft) 70%, transparent); }
+.bookmark-open { flex: 1; min-width: 0; height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border-radius: 6px; color: var(--muted); text-align: left; }
+.bookmark-open:hover { background: color-mix(in srgb, var(--surface) 65%, transparent); color: var(--text); }
+.bookmark-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bookmark-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); font-weight: 600; }
+.bookmark-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--faint); }
 .filter-field { width: 94px; height: 28px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--faint); transition: width var(--dur) var(--ease-spring), border-color var(--dur-fast) var(--ease-soft), box-shadow var(--dur-fast) var(--ease-soft); }
 .filter-field:focus-within, .filter-field.has-value { width: 128px; border-color: var(--teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 16%, transparent); color: var(--text); }
 .filter-field input { min-width: 0; width: 100%; border: 0; outline: 0; background: none; font-size: 10px; }

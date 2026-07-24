@@ -165,3 +165,13 @@ export interface SavedAction {
   created_at: string;
   updated_at: string;
 }
+
+export type FavoriteSide = "local" | "remote";
+
+export interface Favorite {
+  id: UUID;
+  profile_id: UUID | null;
+  side: FavoriteSide;
+  label: string;
+  path: string;
+}
