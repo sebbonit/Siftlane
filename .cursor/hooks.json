@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/enforce-pr-template.sh",
+        "matcher": "gh\\s+pr\\s+(create|edit)",
+        "failClosed": true
+      }
+    ]
+  }
+}
