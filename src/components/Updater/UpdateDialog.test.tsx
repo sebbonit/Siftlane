@@ -28,7 +28,7 @@ describe("UpdateDialog", () => {
           update: {
             version: "0.2.0",
             date: "2026-07-23T00:00:00Z",
-            body: "## What's Changed\n* Bug fixes by @dev in https://example.com/pull/1",
+            body: "## What's Changed\n* Bug fixes by @dev in https://github.com/sebbonit/Siftlane/pull/1",
           } as AppUpdaterState["update"],
           installUpdate,
           dismiss,
@@ -40,6 +40,10 @@ describe("UpdateDialog", () => {
     expect(screen.getByText(/version 0\.2\.0/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /what's changed/i })).toBeInTheDocument();
     expect(screen.getByText(/bug fixes/i)).toBeInTheDocument();
+    const prLink = screen.getByRole("link", { name: "#1" });
+    expect(prLink).toHaveClass("md-ref-pr");
+    expect(prLink).toHaveAttribute("href", "https://github.com/sebbonit/Siftlane/pull/1");
+    expect(screen.getByRole("link", { name: "@dev" })).toHaveClass("md-ref-mention");
 
     await userEvent.click(screen.getByRole("button", { name: /install update/i }));
     expect(installUpdate).toHaveBeenCalledOnce();

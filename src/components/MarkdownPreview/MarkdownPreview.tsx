@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { markdownLinkComponents } from "./MarkdownLink";
 
 type MarkdownPreviewProps = {
   content: string;
@@ -25,7 +26,9 @@ export function MarkdownPreview({
 
   return (
     <div className={className} aria-label="Markdown preview">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{trimmed}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
+        {trimmed}
+      </ReactMarkdown>
     </div>
   );
 }
