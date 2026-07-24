@@ -19,4 +19,13 @@ describe("MarkdownPreview", () => {
     const { container } = render(<MarkdownPreview content="   " emptyLabel={null} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("renders GitHub PR links as short colored refs", () => {
+    render(
+      <MarkdownPreview content="Fixed in [#23](https://github.com/sebbonit/Siftlane/pull/23)" />,
+    );
+    const link = screen.getByRole("link", { name: "#23" });
+    expect(link).toHaveClass("md-ref", "md-ref-pr");
+    expect(link).toHaveAttribute("href", "https://github.com/sebbonit/Siftlane/pull/23");
+  });
 });
