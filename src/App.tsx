@@ -53,6 +53,7 @@ import { FileInfoDialog } from "./components/FileInfoDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { FilePaneDragGhost } from "./components/FilePaneDragGhost";
 import { GoToPathDialog } from "./components/GoToPathDialog";
+import { CollapsedShortcuts } from "./components/Sidebar/CollapsedShortcuts";
 import { ImagePreview } from "./components/ImagePreview";
 import { LoadingOverlay } from "./components/LoadingOverlay";
 import { MarkdownPreview } from "./components/MarkdownPreview";
@@ -1162,9 +1163,18 @@ function Sidebar({
         <div><strong>Siftlane</strong><span>Secure file transfer</span></div>
       </div>
       <button className="primary-action" title="New connection" onClick={onNew}><Plus size={17} /><span>New Connection</span></button>
-      {collapsed && <nav className="collapsed-favorites" aria-label="Favorite connections">
-        {profiles.filter((profile) => profile.favorite).map((profile) => <button key={profile.id} className={activeProfileId === profile.id ? "active" : ""} aria-label={`Open favorite ${profile.label}`} title={profile.label} onClick={() => onProfileClick(profile)}>{connectingId === profile.id ? <LoaderCircle className="spin" size={16} /> : <><span>{profileInitials(profile.label)}</span><Star size={10} fill="currentColor" /></>}</button>)}
-      </nav>}
+      {collapsed && (
+        <CollapsedShortcuts
+          favoriteProfiles={profiles.filter((profile) => profile.favorite)}
+          bookmarks={visibleBookmarks}
+          activeProfileId={activeProfileId}
+          connectingId={connectingId}
+          activeLocalPath={activeLocalPath ? normalizeBookmarkPath(activeLocalPath, false) : null}
+          activeRemotePath={activeRemotePath ? normalizeBookmarkPath(activeRemotePath, true) : null}
+          onProfileClick={onProfileClick}
+          onOpenBookmark={onOpenBookmark}
+        />
+      )}
       <SidebarSection title="Connections" icon={<Server size={14} />}>
         {profiles.length === 0 && <p className="empty-note">No saved connections</p>}
         {profiles.map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} />)}
@@ -1604,15 +1614,6 @@ function orderProfiles(profiles: ConnectionProfile[]) {
   return [...profiles].sort(
     (left, right) => Number(right.favorite) - Number(left.favorite) || left.label.localeCompare(right.label),
   );
-}
-
-function profileInitials(label: string) {
-  return label
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("") || "S";
 }
 
 function applyTheme(theme: Preferences["theme"]) {

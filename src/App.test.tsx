@@ -100,6 +100,18 @@ describe("Siftlane shell", () => {
     await waitFor(() => {
       expect(within(remotePane).getByTitle("/var/www/html")).toBeInTheDocument();
     });
+
+    await userEvent.click(within(remotePane).getByRole("button", { name: "Parent folder" }));
+    await waitFor(() => {
+      expect(within(remotePane).getByTitle("/var/www")).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    const collapsedBookmark = screen.getByRole("button", { name: "Open bookmark html" });
+    expect(collapsedBookmark).toBeInTheDocument();
+    await userEvent.click(collapsedBookmark);
+    await waitFor(() => {
+      expect(within(remotePane).getByTitle("/var/www/html")).toBeInTheDocument();
+    });
   });
 
   it("offers FTP and FTPS with protocol-appropriate sign-in options", async () => {
