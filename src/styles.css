@@ -231,15 +231,95 @@ button:disabled { cursor: default; opacity: .38; }
 .sidebar.collapsed .brand div, .sidebar.collapsed .primary-action span, .sidebar.collapsed .sidebar-section, .sidebar.collapsed .sidebar-footer > span { display: none; }
 .sidebar.collapsed .primary-action { width: 40px; flex: 0 0 38px; }
 .sidebar.collapsed .sidebar-footer { flex-direction: column; justify-content: flex-start; gap: 7px; }
-.collapsed-favorites { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0 0 12px; }
-.collapsed-favorites button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: color-mix(in srgb, var(--surface) 58%, transparent); font-size: 10px; font-weight: 700; animation: pop-in var(--dur) var(--ease-bounce) both; }
-.collapsed-favorites button:nth-child(1) { animation-delay: .02s; }
-.collapsed-favorites button:nth-child(2) { animation-delay: .05s; }
-.collapsed-favorites button:nth-child(3) { animation-delay: .08s; }
-.collapsed-favorites button:nth-child(4) { animation-delay: .11s; }
-.collapsed-favorites button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface); transform: translateY(-2px) scale(1.04); }
-.collapsed-favorites button.active { color: white; border-color: var(--teal); background: var(--teal); box-shadow: 0 6px 16px color-mix(in srgb, var(--teal) 35%, transparent); }
-.collapsed-favorites button > svg:not(.spin) { position: absolute; right: 2px; bottom: 2px; color: currentColor; }
+.collapsed-shortcuts { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 12px; overflow-x: visible; overflow-y: auto; scrollbar-width: none; }
+.collapsed-shortcuts::-webkit-scrollbar { display: none; }
+.collapsed-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.collapsed-bookmarks { padding-top: 8px; border-top: 1px solid var(--border); }
+.collapsed-rail > button,
+.collapsed-bookmark-overflow > button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: color-mix(in srgb, var(--surface) 58%, transparent); font-size: 10px; font-weight: 700; animation: pop-in var(--dur) var(--ease-bounce) both; }
+.collapsed-rail > button:nth-child(1),
+.collapsed-bookmark-overflow > button { animation-delay: .02s; }
+.collapsed-rail > button:nth-child(2) { animation-delay: .05s; }
+.collapsed-rail > button:nth-child(3) { animation-delay: .08s; }
+.collapsed-rail > button:nth-child(4) { animation-delay: .11s; }
+.collapsed-rail > button:hover,
+.collapsed-bookmark-overflow > button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface); transform: translateY(-2px) scale(1.04); }
+.collapsed-rail > button.active,
+.collapsed-bookmark-overflow > button.active { color: white; border-color: var(--teal); background: var(--teal); box-shadow: 0 6px 16px color-mix(in srgb, var(--teal) 35%, transparent); }
+.collapsed-rail > button > svg:not(.spin) { position: absolute; right: 2px; bottom: 2px; color: currentColor; }
+.collapsed-rail > button.collapsed-bookmark > svg { position: static; }
+.collapsed-bookmark-tip {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  gap: 4px;
+  min-width: 168px;
+  max-width: 260px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--sidebar));
+  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--teal) 8%, transparent);
+  transform: translateY(-50%);
+  pointer-events: none;
+  animation: collapsed-tip-in var(--dur) var(--ease-bounce) both;
+}
+.collapsed-bookmark-tip::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  border-left: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0 0 0 2px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--sidebar));
+  transform: translateY(-50%) rotate(45deg);
+}
+.collapsed-bookmark-tip-side {
+  width: fit-content;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+.collapsed-bookmark-tip-side.local {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 85%, transparent);
+}
+.collapsed-bookmark-tip-side.remote {
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange-soft) 90%, transparent);
+}
+.collapsed-bookmark-tip strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--text);
+}
+.collapsed-bookmark-tip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+.collapsed-bookmark-overflow { position: relative; }
+.collapsed-bookmark-menu { position: absolute; top: 0; left: calc(100% + 8px); z-index: 40; display: flex; flex-direction: column; gap: 2px; min-width: 196px; max-width: 260px; max-height: min(320px, 70vh); overflow-y: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); animation: menu-pop var(--dur) var(--ease-bounce) both; }
+.collapsed-bookmark-menu button { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border-radius: 6px; color: var(--muted); text-align: left; }
+.collapsed-bookmark-menu button:hover { color: var(--text); background: var(--surface-soft); transform: translateX(2px); }
+.collapsed-bookmark-menu button.active { color: var(--teal); background: color-mix(in srgb, var(--teal-soft) 70%, transparent); }
+.collapsed-bookmark-menu span { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.collapsed-bookmark-menu strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--text); }
+.collapsed-bookmark-menu small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--faint); }
 
 .workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
 .session-tabs { height: 39px; flex: 0 0 39px; display: flex; align-items: end; gap: 8px; padding: 0 10px; opacity: 1; transform: translateY(0); background: var(--surface-soft); border-bottom: 1px solid var(--border); overflow: hidden; transition: height var(--dur) var(--ease-spring), flex-basis var(--dur) var(--ease-spring), opacity var(--dur-fast) var(--ease-out), transform var(--dur) var(--ease-spring), border-color var(--dur) var(--ease-soft); }
@@ -1370,6 +1450,10 @@ body.is-file-pane-dragging .file-row.is-draggable {
 @keyframes menu-pop {
   from { opacity: 0; transform: scale(.92) translateY(-4px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes collapsed-tip-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(-6px) scale(.96); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0) scale(1); }
 }
 @keyframes slide-down {
   from { opacity: 0; transform: translateY(-100%); }
