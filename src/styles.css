@@ -229,7 +229,7 @@ button:disabled { cursor: default; opacity: .38; }
 .sidebar.collapsed { padding-inline: 6px; }
 .sidebar.collapsed .brand { justify-content: center; padding: 2px 0 14px; }
 .sidebar.collapsed .brand div, .sidebar.collapsed .primary-action span, .sidebar.collapsed .sidebar-section, .sidebar.collapsed .sidebar-footer > span { display: none; }
-.sidebar.collapsed .primary-action { width: 40px; flex: 0 0 38px; }
+.sidebar.collapsed .primary-action { width: 38px; flex: 0 0 38px; align-self: center; }
 .sidebar.collapsed .sidebar-footer { flex-direction: column; justify-content: flex-start; gap: 7px; }
 .collapsed-shortcuts { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 12px; overflow-x: visible; overflow-y: auto; scrollbar-width: none; }
 .collapsed-shortcuts::-webkit-scrollbar { display: none; }
