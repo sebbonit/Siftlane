@@ -663,16 +663,19 @@ button:disabled { cursor: default; opacity: .38; }
 .update-notes a.md-ref-pr {
   color: var(--pr);
   background: var(--pr-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pr) 28%, transparent);
 }
 .markdown-preview a.md-ref-issue,
 .update-notes a.md-ref-issue {
   color: var(--issue);
   background: var(--issue-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--issue) 28%, transparent);
 }
 .markdown-preview a.md-ref-mention,
 .update-notes a.md-ref-mention {
   color: var(--teal-strong);
   background: var(--teal-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 28%, transparent);
 }
 .markdown-preview a.md-ref-compare,
 .update-notes a.md-ref-compare,
@@ -1095,6 +1098,17 @@ button:disabled { cursor: default; opacity: .38; }
   font-size: 11px;
   line-height: 1.55;
 }
+.update-change-list {
+  list-style: none;
+  display: grid;
+  gap: 0.55em;
+  margin: 0;
+  padding: 12px 14px;
+}
+.update-change-list li {
+  margin: 0;
+  color: var(--text);
+}
 .update-notes > :first-child { margin-top: 0; }
 .update-notes > :last-child { margin-bottom: 0; }
 .update-notes h1, .update-notes h2, .update-notes h3 {
@@ -1107,10 +1121,11 @@ button:disabled { cursor: default; opacity: .38; }
 }
 .update-notes h1:first-child, .update-notes h2:first-child, .update-notes h3:first-child { margin-top: 0; }
 .update-notes h2 { padding-bottom: 0.35em; border-bottom: 1px solid var(--border); }
-.update-notes p, .update-notes ul, .update-notes ol { margin: 0 0 0.75em; }
-.update-notes ul, .update-notes ol { padding-left: 1.15em; }
+.update-notes p, .update-notes ul:not(.update-change-list), .update-notes ol { margin: 0 0 0.75em; }
+.update-notes ul:not(.update-change-list), .update-notes ol { padding-left: 1.15em; }
 .update-notes li { color: var(--text); }
 .update-notes li + li { margin-top: 0.35em; }
+.update-change-list li + li { margin-top: 0; }
 .update-notes li::marker { color: var(--faint); }
 .update-notes a:not(.md-ref) { color: var(--teal); text-decoration: underline; text-underline-offset: 2px; }
 .update-notes strong { font-weight: 650; }
