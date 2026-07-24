@@ -9,6 +9,7 @@ import type {
   ConflictPolicy,
   ConnectResult,
   ConnectionProfile,
+  DirectoryTransferMode,
   FileEntry,
   EditableFile,
   Preferences,
@@ -357,6 +358,40 @@ export const api = {
     const job = mockTransfer(name, 0, draft.direction, "queued");
     browserTransfers = [job, ...browserTransfers];
     return job;
+  },
+  async enqueueDirectoryTransfer(draft: {
+    profileId: UUID;
+    direction: TransferDirection;
+    sourcePath: string;
+    destinationPath: string;
+    conflictPolicy?: ConflictPolicy;
+    mode: DirectoryTransferMode;
+  }) {
+    if (desktop) return call<TransferJob[]>("enqueue_directory_transfer", { draft });
+    const entries = draft.direction === "upload" ? localDemo : remoteDemo;
+    const files = entries.filter((entry) => entry.kind === "file");
+    const rootName = draft.sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
+    if (files.length === 0) {
+      throw {
+        code: "invalid_input",
+        message: "No files or folders found to transfer",
+        retryable: false,
+      } satisfies AppError;
+    }
+    const jobs = files.map((file) => {
+      const relative =
+        draft.mode === "include_root" ? `${rootName}/${file.name}` : file.name;
+      const job = mockTransfer(relative, 0, draft.direction, "queued");
+      job.source_path =
+        draft.direction === "upload"
+          ? `${draft.sourcePath.replace(/\/+$/, "")}/${file.name}`
+          : file.path;
+      job.destination_path = `${draft.destinationPath.replace(/\/+$/, "")}/${relative}`;
+      job.partial_path = `${job.destination_path}.part`;
+      return job;
+    });
+    browserTransfers = [...jobs, ...browserTransfers];
+    return jobs;
   },
   controlTransfer(transferId: UUID, action: "pause" | "resume" | "cancel" | "retry") {
     return desktop

@@ -310,22 +310,39 @@ export default function App() {
     }
   }
 
-  async function addTransfer(direction: "upload" | "download") {
+  async function addTransfer(direction: "upload" | "download", entry?: FileEntry | null) {
     if (!activeTab || !activeProfile) return;
-    const selected = direction === "upload" ? selectedLocal : selectedRemote;
-    if (!selected || selected.kind !== "file") {
-      setError("Select a file to transfer. Folder queue expansion is intentionally disabled until traversal safeguards are complete.");
+    const selected = entry ?? (direction === "upload" ? selectedLocal : selectedRemote);
+    if (!selected || (selected.kind !== "file" && selected.kind !== "directory")) {
+      setError("Select a file or folder to transfer");
       return;
     }
-    const destinationBase = direction === "upload" ? activeTab.remotePath : activeTab.localPath;
-    const job = await api.enqueueTransfer({
-      profileId: activeProfile.id,
-      direction,
-      sourcePath: selected.path,
-      destinationPath: joinPath(destinationBase, selected.name, direction === "upload"),
-      conflictPolicy: "ask",
-    });
-    setTransfers([job, ...transfers.filter((item) => item.id !== job.id)]);
+    setError(null);
+    try {
+      const destinationBase = direction === "upload" ? activeTab.remotePath : activeTab.localPath;
+      if (selected.kind === "directory") {
+        const jobs = await api.enqueueDirectoryTransfer({
+          profileId: activeProfile.id,
+          direction,
+          sourcePath: selected.path,
+          destinationPath: destinationBase,
+          conflictPolicy: "ask",
+          mode: "include_root",
+        });
+        setTransfers([...jobs, ...transfers.filter((item) => !jobs.some((job) => job.id === item.id))]);
+        return;
+      }
+      const job = await api.enqueueTransfer({
+        profileId: activeProfile.id,
+        direction,
+        sourcePath: selected.path,
+        destinationPath: joinPath(destinationBase, selected.name, direction === "upload"),
+        conflictPolicy: "ask",
+      });
+      setTransfers([job, ...transfers.filter((item) => item.id !== job.id)]);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
   }
 
   async function handleRunSavedAction(action: SavedAction) {
@@ -690,6 +707,8 @@ export default function App() {
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "local" })}
                   onRevealInFileManager={(path) => void revealInFileManager(path)}
+                  transferLabel="Upload"
+                  onTransfer={(entry) => void addTransfer("upload", entry)}
                 />
               </div>
               <div
@@ -697,11 +716,11 @@ export default function App() {
                 aria-hidden={activeTab.layout === "remote_focused"}
                 inert={activeTab.layout === "remote_focused" ? true : undefined}
               >
-                <div className="transfer-controls" aria-label="Transfer selected file">
-                  <button title="Upload selected file" onClick={() => void addTransfer("upload")} disabled={!selectedLocal}>
+                <div className="transfer-controls" aria-label="Transfer selected item">
+                  <button title="Upload selected" onClick={() => void addTransfer("upload")} disabled={!selectedLocal}>
                     <ArrowRight size={17} />
                   </button>
-                  <button title="Download selected file" onClick={() => void addTransfer("download")} disabled={!selectedRemote}>
+                  <button title="Download selected" onClick={() => void addTransfer("download")} disabled={!selectedRemote}>
                     <ArrowLeft size={17} />
                   </button>
                 </div>
@@ -730,6 +749,8 @@ export default function App() {
                   onOpenFile={(entry) => void openFile(entry, "remote")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
+                  transferLabel="Download"
+                  onTransfer={(entry) => void addTransfer("download", entry)}
                 />
               </div>
             </section>

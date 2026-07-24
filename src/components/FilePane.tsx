@@ -55,6 +55,8 @@ export function FilePane({
   onOpenPrivileged,
   onShowInfo,
   onRevealInFileManager,
+  onTransfer,
+  transferLabel,
 }: {
   title: string;
   subtitle?: string;
@@ -79,6 +81,8 @@ export function FilePane({
   onOpenPrivileged: (entry: FileEntry) => void;
   onShowInfo: (entry: FileEntry) => void;
   onRevealInFileManager?: (path: string) => void;
+  onTransfer?: (entry: FileEntry) => void;
+  transferLabel?: string;
 }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -263,6 +267,8 @@ export function FilePane({
           onRemove={onRemove}
           onRemovePrivileged={onRemovePrivileged}
           onRevealInFileManager={onRevealInFileManager}
+          onTransfer={onTransfer}
+          transferLabel={transferLabel}
         />
       )}
     </section>

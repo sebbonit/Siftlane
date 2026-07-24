@@ -66,6 +66,7 @@ export type ConnectResult =
 
 export type TransferDirection = "upload" | "download";
 export type ConflictPolicy = "ask" | "skip" | "overwrite" | "rename";
+export type DirectoryTransferMode = "include_root" | "contents_only";
 export type TransferState =
   | "queued"
   | "running"

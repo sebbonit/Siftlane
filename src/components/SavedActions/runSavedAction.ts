@@ -114,29 +114,17 @@ async function enqueueDirectoryTransfer(
   await context.navigate("remote", remotePath);
 
   const sourcePath = direction === "upload" ? localPath : remotePath;
-  const destinationBase = direction === "upload" ? remotePath : localPath;
-  const entries =
-    direction === "upload"
-      ? await api.listLocal(sourcePath)
-      : await api.listRemote(tab.id, sourcePath);
-  const files = entries.filter((entry) => entry.kind === "file");
-  if (files.length === 0) {
-    throw new Error("No files found in that directory to transfer");
-  }
-
-  const transfers: TransferJob[] = [];
-  for (const file of files) {
-    const job = await api.enqueueTransfer({
-      profileId: tab.profileId,
-      direction,
-      sourcePath: file.path,
-      destinationPath: joinPath(destinationBase, file.name, direction === "upload"),
-      conflictPolicy: "ask",
-    });
-    transfers.push(job);
-  }
+  const destinationPath = direction === "upload" ? remotePath : localPath;
+  const transfers = await api.enqueueDirectoryTransfer({
+    profileId: tab.profileId,
+    direction,
+    sourcePath,
+    destinationPath,
+    conflictPolicy: "ask",
+    mode: "contents_only",
+  });
   return {
-    message: `Queued ${files.length} ${direction}${files.length === 1 ? "" : "s"}`,
+    message: `Queued ${transfers.length} ${direction}${transfers.length === 1 ? "" : "s"}`,
     transfers,
   };
 }

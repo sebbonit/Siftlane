@@ -1,4 +1,5 @@
 import {
+  Download,
   FileEdit,
   FilePlus2,
   FolderOpen,
@@ -7,6 +8,7 @@ import {
   Info,
   LockKeyhole,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { isImageFile } from "../lib/media";
 import { fileManagerRevealLabel } from "../lib/platform";
@@ -18,7 +20,9 @@ export function FilePaneContextMenu({
   y,
   path,
   entry,
+  transferLabel,
   onClose,
+  onTransfer,
   onOpenFile,
   onOpenPrivileged,
   onCreateFile,
@@ -34,7 +38,9 @@ export function FilePaneContextMenu({
   y: number;
   path: string;
   entry: FileEntry | null;
+  transferLabel?: string;
   onClose: () => void;
+  onTransfer?: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
   onOpenPrivileged: (entry: FileEntry) => void;
   onCreateFile: () => void;
@@ -51,8 +57,20 @@ export function FilePaneContextMenu({
     action();
   }
 
+  const canTransfer =
+    !!onTransfer && !!entry && (entry.kind === "file" || entry.kind === "directory");
+
   return (
     <ContextMenu x={x} y={y} onClose={onClose}>
+      {canTransfer && entry && (
+        <>
+          <button onClick={() => run(() => onTransfer(entry))}>
+            {transferLabel === "Download" ? <Download size={14} /> : <Upload size={14} />}
+            {transferLabel ?? "Transfer"}
+          </button>
+          <i />
+        </>
+      )}
       {entry?.kind === "file" && (
         <>
           <button onClick={() => run(() => onOpenFile(entry))}>
