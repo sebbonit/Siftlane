@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use async_trait::async_trait;
 use siftlane_core::{
@@ -22,6 +25,7 @@ pub struct AppState {
     pub pending_host_keys: Arc<Mutex<HashMap<Uuid, PendingHostKey>>>,
     pub transfers: Arc<Mutex<TransferQueue>>,
     pub transfer_slots: Arc<Semaphore>,
+    pub searches: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
 }
 
 #[derive(Clone)]
@@ -62,6 +66,7 @@ impl AppState {
             transfer_slots: Arc::new(Semaphore::new(
                 preferences.global_parallel_transfers.max(1) as usize
             )),
+            searches: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }
@@ -187,6 +192,9 @@ pub fn run() {
             crate::commands::delete_favorite,
             crate::commands::package_local_directory,
             crate::commands::package_remote_directory,
+            crate::commands::start_search_local,
+            crate::commands::start_search_remote,
+            crate::commands::cancel_search,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Siftlane");

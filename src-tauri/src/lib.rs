@@ -1,5 +1,6 @@
 mod commands;
 mod package;
+mod search;
 mod secrets;
 mod state;
 mod storage;

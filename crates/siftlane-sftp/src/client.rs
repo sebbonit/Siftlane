@@ -114,6 +114,9 @@ impl client::Handler for ClientHandler {
 pub struct SftpClient {
     sftp: SftpSession,
     _ssh: Mutex<Handle<ClientHandler>>,
+    /// Serialize SFTP requests. Concurrent calls on one `SftpSession` can fail
+    /// with generic I/O errors (e.g. search overlapping pane listing).
+    io: Mutex<()>,
 }
 
 const MAX_PRIVILEGED_OUTPUT_BYTES: usize = 4 * 1024 * 1024 + 1;
@@ -193,10 +196,12 @@ impl SftpClient {
         Ok(Self {
             sftp,
             _ssh: Mutex::new(ssh),
+            io: Mutex::new(()),
         })
     }
 
     pub async fn disconnect(&self) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp
             .close()
             .await
@@ -500,6 +505,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn list_directory(&self, path: &str) -> Result<Vec<FileEntry>, AppError> {
+        let _guard = self.io.lock().await;
         let entries = self.sftp.read_dir(path).await.map_err(map_sftp_error)?;
         let mut result = Vec::new();
         for entry in entries {
@@ -543,6 +549,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn metadata(&self, path: &str) -> Result<Option<FileEntry>, AppError> {
+        let _guard = self.io.lock().await;
         let metadata = match self.sftp.symlink_metadata(path).await {
             Ok(metadata) => metadata,
             Err(russh_sftp::client::error::Error::Status(status))
@@ -577,22 +584,27 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn create_directory(&self, path: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp.create_dir(path).await.map_err(map_sftp_error)
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp.rename(from, to).await.map_err(map_sftp_error)
     }
 
     async fn remove_file(&self, path: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp.remove_file(path).await.map_err(map_sftp_error)
     }
 
     async fn remove_directory(&self, path: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp.remove_dir(path).await.map_err(map_sftp_error)
     }
 
     async fn set_permissions(&self, path: &str, permissions: u32) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         let mut metadata = self
             .sftp
             .symlink_metadata(path)
@@ -607,6 +619,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn read_chunk(&self, path: &str, offset: u64, length: u32) -> Result<Vec<u8>, AppError> {
+        let _guard = self.io.lock().await;
         let mut file = self.sftp.open(path).await.map_err(map_sftp_error)?;
         file.seek(SeekFrom::Start(offset))
             .await
@@ -619,6 +632,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn write_chunk(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         let mut file = self
             .sftp
             .open_with_flags(path, OpenFlags::CREATE | OpenFlags::WRITE)
@@ -633,6 +647,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn sync_file(&self, path: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         let mut file = self
             .sftp
             .open_with_flags(path, OpenFlags::WRITE)
