@@ -165,6 +165,7 @@ pub fn run() {
             crate::commands::save_remote_file_privileged,
             crate::commands::create_local_entry,
             crate::commands::delete_local_entry,
+            crate::commands::rename_local_entry,
             crate::commands::create_local_entry_privileged,
             crate::commands::delete_local_entry_privileged,
             crate::commands::create_remote_entry,

@@ -525,9 +525,13 @@ pub async fn delete_local_entry_privileged(
 ) -> Result<(), AppError> {
     #[cfg(unix)]
     {
-        let command = if directory { "rmdir" } else { "rm" };
         let password = sudo_password.map(SecretString::from);
-        run_local_sudo(&[command, &path], password.as_ref(), &[])
+        let args: Vec<&str> = if directory {
+            vec!["rm", "-rf", "--", &path]
+        } else {
+            vec!["rm", "-f", "--", &path]
+        };
+        run_local_sudo(&args, password.as_ref(), &[])
             .await
             .map(|_| ())
     }
@@ -961,10 +965,22 @@ pub fn create_local_entry(
 #[tauri::command]
 pub fn delete_local_entry(path: String, directory: bool) -> Result<(), AppError> {
     if directory {
-        std::fs::remove_dir(path).map_err(local_io_error)
+        std::fs::remove_dir_all(&path).map_err(local_io_error)
     } else {
-        std::fs::remove_file(path).map_err(local_io_error)
+        std::fs::remove_file(&path).map_err(local_io_error)
     }
+}
+
+#[tauri::command]
+pub fn rename_local_entry(from: String, to: String) -> Result<(), AppError> {
+    let destination = Path::new(&to);
+    if destination.exists() {
+        return Err(AppError::new(
+            ErrorCode::AlreadyExists,
+            "An entry with that name already exists",
+        ));
+    }
+    std::fs::rename(&from, &to).map_err(local_io_error)
 }
 
 #[tauri::command]
@@ -1034,7 +1050,7 @@ pub async fn delete_remote_entry(
     let client = session_client(&state, session_id).await?;
     let path = normalize_remote_path(&path)?;
     if directory {
-        client.remove_directory(&path).await
+        remove_remote_directory_recursive(client.as_ref(), &path).await
     } else {
         client.remove_file(&path).await
     }
@@ -1927,6 +1943,21 @@ fn local_io_error(source: std::io::Error) -> AppError {
         _ => ErrorCode::Io,
     };
     AppError::new(code, "The local directory could not be read").with_detail(source.to_string())
+}
+
+async fn remove_remote_directory_recursive(
+    client: &dyn RemoteFilesystem,
+    path: &str,
+) -> Result<(), AppError> {
+    let entries = client.list_directory(path).await?;
+    for entry in entries {
+        if entry.kind == EntryKind::Directory {
+            Box::pin(remove_remote_directory_recursive(client, &entry.path)).await?;
+        } else {
+            client.remove_file(&entry.path).await?;
+        }
+    }
+    client.remove_directory(path).await
 }
 
 #[cfg(unix)]

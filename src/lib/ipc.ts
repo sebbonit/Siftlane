@@ -183,6 +183,40 @@ function demoRemoveEntry(
   return next;
 }
 
+function demoRenameEntry(
+  tree: Record<string, FileEntry[]>,
+  from: string,
+  to: string,
+): Record<string, FileEntry[]> {
+  const fromParent = demoParent(from, true);
+  const toParent = demoParent(to, true);
+  const name = to.split("/").filter(Boolean).pop() ?? to;
+  const source = (tree[fromParent] ?? []).find((entry) => entry.path === from);
+  if (!source) return tree;
+
+  const next: Record<string, FileEntry[]> = {};
+  for (const [key, entries] of Object.entries(tree)) {
+    if (key === from || key.startsWith(`${from}/`)) continue;
+    next[key] = entries.filter((entry) => entry.path !== from);
+  }
+  next[toParent] = [...(next[toParent] ?? []), { ...source, path: to, name }];
+  if (source.kind === "directory") {
+    for (const [key, entries] of Object.entries(tree)) {
+      if (key !== from && !key.startsWith(`${from}/`)) continue;
+      const renamedKey = key === from ? to : `${to}${key.slice(from.length)}`;
+      next[renamedKey] = entries.map((entry) => ({
+        ...entry,
+        path: entry.path === from ? to : `${to}${entry.path.slice(from.length)}`,
+        name:
+          entry.path === from
+            ? name
+            : entry.path.slice(from.length + 1).split("/").pop() ?? entry.name,
+      }));
+    }
+  }
+  return next;
+}
+
 function demoUpdatePermissions(
   tree: Record<string, FileEntry[]>,
   path: string,
@@ -504,6 +538,10 @@ export const api = {
     if (desktop) return call<void>("delete_local_entry_privileged", { path, directory, sudoPassword });
     localDemoTree = demoRemoveEntry(localDemoTree, path);
   },
+  async renameLocalEntry(from: string, to: string) {
+    if (desktop) return call<void>("rename_local_entry", { from, to });
+    localDemoTree = demoRenameEntry(localDemoTree, from, to);
+  },
   async createRemoteEntry(
     sessionId: UUID,
     parentPath: string,
@@ -518,6 +556,10 @@ export const api = {
   async createRemoteEntryPrivileged(sessionId: UUID, parentPath: string, name: string, directory: boolean, sudoPassword?: string) {
     if (desktop) return call<void>("create_remote_entry_privileged", { sessionId, parentPath, name, directory, sudoPassword });
     if (demoMode) remoteDemoTree = demoAddEntry(remoteDemoTree, parentPath, name, directory);
+  },
+  async renameRemoteEntry(sessionId: UUID, from: string, to: string) {
+    if (desktop) return call<void>("rename_remote_entry", { sessionId, from, to });
+    remoteDemoTree = demoRenameEntry(remoteDemoTree, from, to);
   },
   async deleteRemoteEntry(sessionId: UUID, path: string, directory: boolean) {
     if (desktop) return call<void>("delete_remote_entry", { sessionId, path, directory });

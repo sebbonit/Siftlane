@@ -438,6 +438,11 @@ button:disabled { cursor: default; opacity: .38; }
 }
 .file-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; transition: box-shadow var(--dur) var(--ease-out), border-color var(--dur) var(--ease-soft), transform var(--dur) var(--ease-spring); }
 .file-pane:focus-within { border-color: color-mix(in srgb, var(--teal) 40%, var(--border)); box-shadow: 0 8px 28px rgba(31, 47, 42, .08); }
+.file-pane.is-drop-target {
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--teal) 35%, transparent), 0 10px 28px rgba(31, 47, 42, .1);
+  background: color-mix(in srgb, var(--teal-soft) 55%, var(--surface));
+}
 .pane-title { height: 39px; flex: 0 0 39px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .pane-title > div { display: flex; align-items: baseline; gap: 7px; }
 .pane-title strong { font-size: 12px; }
@@ -490,6 +495,90 @@ button:disabled { cursor: default; opacity: .38; }
 .file-row:hover { background: var(--surface-soft); color: var(--text); }
 .file-row.selected { background: var(--teal-soft); color: var(--text); box-shadow: inset 3px 0 0 var(--teal); }
 .file-row.selected:active { transform: scale(.995); }
+.file-row.is-draggable { cursor: grab; }
+.file-row.is-draggable:active { cursor: grabbing; }
+.file-row.is-dragging {
+  opacity: .42;
+  background: color-mix(in srgb, var(--surface-soft) 70%, transparent);
+}
+.file-row.is-drop-target {
+  background: color-mix(in srgb, var(--teal-soft) 88%, var(--surface));
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--teal), inset 0 0 0 1px color-mix(in srgb, var(--teal) 28%, transparent);
+  transform: scale(1.01);
+}
+body.is-file-pane-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+body.is-file-pane-dragging .file-row.is-draggable {
+  cursor: grabbing;
+}
+.file-pane-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 92%, white);
+  color: var(--text);
+  box-shadow: 0 14px 36px rgba(31, 47, 42, .22);
+  font-size: 11px;
+  pointer-events: none;
+  opacity: .96;
+  will-change: transform;
+  animation: drag-ghost-in .16s var(--ease-out) both;
+}
+.file-pane-drag-ghost.is-idle {
+  opacity: .78;
+  transform-origin: top left;
+}
+.file-pane-drag-ghost.can-drop {
+  border-color: color-mix(in srgb, var(--teal) 60%, var(--border));
+  background: color-mix(in srgb, var(--teal-soft) 78%, var(--surface));
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--teal) 22%, rgba(31, 47, 42, .2));
+}
+.file-pane-drag-ghost-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 70%, transparent);
+}
+.file-pane-drag-ghost-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.file-pane-drag-ghost-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--teal);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+@keyframes drag-ghost-in {
+  from { opacity: 0; filter: blur(2px); }
+  to { opacity: .96; filter: none; }
+}
 .file-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-name { display: flex; align-items: center; gap: 7px; padding-right: 6px; color: var(--text); }
 .file-name svg { flex: 0 0 auto; color: var(--teal); transition: transform var(--dur) var(--ease-bounce); }

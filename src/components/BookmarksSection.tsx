@@ -1,4 +1,4 @@
-import { Bookmark, ChevronDown, ChevronRight, Folder, HardDrive, Star } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronRight, Folder, HardDrive } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { Favorite } from "../types";
 
@@ -18,7 +18,7 @@ export function BookmarksSection({
   return (
     <CollapsibleSection title="Bookmarks" icon={<Bookmark size={14} />}>
       {bookmarks.length === 0 && (
-        <p className="empty-note">Star a folder in the path bar</p>
+        <p className="empty-note">Bookmark a folder in the path bar</p>
       )}
       {bookmarks.map((bookmark) => {
         const active =
@@ -46,7 +46,7 @@ export function BookmarksSection({
               title="Remove bookmark"
               onClick={() => onRemove(bookmark)}
             >
-              <Star size={14} fill="currentColor" />
+              <Bookmark size={14} fill="currentColor" />
             </button>
           </div>
         );
