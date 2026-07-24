@@ -123,6 +123,8 @@ export interface Preferences {
   connect_timeout_seconds: number;
   response_timeout_seconds: number;
   keepalive_seconds: number;
+  /** Per-connection collapsed bookmark tile order (profile id → favorite ids). */
+  bookmark_order: Record<string, string[]>;
 }
 
 export interface AppError {

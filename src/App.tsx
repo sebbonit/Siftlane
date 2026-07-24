@@ -69,6 +69,13 @@ import { TransferPanel } from "./components/TransferPanel";
 import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
 import { isImageFile } from "./lib/media";
+import { bookmarksForConnection, findBookmarkForPath } from "./lib/bookmarks";
+import {
+  bookmarkIds,
+  orderBookmarks,
+  orderForProfile,
+  withProfileOrder,
+} from "./lib/bookmarkOrder";
 import { joinPath, normalizeBookmarkPath, pathBasename } from "./lib/paths";
 import { useAppStore } from "./store";
 import type {
@@ -186,7 +193,10 @@ export default function App() {
         setProfiles(nextProfiles);
         setExpandTransfersOnNew(nextPreferences.expand_transfers_on_new);
         setTransfers(nextTransfers, { expandOnNew: false });
-        setPreferences(nextPreferences);
+        setPreferences({
+          ...nextPreferences,
+          bookmark_order: nextPreferences.bookmark_order ?? {},
+        });
         setSavedActions(nextActions);
         setFavorites(nextFavorites);
         applyTheme(nextPreferences.theme);
@@ -706,20 +716,14 @@ export default function App() {
 
   function findBookmark(side: PaneSide, path: string, profileId: UUID | null) {
     const normalized = normalizeBookmarkPath(path, side === "remote");
-    const matches = favorites.filter((favorite) => {
-      if (favorite.side !== side || favorite.path !== normalized) return false;
-      if (side === "remote") return favorite.profile_id === profileId;
-      return favorite.profile_id === profileId || favorite.profile_id == null;
-    });
-    return (
-      matches.find((favorite) => favorite.profile_id === profileId) ??
-      matches.find((favorite) => favorite.profile_id == null) ??
-      null
-    );
+    return findBookmarkForPath(favorites, side, normalized, profileId);
   }
 
   async function toggleBookmark(side: PaneSide) {
-    if (!activeTab) return;
+    if (!activeTab?.profileId) {
+      setError("Connect to a server to bookmark folders");
+      return;
+    }
     setError(null);
     const path = side === "local" ? activeTab.localPath : activeTab.remotePath;
     const normalized = normalizeBookmarkPath(path, side === "remote");
@@ -728,6 +732,7 @@ export default function App() {
       if (existing) {
         await api.deleteFavorite(existing.id);
         setFavorites((items) => items.filter((item) => item.id !== existing.id));
+        forgetBookmarkOrder(activeTab.profileId, existing.id);
         return;
       }
       const saved = await api.saveFavorite({
@@ -742,6 +747,7 @@ export default function App() {
           left.label.localeCompare(right.label),
         ),
       );
+      appendBookmarkOrder(activeTab.profileId, saved.id);
     } catch (reason) {
       setError(errorMessage(reason));
     }
@@ -752,37 +758,72 @@ export default function App() {
     try {
       await api.deleteFavorite(bookmark.id);
       setFavorites((items) => items.filter((item) => item.id !== bookmark.id));
+      if (bookmark.profile_id) forgetBookmarkOrder(bookmark.profile_id, bookmark.id);
     } catch (reason) {
       setError(errorMessage(reason));
     }
   }
 
+  function appendBookmarkOrder(profileId: UUID, bookmarkId: string) {
+    setPreferences((current) => {
+      if (!current) return current;
+      const existing = current.bookmark_order[profileId] ?? [];
+      if (existing.includes(bookmarkId)) return current;
+      const next = {
+        ...current,
+        bookmark_order: withProfileOrder(current.bookmark_order, profileId, [
+          ...existing,
+          bookmarkId,
+        ]),
+      };
+      void api.savePreferences(next);
+      return next;
+    });
+  }
+
+  function forgetBookmarkOrder(profileId: UUID, bookmarkId: string) {
+    setPreferences((current) => {
+      if (!current) return current;
+      const existing = current.bookmark_order[profileId];
+      if (!existing?.includes(bookmarkId)) return current;
+      const next = {
+        ...current,
+        bookmark_order: withProfileOrder(
+          current.bookmark_order,
+          profileId,
+          existing.filter((id) => id !== bookmarkId),
+        ),
+      };
+      void api.savePreferences(next);
+      return next;
+    });
+  }
+
   async function openBookmark(bookmark: Favorite) {
     setError(null);
     try {
+      if (!bookmark.profile_id) {
+        setError("This bookmark is missing its connection");
+        return;
+      }
+      const profile = profiles.find((item) => item.id === bookmark.profile_id);
+      if (!profile) {
+        setError("The connection for this bookmark was removed");
+        return;
+      }
       let tabId = useAppStore.getState().activeTabId;
-      if (bookmark.profile_id) {
-        const profile = profiles.find((item) => item.id === bookmark.profile_id);
-        if (!profile) {
-          setError("The connection for this bookmark was removed");
-          return;
-        }
-        const existing = useAppStore.getState().tabs.find((tab) => tab.profileId === profile.id);
-        if (existing) {
-          setActiveTab(existing.id);
-          tabId = existing.id;
-        } else {
-          await connect(
-            profile,
-            undefined,
-            bookmark.side === "local"
-              ? { localPath: bookmark.path }
-              : { remotePath: bookmark.path },
-          );
-          return;
-        }
-      } else if (!tabId) {
-        setError("Connect to a server to open local bookmarks");
+      const existing = useAppStore.getState().tabs.find((tab) => tab.profileId === profile.id);
+      if (existing) {
+        setActiveTab(existing.id);
+        tabId = existing.id;
+      } else {
+        await connect(
+          profile,
+          undefined,
+          bookmark.side === "local"
+            ? { localPath: bookmark.path }
+            : { remotePath: bookmark.path },
+        );
         return;
       }
       if (!tabId) return;
@@ -830,6 +871,7 @@ export default function App() {
       <Sidebar
         profiles={profiles}
         favorites={favorites}
+        bookmarkOrder={preferences?.bookmark_order ?? {}}
         activeProfileId={activeTab?.profileId ?? null}
         activeLocalPath={activeTab?.localPath ?? null}
         activeRemotePath={activeTab?.remotePath ?? null}
@@ -839,6 +881,28 @@ export default function App() {
         onToggleFavorite={toggleFavorite}
         onOpenBookmark={(bookmark) => void openBookmark(bookmark)}
         onRemoveBookmark={(bookmark) => void removeBookmark(bookmark)}
+        onReorderBookmarks={(profileId, orderedIds) => {
+          setPreferences((current) => {
+            const base = current ?? {
+              theme: "system" as const,
+              default_layout: "dual_pane" as const,
+              show_hidden_files: true,
+              global_parallel_transfers: 3,
+              per_host_parallel_transfers: 2,
+              expand_transfers_on_new: true,
+              connect_timeout_seconds: 15,
+              response_timeout_seconds: 30,
+              keepalive_seconds: 30,
+              bookmark_order: {},
+            };
+            const next = {
+              ...base,
+              bookmark_order: withProfileOrder(base.bookmark_order, profileId, orderedIds),
+            };
+            void api.savePreferences(next);
+            return next;
+          });
+        }}
         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
         onNew={() => setConnectionDialog("new")}
         onSettings={() => setSettingsOpen(true)}
@@ -1121,6 +1185,7 @@ export default function App() {
 function Sidebar({
   profiles,
   favorites,
+  bookmarkOrder,
   activeProfileId,
   activeLocalPath,
   activeRemotePath,
@@ -1130,12 +1195,14 @@ function Sidebar({
   onToggleFavorite,
   onOpenBookmark,
   onRemoveBookmark,
+  onReorderBookmarks,
   onToggleCollapsed,
   onNew,
   onSettings,
 }: {
   profiles: ConnectionProfile[];
   favorites: Favorite[];
+  bookmarkOrder: Record<string, string[]>;
   activeProfileId: UUID | null;
   activeLocalPath: string | null;
   activeRemotePath: string | null;
@@ -1145,16 +1212,14 @@ function Sidebar({
   onToggleFavorite: (profile: ConnectionProfile) => void;
   onOpenBookmark: (bookmark: Favorite) => void;
   onRemoveBookmark: (bookmark: Favorite) => void;
+  onReorderBookmarks: (profileId: UUID, orderedIds: string[]) => void;
   onToggleCollapsed: () => void;
   onNew: () => void;
   onSettings: () => void;
 }) {
-  const visibleBookmarks = favorites.filter(
-    (bookmark) =>
-      bookmark.profile_id == null ||
-      bookmark.profile_id === activeProfileId ||
-      !activeProfileId,
-  );
+  const connectionBookmarks = bookmarksForConnection(favorites, activeProfileId);
+  const orderedIds = orderForProfile(bookmarkOrder, activeProfileId);
+  const visibleBookmarks = orderBookmarks(connectionBookmarks, orderedIds);
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -1167,12 +1232,17 @@ function Sidebar({
         <CollapsedShortcuts
           favoriteProfiles={profiles.filter((profile) => profile.favorite)}
           bookmarks={visibleBookmarks}
+          orderedIds={bookmarkIds(visibleBookmarks)}
           activeProfileId={activeProfileId}
           connectingId={connectingId}
           activeLocalPath={activeLocalPath ? normalizeBookmarkPath(activeLocalPath, false) : null}
           activeRemotePath={activeRemotePath ? normalizeBookmarkPath(activeRemotePath, true) : null}
           onProfileClick={onProfileClick}
           onOpenBookmark={onOpenBookmark}
+          onReorderBookmarks={(nextIds) => {
+            if (!activeProfileId) return;
+            onReorderBookmarks(activeProfileId, nextIds);
+          }}
         />
       )}
       <SidebarSection title="Connections" icon={<Server size={14} />}>
@@ -1185,6 +1255,7 @@ function Sidebar({
       </SidebarSection>
       <BookmarksSection
         bookmarks={visibleBookmarks}
+        hasActiveConnection={!!activeProfileId}
         activeLocalPath={activeLocalPath ? normalizeBookmarkPath(activeLocalPath, false) : null}
         activeRemotePath={activeRemotePath ? normalizeBookmarkPath(activeRemotePath, true) : null}
         onOpen={onOpenBookmark}

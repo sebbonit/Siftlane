@@ -479,7 +479,26 @@ fn migrate(connection: &mut Connection) -> rusqlite::Result<()> {
          );
          INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
          COMMIT;",
-    )
+    )?;
+
+    let version_two_applied = connection
+        .query_row(
+            "SELECT 1 FROM schema_migrations WHERE version = 2",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !version_two_applied {
+        // Bookmarks are per-connection; drop legacy universal (null profile) rows.
+        connection.execute_batch(
+            "BEGIN;
+             DELETE FROM favorites WHERE profile_id IS NULL;
+             INSERT INTO schema_migrations(version) VALUES (2);
+             COMMIT;",
+        )?;
+    }
+    Ok(())
 }
 
 fn storage_error(source: rusqlite::Error) -> AppError {
@@ -593,7 +612,7 @@ mod tests {
             "/var/www/html".into(),
         );
         let local = Favorite::new(
-            None,
+            Some(profile.id),
             FavoriteSide::Local,
             "Projects".into(),
             "/Users/me/Projects".into(),
@@ -613,7 +632,7 @@ mod tests {
         );
         assert_eq!(
             storage
-                .find_favorite(None, FavoriteSide::Local, "/Users/me/Projects")
+                .find_favorite(Some(profile.id), FavoriteSide::Local, "/Users/me/Projects")
                 .unwrap()
                 .unwrap()
                 .id,
@@ -622,5 +641,42 @@ mod tests {
 
         storage.delete_favorite(remote.id).unwrap();
         assert_eq!(storage.list_favorites().unwrap(), vec![local]);
+    }
+
+    #[test]
+    fn migration_removes_universal_bookmarks() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("siftlane.sqlite3");
+        {
+            let connection = rusqlite::Connection::open(&db_path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                       version INTEGER PRIMARY KEY,
+                       applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+                     );
+                     CREATE TABLE connection_profiles (
+                       id TEXT PRIMARY KEY,
+                       label TEXT NOT NULL,
+                       favorite INTEGER NOT NULL DEFAULT 0,
+                       profile_json TEXT NOT NULL,
+                       updated_at TEXT NOT NULL
+                     );
+                     CREATE TABLE favorites (
+                       id TEXT PRIMARY KEY,
+                       profile_id TEXT,
+                       side TEXT NOT NULL,
+                       label TEXT NOT NULL,
+                       path TEXT NOT NULL
+                     );
+                     INSERT INTO schema_migrations(version) VALUES (1);
+                     INSERT INTO favorites(id, profile_id, side, label, path)
+                     VALUES ('legacy', NULL, 'local', 'Home', '/Users/me');",
+                )
+                .unwrap();
+        }
+
+        let storage = Storage::open(&db_path).unwrap();
+        assert!(storage.list_favorites().unwrap().is_empty());
     }
 }

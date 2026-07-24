@@ -679,6 +679,7 @@ export const api = {
       connect_timeout_seconds: 15,
       response_timeout_seconds: 30,
       keepalive_seconds: 30,
+      bookmark_order: {},
     } satisfies Preferences;
   },
   savePreferences(preferences: Preferences) {
@@ -708,6 +709,13 @@ export const api = {
   },
   async saveFavorite(favorite: Favorite) {
     if (desktop) return call<Favorite>("save_favorite", { favorite });
+    if (!favorite.profile_id) {
+      throw {
+        code: "invalid_input",
+        message: "Bookmarks must belong to a connection",
+        retryable: false,
+      } satisfies AppError;
+    }
     const normalizedPath =
       favorite.side === "remote"
         ? `/${favorite.path

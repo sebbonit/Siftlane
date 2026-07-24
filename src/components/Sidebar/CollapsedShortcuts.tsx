@@ -1,61 +1,116 @@
-import { Folder, HardDrive, LoaderCircle, Star } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { LoaderCircle, Star } from "lucide-react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { bookmarkIds, moveBookmarkId } from "../../lib/bookmarkOrder";
 import { planCollapsedBookmarks } from "../../lib/collapsedBookmarks";
 import type { ConnectionProfile, Favorite, UUID } from "../../types";
 import { CollapsedBookmarkButton } from "./CollapsedBookmarkButton";
 
+const DRAG_THRESHOLD_PX = 5;
+
 export function CollapsedShortcuts({
   favoriteProfiles,
   bookmarks,
+  orderedIds,
   activeProfileId,
   connectingId,
   activeLocalPath,
   activeRemotePath,
   onProfileClick,
   onOpenBookmark,
+  onReorderBookmarks,
 }: {
   favoriteProfiles: ConnectionProfile[];
   bookmarks: Favorite[];
+  orderedIds: string[];
   activeProfileId: UUID | null;
   connectingId: UUID | null;
   activeLocalPath: string | null;
   activeRemotePath: string | null;
   onProfileClick: (profile: ConnectionProfile) => void;
   onOpenBookmark: (bookmark: Favorite) => void;
+  onReorderBookmarks: (orderedIds: string[]) => void;
 }) {
-  const { visible, overflow } = planCollapsedBookmarks(
-    bookmarks,
-    favoriteProfiles.length,
-    activeProfileId,
-    activeLocalPath,
-    activeRemotePath,
-  );
-  const [overflowOpen, setOverflowOpen] = useState(false);
-  const overflowRef = useRef<HTMLDivElement>(null);
+  const ordered = planCollapsedBookmarks(bookmarks, orderedIds);
+  const orderedRef = useRef(ordered);
+  orderedRef.current = ordered;
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const dragRef = useRef<{
+    id: string;
+    bookmark: Favorite;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
 
-  useEffect(() => {
-    if (!overflowOpen) return;
-    function onPointerDown(event: PointerEvent) {
-      if (!overflowRef.current?.contains(event.target as Node)) {
-        setOverflowOpen(false);
-      }
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOverflowOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
+  if (favoriteProfiles.length === 0 && ordered.length === 0) return null;
+
+  function clearDrag() {
+    dragRef.current = null;
+    setDraggingId(null);
+    setDropTargetId(null);
+  }
+
+  function bookmarkIdFromPoint(clientX: number, clientY: number): string | null {
+    const hit = document.elementFromPoint(clientX, clientY);
+    const button = hit instanceof Element ? hit.closest("[data-bookmark-id]") : null;
+    return button instanceof HTMLElement ? button.dataset.bookmarkId ?? null : null;
+  }
+
+  function handleBookmarkPointerDown(
+    bookmark: Favorite,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) {
+    event.preventDefault();
+    dragRef.current = {
+      id: bookmark.id,
+      bookmark,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
     };
-  }, [overflowOpen]);
 
-  useEffect(() => {
-    setOverflowOpen(false);
-  }, [bookmarks, favoriteProfiles.length, activeProfileId]);
+    function onPointerMove(moveEvent: PointerEvent) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dx = moveEvent.clientX - drag.startX;
+      const dy = moveEvent.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
+        drag.moved = true;
+        setDraggingId(drag.id);
+      }
+      if (!drag.moved) return;
+      const overId = bookmarkIdFromPoint(moveEvent.clientX, moveEvent.clientY);
+      setDropTargetId(overId && overId !== drag.id ? overId : null);
+    }
 
-  if (favoriteProfiles.length === 0 && bookmarks.length === 0) return null;
+    function onPointerUp(upEvent: PointerEvent) {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      if (!drag.moved) {
+        clearDrag();
+        onOpenBookmark(drag.bookmark);
+        return;
+      }
+
+      const targetId = bookmarkIdFromPoint(upEvent.clientX, upEvent.clientY);
+      if (targetId && targetId !== drag.id) {
+        onReorderBookmarks(
+          moveBookmarkId(bookmarkIds(orderedRef.current), drag.id, targetId),
+        );
+      }
+      clearDrag();
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  }
 
   return (
     <div className="collapsed-shortcuts">
@@ -83,9 +138,9 @@ export function CollapsedShortcuts({
         </nav>
       )}
 
-      {bookmarks.length > 0 && (
-        <nav className="collapsed-rail collapsed-bookmarks" aria-label="Bookmarks">
-          {visible.map((bookmark) => {
+      {ordered.length > 0 && (
+        <nav className="collapsed-bookmarks" aria-label="Bookmarks">
+          {ordered.map((bookmark) => {
             const active =
               bookmark.side === "remote"
                 ? activeRemotePath === bookmark.path
@@ -95,58 +150,12 @@ export function CollapsedShortcuts({
                 key={bookmark.id}
                 bookmark={bookmark}
                 active={active}
-                onOpen={onOpenBookmark}
+                dragging={draggingId === bookmark.id}
+                dropTarget={dropTargetId === bookmark.id && draggingId !== bookmark.id}
+                onPointerDownReorder={handleBookmarkPointerDown}
               />
             );
           })}
-
-          {overflow.length > 0 && (
-            <div className="collapsed-bookmark-overflow" ref={overflowRef}>
-              <button
-                type="button"
-                className={overflowOpen ? "active" : ""}
-                aria-label={`Show ${overflow.length} more bookmarks`}
-                aria-expanded={overflowOpen}
-                title={`${overflow.length} more bookmarks`}
-                onClick={() => setOverflowOpen((open) => !open)}
-              >
-                +{overflow.length}
-              </button>
-              {overflowOpen && (
-                <div className="collapsed-bookmark-menu" role="menu">
-                  {overflow.map((bookmark) => {
-                    const active =
-                      bookmark.side === "remote"
-                        ? activeRemotePath === bookmark.path
-                        : activeLocalPath === bookmark.path;
-                    return (
-                      <button
-                        key={bookmark.id}
-                        type="button"
-                        role="menuitem"
-                        className={active ? "active" : ""}
-                        title={bookmark.path}
-                        onClick={() => {
-                          setOverflowOpen(false);
-                          onOpenBookmark(bookmark);
-                        }}
-                      >
-                        {bookmark.side === "remote" ? (
-                          <HardDrive size={14} />
-                        ) : (
-                          <Folder size={14} />
-                        )}
-                        <span>
-                          <strong>{bookmark.label}</strong>
-                          <small>{bookmark.path}</small>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
         </nav>
       )}
     </div>

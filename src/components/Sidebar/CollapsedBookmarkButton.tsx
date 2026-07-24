@@ -1,16 +1,29 @@
 import { Folder, HardDrive } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import type { Favorite } from "../../types";
 
 export function CollapsedBookmarkButton({
   bookmark,
   active,
-  onOpen,
+  dragging,
+  dropTarget,
+  onPointerDownReorder,
 }: {
   bookmark: Favorite;
   active: boolean;
-  onOpen: (bookmark: Favorite) => void;
+  dragging?: boolean;
+  dropTarget?: boolean;
+  onPointerDownReorder: (
+    bookmark: Favorite,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => void;
 }) {
   const tipId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -28,6 +41,7 @@ export function CollapsedBookmarkButton({
   }, [open]);
 
   function showTip() {
+    if (dragging) return;
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       setPosition({
@@ -43,18 +57,29 @@ export function CollapsedBookmarkButton({
       <button
         ref={buttonRef}
         type="button"
-        className={`collapsed-bookmark${active ? " active" : ""}`}
+        data-bookmark-id={bookmark.id}
+        className={`collapsed-bookmark${active ? " active" : ""}${dragging ? " is-dragging" : ""}${dropTarget ? " is-drop-target" : ""}`}
         aria-label={`Open bookmark ${bookmark.label}`}
         aria-describedby={open ? tipId : undefined}
+        title={`${bookmark.label} — drag to reorder`}
         onMouseEnter={showTip}
         onMouseLeave={() => setOpen(false)}
         onFocus={showTip}
         onBlur={() => setOpen(false)}
-        onClick={() => onOpen(bookmark)}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          setOpen(false);
+          onPointerDownReorder(bookmark, event);
+        }}
       >
-        {bookmark.side === "remote" ? <HardDrive size={15} /> : <Folder size={15} />}
+        {bookmark.side === "remote" ? (
+          <HardDrive size={14} strokeWidth={2.25} aria-hidden />
+        ) : (
+          <Folder size={14} strokeWidth={2.25} aria-hidden />
+        )}
       </button>
       {open &&
+        !dragging &&
         createPortal(
           <div
             id={tipId}

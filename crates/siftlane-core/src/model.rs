@@ -328,6 +328,9 @@ pub struct Preferences {
     pub connect_timeout_seconds: u64,
     pub response_timeout_seconds: u64,
     pub keepalive_seconds: u64,
+    /// Per-connection collapsed bookmark tile order (profile id → favorite ids).
+    #[serde(default)]
+    pub bookmark_order: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Preferences {
@@ -342,6 +345,7 @@ impl Default for Preferences {
             connect_timeout_seconds: 15,
             response_timeout_seconds: 30,
             keepalive_seconds: 30,
+            bookmark_order: std::collections::BTreeMap::new(),
         }
     }
 }

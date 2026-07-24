@@ -226,7 +226,7 @@ button:disabled { cursor: default; opacity: .38; }
 .sidebar-footer > button { width: 30px; height: 28px; display: grid; place-items: center; border-radius: 6px; }
 .sidebar-footer > button:hover { background: var(--surface); transform: translateY(-1px); }
 .secure-status small i { width: 7px; height: 7px; border-radius: 50%; color: var(--green); background: var(--green); box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); animation: pulse-dot 2.2s var(--ease-soft) infinite; }
-.sidebar.collapsed { padding-inline: 12px; }
+.sidebar.collapsed { padding-inline: 6px; }
 .sidebar.collapsed .brand { justify-content: center; padding: 2px 0 14px; }
 .sidebar.collapsed .brand div, .sidebar.collapsed .primary-action span, .sidebar.collapsed .sidebar-section, .sidebar.collapsed .sidebar-footer > span { display: none; }
 .sidebar.collapsed .primary-action { width: 40px; flex: 0 0 38px; }
@@ -234,20 +234,64 @@ button:disabled { cursor: default; opacity: .38; }
 .collapsed-shortcuts { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 12px; overflow-x: visible; overflow-y: auto; scrollbar-width: none; }
 .collapsed-shortcuts::-webkit-scrollbar { display: none; }
 .collapsed-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.collapsed-bookmarks { padding-top: 8px; border-top: 1px solid var(--border); }
-.collapsed-rail > button,
-.collapsed-bookmark-overflow > button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: color-mix(in srgb, var(--surface) 58%, transparent); font-size: 10px; font-weight: 700; animation: pop-in var(--dur) var(--ease-bounce) both; }
-.collapsed-rail > button:nth-child(1),
-.collapsed-bookmark-overflow > button { animation-delay: .02s; }
+.collapsed-bookmarks {
+  display: grid;
+  grid-template-columns: repeat(2, 24px);
+  gap: 4px;
+  justify-content: center;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.collapsed-rail > button { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: color-mix(in srgb, var(--surface) 58%, transparent); font-size: 10px; font-weight: 700; animation: pop-in var(--dur) var(--ease-bounce) both; }
+.collapsed-bookmarks > .collapsed-bookmark {
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  animation: pop-in var(--dur) var(--ease-bounce) both;
+}
+.collapsed-rail > button:nth-child(1) { animation-delay: .02s; }
 .collapsed-rail > button:nth-child(2) { animation-delay: .05s; }
 .collapsed-rail > button:nth-child(3) { animation-delay: .08s; }
 .collapsed-rail > button:nth-child(4) { animation-delay: .11s; }
-.collapsed-rail > button:hover,
-.collapsed-bookmark-overflow > button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface); transform: translateY(-2px) scale(1.04); }
-.collapsed-rail > button.active,
-.collapsed-bookmark-overflow > button.active { color: white; border-color: var(--teal); background: var(--teal); box-shadow: 0 6px 16px color-mix(in srgb, var(--teal) 35%, transparent); }
+.collapsed-bookmarks > .collapsed-bookmark:nth-child(1) { animation-delay: .02s; }
+.collapsed-bookmarks > .collapsed-bookmark:nth-child(2) { animation-delay: .04s; }
+.collapsed-bookmarks > .collapsed-bookmark:nth-child(3) { animation-delay: .06s; }
+.collapsed-bookmarks > .collapsed-bookmark:nth-child(4) { animation-delay: .08s; }
+.collapsed-rail > button:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface); transform: translateY(-2px) scale(1.04); }
+.collapsed-bookmarks > .collapsed-bookmark:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface); }
+.collapsed-rail > button.active { color: white; border-color: var(--teal); background: var(--teal); box-shadow: 0 6px 16px color-mix(in srgb, var(--teal) 35%, transparent); }
+.collapsed-bookmarks > .collapsed-bookmark.active { color: white; border-color: var(--teal); background: var(--teal); box-shadow: 0 4px 10px color-mix(in srgb, var(--teal) 32%, transparent); }
+.collapsed-bookmarks > .collapsed-bookmark.is-dragging {
+  opacity: .4;
+  pointer-events: none;
+}
+.collapsed-bookmarks > .collapsed-bookmark.is-drop-target {
+  color: var(--teal);
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 75%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 28%, transparent);
+}
 .collapsed-rail > button > svg:not(.spin) { position: absolute; right: 2px; bottom: 2px; color: currentColor; }
-.collapsed-rail > button.collapsed-bookmark > svg { position: static; }
+.collapsed-bookmarks > .collapsed-bookmark > svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke-width: 2.25;
+}
 .collapsed-bookmark-tip {
   position: fixed;
   z-index: 80;
@@ -312,14 +356,6 @@ button:disabled { cursor: default; opacity: .38; }
   color: var(--faint);
   font-family: var(--font-mono);
 }
-.collapsed-bookmark-overflow { position: relative; }
-.collapsed-bookmark-menu { position: absolute; top: 0; left: calc(100% + 8px); z-index: 40; display: flex; flex-direction: column; gap: 2px; min-width: 196px; max-width: 260px; max-height: min(320px, 70vh); overflow-y: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); animation: menu-pop var(--dur) var(--ease-bounce) both; }
-.collapsed-bookmark-menu button { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border-radius: 6px; color: var(--muted); text-align: left; }
-.collapsed-bookmark-menu button:hover { color: var(--text); background: var(--surface-soft); transform: translateX(2px); }
-.collapsed-bookmark-menu button.active { color: var(--teal); background: color-mix(in srgb, var(--teal-soft) 70%, transparent); }
-.collapsed-bookmark-menu span { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.collapsed-bookmark-menu strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--text); }
-.collapsed-bookmark-menu small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--faint); }
 
 .workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); }
 .session-tabs { height: 39px; flex: 0 0 39px; display: flex; align-items: end; gap: 8px; padding: 0 10px; opacity: 1; transform: translateY(0); background: var(--surface-soft); border-bottom: 1px solid var(--border); overflow: hidden; transition: height var(--dur) var(--ease-spring), flex-basis var(--dur) var(--ease-spring), opacity var(--dur-fast) var(--ease-out), transform var(--dur) var(--ease-spring), border-color var(--dur) var(--ease-soft); }
