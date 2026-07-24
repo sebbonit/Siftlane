@@ -16,6 +16,8 @@ import type {
   Preferences,
   PreviewFile,
   SavedAction,
+  SearchMatch,
+  SearchProgress,
   TransferDirection,
   TransferJob,
   TransferProgress,
@@ -68,8 +70,16 @@ const demoMode =
   !isTauri() &&
   (import.meta.env.VITE_DEMO_DATA === "1" ||
     new URLSearchParams(window.location.search).get("demo") === "1");
-let localDemo: FileEntry[] = demoEntries("/Users/alex/Projects/my-website", true);
-let remoteDemo: FileEntry[] = demoEntries("/var/www/html", false);
+const LOCAL_DEMO_ROOT = "/Users/alex/Projects/my-website";
+const REMOTE_DEMO_ROOT = "/var/www/html";
+let localDemoTree = buildDemoTree(LOCAL_DEMO_ROOT, true);
+let remoteDemoTree = buildDemoTree(REMOTE_DEMO_ROOT, false);
+const demoSearchCancel = new Map<string, boolean>();
+const demoSearchListeners = new Set<(progress: SearchProgress) => void>();
+
+function emitDemoSearch(progress: SearchProgress) {
+  for (const listener of demoSearchListeners) listener(progress);
+}
 let browserProfiles = demoMode ? [...mockProfiles] : [];
 let browserTransfers: TransferJob[] = demoMode
   ? [
@@ -81,21 +91,15 @@ let browserTransfers: TransferJob[] = demoMode
 let browserSavedActions: SavedAction[] = [];
 let browserFavorites: Favorite[] = [];
 
-function demoEntries(base: string, local: boolean): FileEntry[] {
-  const values: Array<[string, FileEntry["kind"], number | null]> = [
-    ["assets", "directory", null],
-    ["css", "directory", null],
-    ["images", "directory", null],
-    ["js", "directory", null],
-    ["vendor", "directory", null],
-    [local ? ".gitignore" : ".htaccess", "file", local ? 243 : 1240],
-    ["about.html", "file", 4300],
-    ["contact.html", "file", 3600],
-    ["index.html", "file", 7200],
-    [local ? "package.json" : "robots.txt", "file", local ? 1100 : 312],
-  ];
-  return values.map(([name, kind, size], index) => ({
-    path: `${base}/${name}`,
+function demoEntry(
+  base: string,
+  name: string,
+  kind: FileEntry["kind"],
+  size: number | null,
+  index: number,
+): FileEntry {
+  return {
+    path: `${base.replace(/\/+$/, "")}/${name}`,
     name,
     kind,
     size,
@@ -103,7 +107,231 @@ function demoEntries(base: string, local: boolean): FileEntry[] {
     permissions: kind === "directory" ? 0o755 : 0o644,
     symlink_target: null,
     hidden: name.startsWith("."),
-  }));
+  };
+}
+
+function buildDemoTree(root: string, local: boolean): Record<string, FileEntry[]> {
+  const nest = (base: string, values: Array<[string, FileEntry["kind"], number | null]>) =>
+    values.map(([name, kind, size], index) => demoEntry(base, name, kind, size, index));
+
+  const assets = `${root}/assets`;
+  const images = `${root}/images`;
+  const css = `${root}/css`;
+  const js = `${root}/js`;
+  return {
+    [root]: nest(root, [
+      ["assets", "directory", null],
+      ["css", "directory", null],
+      ["images", "directory", null],
+      ["js", "directory", null],
+      ["vendor", "directory", null],
+      [local ? ".gitignore" : ".htaccess", "file", local ? 243 : 1240],
+      ["about.html", "file", 4300],
+      ["contact.html", "file", 3600],
+      ["index.html", "file", 7200],
+      [local ? "package.json" : "robots.txt", "file", local ? 1100 : 312],
+    ]),
+    [assets]: nest(assets, [
+      ["logo.svg", "file", 1840],
+      ["brand.png", "file", 22_400],
+    ]),
+    [images]: nest(images, [
+      ["hero.jpg", "file", 1_240_000],
+      ["thumb.png", "file", 48_200],
+    ]),
+    [css]: nest(css, [["style.css", "file", 3100]]),
+    [js]: nest(js, [["app.js", "file", 8600]]),
+    [`${root}/vendor`]: [],
+  };
+}
+
+function demoList(tree: Record<string, FileEntry[]>, path: string): FileEntry[] {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  return tree[normalized] ?? tree[path] ?? [];
+}
+
+function demoParent(path: string, remote: boolean): string {
+  const normalized = path.replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) return remote ? "/" : normalized.slice(0, Math.max(1, index + 1)) || "/";
+  return normalized.slice(0, index) || "/";
+}
+
+function demoAddEntry(
+  tree: Record<string, FileEntry[]>,
+  parentPath: string,
+  name: string,
+  directory: boolean,
+): Record<string, FileEntry[]> {
+  const parent = parentPath.replace(/\/+$/, "") || "/";
+  const entry = browserEntry(parent, name, directory);
+  const next = { ...tree, [parent]: [...(tree[parent] ?? []), entry] };
+  if (directory) next[entry.path] = next[entry.path] ?? [];
+  return next;
+}
+
+function demoRemoveEntry(
+  tree: Record<string, FileEntry[]>,
+  path: string,
+): Record<string, FileEntry[]> {
+  const parent = demoParent(path, true);
+  const next: Record<string, FileEntry[]> = {};
+  for (const [key, entries] of Object.entries(tree)) {
+    if (key === path || key.startsWith(`${path}/`)) continue;
+    next[key] = key === parent ? entries.filter((entry) => entry.path !== path) : entries;
+  }
+  return next;
+}
+
+function demoUpdatePermissions(
+  tree: Record<string, FileEntry[]>,
+  path: string,
+  permissions: number,
+): Record<string, FileEntry[]> {
+  const next: Record<string, FileEntry[]> = {};
+  for (const [key, entries] of Object.entries(tree)) {
+    next[key] = entries.map((entry) =>
+      entry.path === path ? { ...entry, permissions } : entry,
+    );
+  }
+  return next;
+}
+
+function demoAllFiles(tree: Record<string, FileEntry[]>, root: string): FileEntry[] {
+  const prefix = root.replace(/\/+$/, "");
+  return Object.values(tree)
+    .flat()
+    .filter(
+      (entry) =>
+        entry.kind === "file" &&
+        (entry.path === prefix || entry.path.startsWith(`${prefix}/`)),
+    );
+}
+
+const DEMO_SKIP_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  "target",
+  "dist",
+  "build",
+  "vendor",
+  "__pycache__",
+  ".next",
+  ".cache",
+]);
+
+async function runDemoSearch(
+  tree: Record<string, FileEntry[]>,
+  root: string,
+  query: string,
+  remote: boolean,
+): Promise<UUID> {
+  const searchId = crypto.randomUUID();
+  demoSearchCancel.set(searchId, false);
+  const needle = query.trim().toLowerCase();
+  queueMicrotask(() => {
+    const callback = emitDemoSearch;
+    if (!needle) {
+      callback({
+        search_id: searchId,
+        matches: [],
+        visited: 0,
+        truncated: false,
+        done: true,
+        cancelled: false,
+      });
+      demoSearchCancel.delete(searchId);
+      return;
+    }
+
+    const matches: SearchMatch[] = [];
+    let visited = 0;
+    let truncated = false;
+    const queue: Array<{ path: string; depth: number }> = [
+      { path: root.replace(/\/+$/, "") || "/", depth: 0 },
+    ];
+    const maxMatches = 500;
+    const maxVisited = 1500;
+    const maxDepth = 32;
+
+    while (queue.length > 0) {
+      if (demoSearchCancel.get(searchId)) {
+        callback({
+          search_id: searchId,
+          matches: [],
+          visited,
+          truncated,
+          done: true,
+          cancelled: true,
+        });
+        demoSearchCancel.delete(searchId);
+        return;
+      }
+      if (visited >= maxVisited || matches.length >= maxMatches) {
+        truncated = true;
+        break;
+      }
+      const current = queue.shift()!;
+      if (current.depth > maxDepth) {
+        truncated = true;
+        continue;
+      }
+      visited += 1;
+      const batch: SearchMatch[] = [];
+      const preferred: string[] = [];
+      const other: string[] = [];
+      for (const entry of demoList(tree, current.path)) {
+        if (entry.kind === "symlink" || entry.kind === "other") continue;
+        if (entry.name.toLowerCase().includes(needle)) {
+          const item = {
+            path: entry.path,
+            name: entry.name,
+            kind: entry.kind,
+            parent_path: demoParent(entry.path, remote),
+          };
+          matches.push(item);
+          batch.push(item);
+          if (matches.length >= maxMatches) {
+            truncated = true;
+            break;
+          }
+        }
+        if (
+          entry.kind === "directory" &&
+          !DEMO_SKIP_DIRECTORIES.has(entry.name.toLowerCase())
+        ) {
+          if (entry.name.toLowerCase().includes(needle)) preferred.push(entry.path);
+          else other.push(entry.path);
+        }
+      }
+      if (batch.length > 0) {
+        callback({
+          search_id: searchId,
+          matches: batch,
+          visited,
+          truncated,
+          done: false,
+          cancelled: false,
+        });
+      }
+      if (truncated) break;
+      for (const path of other) queue.push({ path, depth: current.depth + 1 });
+      for (const path of preferred.reverse()) {
+        queue.unshift({ path, depth: current.depth + 1 });
+      }
+    }
+
+    callback({
+      search_id: searchId,
+      matches: [],
+      visited,
+      truncated,
+      done: true,
+      cancelled: false,
+    });
+    demoSearchCancel.delete(searchId);
+  });
+  return searchId;
 }
 
 function mockTransfer(
@@ -210,14 +438,14 @@ export const api = {
     return desktop
       ? call<FileEntry[]>("list_local_directory", { path })
       : demoMode
-        ? localDemo
+        ? demoList(localDemoTree, path)
         : [];
   },
   async listRemote(sessionId: UUID, path: string) {
     return desktop
       ? call<FileEntry[]>("list_remote_directory", { sessionId, path })
       : demoMode
-        ? remoteDemo
+        ? demoList(remoteDemoTree, path)
         : [];
   },
   async readLocalFile(path: string) {
@@ -262,19 +490,19 @@ export const api = {
   },
   async createLocalEntry(parentPath: string, name: string, directory: boolean) {
     if (desktop) return call<void>("create_local_entry", { parentPath, name, directory });
-    if (demoMode) localDemo = [...localDemo, browserEntry(parentPath, name, directory)];
+    if (demoMode) localDemoTree = demoAddEntry(localDemoTree, parentPath, name, directory);
   },
   async createLocalEntryPrivileged(parentPath: string, name: string, directory: boolean, sudoPassword?: string) {
     if (desktop) return call<void>("create_local_entry_privileged", { parentPath, name, directory, sudoPassword });
-    if (demoMode) localDemo = [...localDemo, browserEntry(parentPath, name, directory)];
+    if (demoMode) localDemoTree = demoAddEntry(localDemoTree, parentPath, name, directory);
   },
   async deleteLocalEntry(path: string, directory: boolean) {
     if (desktop) return call<void>("delete_local_entry", { path, directory });
-    localDemo = localDemo.filter((entry) => entry.path !== path);
+    localDemoTree = demoRemoveEntry(localDemoTree, path);
   },
   async deleteLocalEntryPrivileged(path: string, directory: boolean, sudoPassword?: string) {
     if (desktop) return call<void>("delete_local_entry_privileged", { path, directory, sudoPassword });
-    localDemo = localDemo.filter((entry) => entry.path !== path);
+    localDemoTree = demoRemoveEntry(localDemoTree, path);
   },
   async createRemoteEntry(
     sessionId: UUID,
@@ -285,44 +513,36 @@ export const api = {
     if (desktop) {
       return call<void>("create_remote_entry", { sessionId, parentPath, name, directory });
     }
-    if (demoMode) remoteDemo = [...remoteDemo, browserEntry(parentPath, name, directory)];
+    if (demoMode) remoteDemoTree = demoAddEntry(remoteDemoTree, parentPath, name, directory);
   },
   async createRemoteEntryPrivileged(sessionId: UUID, parentPath: string, name: string, directory: boolean, sudoPassword?: string) {
     if (desktop) return call<void>("create_remote_entry_privileged", { sessionId, parentPath, name, directory, sudoPassword });
-    if (demoMode) remoteDemo = [...remoteDemo, browserEntry(parentPath, name, directory)];
+    if (demoMode) remoteDemoTree = demoAddEntry(remoteDemoTree, parentPath, name, directory);
   },
   async deleteRemoteEntry(sessionId: UUID, path: string, directory: boolean) {
     if (desktop) return call<void>("delete_remote_entry", { sessionId, path, directory });
-    remoteDemo = remoteDemo.filter((entry) => entry.path !== path);
+    remoteDemoTree = demoRemoveEntry(remoteDemoTree, path);
   },
   async deleteRemoteEntryPrivileged(sessionId: UUID, path: string, directory: boolean, sudoPassword?: string) {
     if (desktop) return call<void>("delete_remote_entry_privileged", { sessionId, path, directory, sudoPassword });
-    remoteDemo = remoteDemo.filter((entry) => entry.path !== path);
+    remoteDemoTree = demoRemoveEntry(remoteDemoTree, path);
   },
   async setLocalPermissions(path: string, permissions: number) {
     if (desktop) return call<void>("set_local_permissions", { path, permissions });
-    localDemo = localDemo.map((entry) =>
-      entry.path === path ? { ...entry, permissions } : entry,
-    );
+    localDemoTree = demoUpdatePermissions(localDemoTree, path, permissions);
   },
   async setRemotePermissions(sessionId: UUID, path: string, permissions: number) {
     if (desktop) return call<void>("set_remote_permissions", { sessionId, path, permissions });
-    remoteDemo = remoteDemo.map((entry) =>
-      entry.path === path ? { ...entry, permissions } : entry,
-    );
+    remoteDemoTree = demoUpdatePermissions(remoteDemoTree, path, permissions);
   },
   async getLocalDirectorySize(path: string) {
     if (desktop) return call<number>("get_local_directory_size", { path });
-    return localDemo
-      .filter((entry) => entry.path.startsWith(`${path.replace(/[\\/]$/, "")}/`) && entry.kind === "file")
-      .reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+    return demoAllFiles(localDemoTree, path).reduce((sum, entry) => sum + (entry.size ?? 0), 0);
   },
   async getRemoteDirectorySize(sessionId: UUID, path: string) {
     if (desktop) return call<number>("get_remote_directory_size", { sessionId, path });
     void sessionId;
-    return remoteDemo
-      .filter((entry) => entry.path.startsWith(`${path.replace(/[\\/]$/, "")}/`) && entry.kind === "file")
-      .reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+    return demoAllFiles(remoteDemoTree, path).reduce((sum, entry) => sum + (entry.size ?? 0), 0);
   },
   async confirmDelete(name: string, directory: boolean) {
     const message = `Delete ${directory ? "folder" : "file"} “${name}”? This cannot be undone.`;
@@ -370,8 +590,10 @@ export const api = {
     mode: DirectoryTransferMode;
   }) {
     if (desktop) return call<TransferJob[]>("enqueue_directory_transfer", { draft });
-    const entries = draft.direction === "upload" ? localDemo : remoteDemo;
-    const files = entries.filter((entry) => entry.kind === "file");
+    const files = demoAllFiles(
+      draft.direction === "upload" ? localDemoTree : remoteDemoTree,
+      draft.sourcePath,
+    );
     const rootName = draft.sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
     if (files.length === 0) {
       throw {
@@ -484,6 +706,28 @@ export const api = {
     if (desktop) return call<string>("package_remote_directory", { sessionId, path, format });
     void sessionId;
     return `${path.replace(/\/+$/, "") || "/"}.${format === "tar_gz" ? "tar.gz" : format}`;
+  },
+  async startSearchLocal(root: string, query: string) {
+    if (desktop) return call<UUID>("start_search_local", { root, query });
+    return runDemoSearch(localDemoTree, root, query, false);
+  },
+  async startSearchRemote(sessionId: UUID, root: string, query: string) {
+    if (desktop) return call<UUID>("start_search_remote", { sessionId, root, query });
+    void sessionId;
+    return runDemoSearch(remoteDemoTree, root, query, true);
+  },
+  async cancelSearch(searchId: UUID) {
+    if (desktop) return call<void>("cancel_search", { searchId });
+    demoSearchCancel.set(searchId, true);
+  },
+  async onSearchProgress(callback: (progress: SearchProgress) => void): Promise<UnlistenFn> {
+    if (desktop) {
+      return listen<SearchProgress>("search-progress", ({ payload }) => callback(payload));
+    }
+    demoSearchListeners.add(callback);
+    return () => {
+      demoSearchListeners.delete(callback);
+    };
   },
 };
 

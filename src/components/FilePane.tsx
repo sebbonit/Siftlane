@@ -41,6 +41,7 @@ export function FilePane({
   selected,
   loading,
   showHidden,
+  onFocus,
   onSelect,
   onNavigate,
   onBrowse,
@@ -69,6 +70,7 @@ export function FilePane({
   selected: FileEntry | null;
   loading: boolean;
   showHidden: boolean;
+  onFocus?: () => void;
   onSelect: (entry: FileEntry) => void;
   onNavigate: (path: string) => void;
   onBrowse?: () => void;
@@ -125,6 +127,8 @@ export function FilePane({
     <section
       className="file-pane"
       aria-label={`${title} files`}
+      onFocusCapture={() => onFocus?.()}
+      onMouseDown={() => onFocus?.()}
       onClick={() => setContextMenu(null)}
       onContextMenu={(event) => openContextMenu(event, null)}
     >

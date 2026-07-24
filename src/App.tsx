@@ -61,6 +61,7 @@ import {
   newSavedActionId,
   runSavedAction,
 } from "./components/SavedActions";
+import { SearchDialog } from "./components/SearchDialog";
 import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
 import { AppUpdater } from "./components/Updater";
@@ -81,6 +82,7 @@ import type {
   SessionTab,
   UUID,
   EditableFile,
+  SearchMatch,
 } from "./types";
 import appIcon from "../src-tauri/icons/128x128.png";
 
@@ -136,6 +138,8 @@ export default function App() {
   const [sudoPrompt, setSudoPrompt] = useState<SudoPrompt | null>(null);
   const [entryCreation, setEntryCreation] = useState<EntryCreation | null>(null);
   const [pathJump, setPathJump] = useState<PaneSide | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [focusedPane, setFocusedPane] = useState<PaneSide>("remote");
   const [infoTarget, setInfoTarget] = useState<InfoTarget | null>(null);
   const [infoSaving, setInfoSaving] = useState(false);
   const [savedActions, setSavedActions] = useState<SavedAction[]>([]);
@@ -194,6 +198,25 @@ export default function App() {
       if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
     };
   }, [setTransfers, updateTransfer]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const isMod = event.metaKey || event.ctrlKey;
+      const isFindFiles =
+        isMod &&
+        event.shiftKey &&
+        !event.altKey &&
+        (event.code === "KeyF" || event.key.toLowerCase() === "f");
+      if (!isFindFiles) return;
+      if (!activeTabId || editorOpen) return;
+      // Open even when focus is in the pane filter; keep editor ⌘F for CodeMirror.
+      event.preventDefault();
+      event.stopPropagation();
+      setSearchOpen(true);
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activeTabId, editorOpen]);
 
   useEffect(() => {
     if (!activeTab) {
@@ -268,7 +291,7 @@ export default function App() {
     }
   }
 
-  async function loadPane(side: PaneSide, path: string, sessionId?: UUID) {
+  async function loadPane(side: PaneSide, path: string, sessionId?: UUID, selectPath?: string) {
     const tabId = sessionId ?? useAppStore.getState().activeTabId;
     if (!tabId) return;
     setLoadingPane(side);
@@ -281,12 +304,15 @@ export default function App() {
       const normalized = entries.map((entry) =>
         entry.kind === "directory" ? { ...entry, size: null } : entry,
       );
+      const selected = selectPath
+        ? normalized.find((entry) => entry.path === selectPath) ?? null
+        : null;
       if (side === "local") {
         setLocalEntries(normalized);
-        setSelectedLocal(null);
+        setSelectedLocal(selected);
       } else {
         setRemoteEntries(normalized);
-        setSelectedRemote(null);
+        setSelectedRemote(selected);
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -295,11 +321,21 @@ export default function App() {
     }
   }
 
-  async function navigate(side: PaneSide, path: string, sessionId?: UUID) {
+  async function navigate(side: PaneSide, path: string, sessionId?: UUID, selectPath?: string) {
     const tabId = sessionId ?? useAppStore.getState().activeTabId;
     if (!tabId) return;
     updateTab(tabId, side === "local" ? { localPath: path } : { remotePath: path });
-    await loadPane(side, path, tabId);
+    await loadPane(side, path, tabId, selectPath);
+  }
+
+  async function openSearchMatch(side: PaneSide, match: SearchMatch) {
+    setSearchOpen(false);
+    setFocusedPane(side);
+    if (match.kind === "directory") {
+      await navigate(side, match.path);
+      return;
+    }
+    await navigate(side, match.parent_path, undefined, match.path);
   }
 
   async function browseFolder(side: PaneSide) {
@@ -772,6 +808,7 @@ export default function App() {
           <>
             <ConnectionHeader
               tab={activeTab}
+              onSearch={() => setSearchOpen(true)}
               onDisconnect={() => void closeSession(activeTab)}
               onToggleLayout={() => {
                 if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
@@ -801,6 +838,7 @@ export default function App() {
                   selected={selectedLocal}
                   loading={loadingPane === "local"}
                   showHidden={paneHidden.local ?? preferences?.show_hidden_files ?? true}
+                  onFocus={() => setFocusedPane("local")}
                   onSelect={setSelectedLocal}
                   onNavigate={(path) => navigate("local", path)}
                   onBrowse={() => void browseFolder("local")}
@@ -846,6 +884,7 @@ export default function App() {
                   selected={selectedRemote}
                   loading={loadingPane === "remote"}
                   showHidden={paneHidden.remote ?? preferences?.show_hidden_files ?? true}
+                  onFocus={() => setFocusedPane("remote")}
                   onSelect={setSelectedRemote}
                   onNavigate={(path) => navigate("remote", path)}
                   onBrowse={() => void browseFolder("remote")}
@@ -934,6 +973,17 @@ export default function App() {
           onClose={() => setPathJump(null)}
           onSubmit={(path) => navigate(pathJump, path)}
           onListDirectories={(directory) => listDirectoryNames(pathJump, directory)}
+        />
+      )}
+      {searchOpen && activeTab && (
+        <SearchDialog
+          initialSide={focusedPane}
+          localRoot={activeTab.localPath}
+          remoteRoot={activeTab.remotePath}
+          sessionId={activeTab.id}
+          remoteAvailable
+          onClose={() => setSearchOpen(false)}
+          onOpenMatch={(side, match) => void openSearchMatch(side, match)}
         />
       )}
       {actionDialogOpen && (
@@ -1156,7 +1206,17 @@ function SessionTabs({
   );
 }
 
-function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionTab; onToggleLayout: () => void; onDisconnect: () => void }) {
+function ConnectionHeader({
+  tab,
+  onSearch,
+  onToggleLayout,
+  onDisconnect,
+}: {
+  tab: SessionTab;
+  onSearch: () => void;
+  onToggleLayout: () => void;
+  onDisconnect: () => void;
+}) {
   const encrypted = tab.protocol !== "ftp";
   return (
     <header className="connection-header">
@@ -1173,7 +1233,11 @@ function ConnectionHeader({ tab, onToggleLayout, onDisconnect }: { tab: SessionT
         </small>
       </div>
       <div className="header-actions">
-        <button className="search-trigger"><Search size={13} /><span>Search</span><kbd>⌘F</kbd></button>
+        <button className="search-trigger" type="button" onClick={onSearch}>
+          <Search size={13} />
+          <span>Search</span>
+          <kbd>⌘⇧F</kbd>
+        </button>
         <button
           className={`layout-toggle ${tab.layout === "remote_focused" ? "is-remote" : ""}`}
           title={tab.layout === "remote_focused" ? "Show dual pane" : "Focus remote pane"}

@@ -175,3 +175,20 @@ export interface Favorite {
   label: string;
   path: string;
 }
+
+export interface SearchMatch {
+  path: string;
+  name: string;
+  kind: EntryKind;
+  parent_path: string;
+}
+
+export interface SearchProgress {
+  search_id: UUID;
+  matches: SearchMatch[];
+  visited: number;
+  truncated: boolean;
+  done: boolean;
+  cancelled: boolean;
+  error?: string | null;
+}

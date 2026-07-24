@@ -2,7 +2,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use chrono::{DateTime, Utc};
@@ -18,7 +21,7 @@ use siftlane_core::{
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(unix)]
 use tokio::{io::AsyncWriteExt, process::Command as TokioCommand};
 use uuid::Uuid;
@@ -1788,6 +1791,133 @@ pub async fn package_remote_directory(
     client
         .package_directory(&normalize_remote_path(&path)?, format)
         .await
+}
+
+#[tauri::command]
+pub async fn start_search_local(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    root: String,
+    query: String,
+) -> Result<Uuid, AppError> {
+    let search_id = Uuid::new_v4();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state
+        .searches
+        .lock()
+        .await
+        .insert(search_id, cancelled.clone());
+    let query = query.trim().to_string();
+    let root_path = PathBuf::from(root);
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let walk_app = app.clone();
+        let walk_result = tokio::task::spawn_blocking(move || {
+            crate::search::search_local(search_id, root_path, query, cancelled, |progress| {
+                let _ = walk_app.emit("search-progress", progress);
+            })
+        })
+        .await;
+        let failure_message = match walk_result {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %search_id,
+                    message = error.message.as_str(),
+                    "local search failed"
+                );
+                Some(error.message)
+            }
+            Err(join_error) => {
+                tracing::warn!(%search_id, error = %join_error, "local search task failed");
+                Some("Search failed".into())
+            }
+        };
+        if let Some(message) = failure_message {
+            let _ = app.emit(
+                "search-progress",
+                crate::search::SearchProgress {
+                    search_id,
+                    matches: Vec::new(),
+                    visited: 0,
+                    truncated: false,
+                    done: true,
+                    cancelled: false,
+                    error: Some(message),
+                },
+            );
+        }
+        app_state.searches.lock().await.remove(&search_id);
+    });
+    Ok(search_id)
+}
+
+#[tauri::command]
+pub async fn start_search_remote(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    root: String,
+    query: String,
+) -> Result<Uuid, AppError> {
+    let client = session_client(&state, session_id).await?;
+    let root = normalize_remote_path(&root)?;
+    let search_id = Uuid::new_v4();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state
+        .searches
+        .lock()
+        .await
+        .insert(search_id, cancelled.clone());
+    let query = query.trim().to_string();
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let result = crate::search::search_remote(
+            client.as_ref(),
+            search_id,
+            root,
+            query,
+            cancelled,
+            |progress| {
+                let _ = app.emit("search-progress", progress);
+            },
+        )
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(
+                %search_id,
+                message = error.message.as_str(),
+                detail = error.detail.as_deref().unwrap_or(""),
+                "remote search failed"
+            );
+            let message = match error.detail {
+                Some(detail) if !detail.is_empty() => format!("{} ({})", error.message, detail),
+                _ => error.message,
+            };
+            let _ = app.emit(
+                "search-progress",
+                crate::search::SearchProgress {
+                    search_id,
+                    matches: Vec::new(),
+                    visited: 0,
+                    truncated: false,
+                    done: true,
+                    cancelled: false,
+                    error: Some(message),
+                },
+            );
+        }
+        app_state.searches.lock().await.remove(&search_id);
+    });
+    Ok(search_id)
+}
+
+#[tauri::command]
+pub async fn cancel_search(state: State<'_, AppState>, search_id: Uuid) -> Result<(), AppError> {
+    if let Some(flag) = state.searches.lock().await.get(&search_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 fn local_io_error(source: std::io::Error) -> AppError {
