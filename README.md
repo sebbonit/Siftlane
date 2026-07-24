@@ -6,7 +6,7 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 
 ![Siftlane dual-pane SFTP client](docs/images/siftlane-app.png)
 
-> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Recursive directory transfers, remote search, bookmarks, and implicit FTPS remain roadmap items.
+> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Remote search, bookmarks, and implicit FTPS remain roadmap items.
 
 ## Features
 
@@ -15,7 +15,7 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Unknown and changed host-key confirmation with SHA-256 fingerprints
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
-- Upload/download queue with progress, pause, cancel, retry, conflict prompts, partial files, and restart recovery
+- Upload/download queue with progress, pause, cancel, retry, conflict prompts, partial files, restart recovery, and recursive directory transfers
 - Remote create, rename, delete, and POSIX permission operations
 - Explicit sudo editing for protected local Unix files and SFTP files
 - Persistent preferences, window state, transfer history, and recent connections

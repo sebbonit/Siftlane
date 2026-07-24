@@ -26,6 +26,7 @@ use crate::{
     secrets::SecretKind,
     state::{AppState, PendingHostKey, SessionRecord, StoredKeyVerifier},
     storage::StoredHostKey,
+    transfer_plan::{TransferPlan, TransferPlanMode, plan_local_directory, plan_remote_directory},
 };
 
 #[tauri::command]
@@ -1274,6 +1275,158 @@ pub async fn enqueue_transfer(
     }
     crate::transfers::spawn(app, state.inner().clone(), job.id);
     Ok(job)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryTransferDraft {
+    pub profile_id: Uuid,
+    pub direction: TransferDirection,
+    pub source_path: String,
+    pub destination_path: String,
+    pub conflict_policy: Option<ConflictPolicy>,
+    pub mode: DirectoryTransferMode,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectoryTransferMode {
+    IncludeRoot,
+    ContentsOnly,
+}
+
+impl From<DirectoryTransferMode> for TransferPlanMode {
+    fn from(value: DirectoryTransferMode) -> Self {
+        match value {
+            DirectoryTransferMode::IncludeRoot => Self::IncludeRoot,
+            DirectoryTransferMode::ContentsOnly => Self::ContentsOnly,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn enqueue_directory_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: DirectoryTransferDraft,
+) -> Result<Vec<TransferJob>, AppError> {
+    if draft.source_path.is_empty() || draft.destination_path.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Source and destination are required",
+        ));
+    }
+    let remote = profile_client(&state, draft.profile_id).await?;
+    let mode = TransferPlanMode::from(draft.mode);
+    let plan = match draft.direction {
+        TransferDirection::Upload => {
+            let source = PathBuf::from(&draft.source_path);
+            let plan = tokio::task::spawn_blocking({
+                let destination = draft.destination_path.clone();
+                move || plan_local_directory(&source, &destination, true, mode)
+            })
+            .await
+            .map_err(|source| {
+                AppError::new(ErrorCode::Internal, "Directory transfer planning failed")
+                    .with_detail(source.to_string())
+            })??;
+            ensure_remote_directories(remote.as_ref(), &plan).await?;
+            plan
+        }
+        TransferDirection::Download => {
+            let source = normalize_remote_path(&draft.source_path)?;
+            let destination = draft.destination_path.clone();
+            let plan = match tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                plan_remote_directory(remote.as_ref(), &source, &destination, false, mode),
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(AppError::new(
+                        ErrorCode::TimedOut,
+                        "Scanning this folder for transfer took too long",
+                    ));
+                }
+            };
+            ensure_local_directories(&plan)?;
+            plan
+        }
+    };
+
+    let policy = draft.conflict_policy.unwrap_or(ConflictPolicy::Ask);
+    let mut jobs = Vec::with_capacity(plan.files.len());
+    {
+        let mut queue = state.transfers.lock().await;
+        for file in plan.files {
+            let mut job = TransferJob::new(
+                draft.profile_id,
+                draft.direction,
+                file.source_path,
+                file.destination_path,
+                None,
+            );
+            job.conflict_policy = policy;
+            queue.enqueue(job.clone());
+            state.storage.save_transfer(&job)?;
+            jobs.push(job);
+        }
+    }
+    for job in &jobs {
+        crate::transfers::spawn(app.clone(), state.inner().clone(), job.id);
+    }
+    Ok(jobs)
+}
+
+async fn ensure_remote_directories(
+    remote: &dyn RemoteFilesystem,
+    plan: &TransferPlan,
+) -> Result<(), AppError> {
+    for path in &plan.directories {
+        if remote.metadata(path).await?.is_some() {
+            continue;
+        }
+        match remote.create_directory(path).await {
+            Ok(()) => {}
+            Err(error) if error.code == ErrorCode::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn ensure_local_directories(plan: &TransferPlan) -> Result<(), AppError> {
+    for path in &plan.directories {
+        std::fs::create_dir_all(path).map_err(|source| {
+            let code = match source.kind() {
+                std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+                _ => ErrorCode::Io,
+            };
+            AppError::new(code, "Could not create a local destination folder")
+                .with_detail(source.to_string())
+        })?;
+    }
+    Ok(())
+}
+
+async fn profile_client(
+    state: &AppState,
+    profile_id: Uuid,
+) -> Result<Arc<dyn RemoteFilesystem>, AppError> {
+    state
+        .sessions
+        .read()
+        .await
+        .values()
+        .find(|session| session.profile_id == profile_id)
+        .map(|session| session.client.clone())
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCode::ConnectionClosed,
+                "Reconnect the profile before queuing a directory transfer",
+            )
+        })
 }
 
 #[derive(Debug, Deserialize)]
