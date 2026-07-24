@@ -14,4 +14,9 @@ describe("MarkdownPreview", () => {
     render(<MarkdownPreview content="   " />);
     expect(screen.getByText("This file is empty.")).toBeInTheDocument();
   });
+
+  it("renders nothing when empty and emptyLabel is null", () => {
+    const { container } = render(<MarkdownPreview content="   " emptyLabel={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
 });

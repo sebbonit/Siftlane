@@ -1,4 +1,5 @@
 import { CircleAlert, Download, LoaderCircle, X } from "lucide-react";
+import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
 import type { AppUpdaterState } from "./useAppUpdater";
 
 export function UpdateDialog({ updater }: { updater: AppUpdaterState }) {
@@ -70,7 +71,7 @@ export function UpdateDialog({ updater }: { updater: AppUpdaterState }) {
             {update.date ? ` (published ${new Date(update.date).toLocaleDateString()})` : ""}. Download and install it
             to stay current.
           </p>
-          {update.body ? <pre className="update-notes">{update.body.trim()}</pre> : null}
+          <MarkdownPreview content={update.body ?? ""} className="update-notes" emptyLabel={null} />
           {busy && (
             <div className="update-progress" role="status" aria-live="polite">
               <div className="update-progress-bar">
