@@ -72,4 +72,47 @@ describe("saved session actions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
     expect(screen.getByRole("menuitem", { name: /bundle and fetch/i })).toBeInTheDocument();
   });
+
+  it("saves a remote commands action and shows results when run", async () => {
+    render(<App />);
+    const newButtons = await screen.findAllByRole("button", { name: /new connection/i });
+    await userEvent.click(newButtons[0]!);
+    await userEvent.type(screen.getByLabelText(/display name/i), "Commands host");
+    await userEvent.type(screen.getByLabelText(/^host$/i), "commands.example.com");
+    await userEvent.type(screen.getByLabelText(/username/i), "deploy");
+    await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
+    await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
+    await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /add new/i }));
+    const dialog = screen.getByRole("dialog", { name: /add action/i });
+
+    await userEvent.type(within(dialog).getByLabelText(/^name$/i), "Build on server");
+    await userEvent.selectOptions(
+      within(dialog).getByLabelText(/action type/i),
+      "run_remote_commands",
+    );
+    expect(within(dialog).getByLabelText(/^commands$/i)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/working directory/i)).toBeInTheDocument();
+    await userEvent.type(
+      within(dialog).getByLabelText(/^commands$/i),
+      "git pull{enter}npm run build",
+    );
+    await userEvent.clear(within(dialog).getByLabelText(/working directory/i));
+    await userEvent.type(within(dialog).getByLabelText(/working directory/i), "/var/www/app");
+    await userEvent.click(within(dialog).getByRole("button", { name: /save action/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /add action/i })).not.toBeInTheDocument(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /build on server/i }));
+
+    const resultDialog = await screen.findByRole("dialog", {
+      name: /remote commands finished/i,
+    });
+    expect(within(resultDialog).getByText("git pull")).toBeInTheDocument();
+    expect(within(resultDialog).getByText("npm run build")).toBeInTheDocument();
+  });
 });

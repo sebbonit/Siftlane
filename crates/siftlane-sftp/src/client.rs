@@ -17,7 +17,8 @@ use russh_sftp::{
 };
 use secrecy::{ExposeSecret, SecretString};
 use siftlane_core::{
-    AppError, ArchiveFormat, EntryKind, ErrorCode, FileEntry, RemoteCapabilities, RemoteFilesystem,
+    AppError, ArchiveFormat, EntryKind, ErrorCode, FileEntry, RemoteCapabilities,
+    RemoteCommandResult, RemoteFilesystem,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
@@ -861,6 +862,62 @@ impl RemoteFilesystem for SftpClient {
         }
         Ok(archive)
     }
+
+    async fn execute_commands(
+        &self,
+        commands: &[String],
+        working_directory: Option<&str>,
+    ) -> Result<Vec<RemoteCommandResult>, AppError> {
+        let commands: Vec<String> = commands
+            .iter()
+            .map(|command| command.trim().to_string())
+            .filter(|command| !command.is_empty())
+            .collect();
+        if commands.is_empty() {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "At least one remote command is required",
+            ));
+        }
+        let cwd = working_directory
+            .map(str::trim)
+            .filter(|path| !path.is_empty());
+        let mut results = Vec::with_capacity(commands.len());
+        for command in commands {
+            let remote = wrap_remote_command(&command, cwd);
+            let output = self.execute_command(remote, None).await?;
+            let result = RemoteCommandResult {
+                command,
+                exit_status: output.status,
+                stdout: truncate_command_output(&output.stdout),
+                stderr: truncate_command_output(&output.stderr),
+            };
+            let failed = result.exit_status != Some(0);
+            results.push(result);
+            if failed {
+                break;
+            }
+        }
+        Ok(results)
+    }
+}
+
+const MAX_COMMAND_OUTPUT_CHARS: usize = 64 * 1024;
+
+fn wrap_remote_command(command: &str, working_directory: Option<&str>) -> String {
+    match working_directory {
+        Some(cwd) => format!("cd {} && {}", shell_quote(cwd), command),
+        None => command.to_string(),
+    }
+}
+
+fn truncate_command_output(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    if text.chars().count() <= MAX_COMMAND_OUTPUT_CHARS {
+        return text.into_owned();
+    }
+    let truncated: String = text.chars().take(MAX_COMMAND_OUTPUT_CHARS).collect();
+    format!("{truncated}\n… (truncated)")
 }
 
 fn authentication_failure(message: impl Into<String>) -> AppError {
@@ -902,11 +959,31 @@ fn empty_attributes_with_permissions(permissions: u32) -> FileAttributes {
 
 #[cfg(test)]
 mod tests {
-    use super::{privileged_command, privileged_shell_command, shell_quote};
+    use super::{
+        privileged_command, privileged_shell_command, shell_quote, truncate_command_output,
+        wrap_remote_command,
+    };
 
     #[test]
     fn shell_quote_keeps_remote_paths_in_one_argument() {
         assert_eq!(shell_quote("/etc/it's.conf"), "'/etc/it'\\''s.conf'");
+    }
+
+    #[test]
+    fn wrap_remote_command_quotes_working_directory() {
+        assert_eq!(
+            wrap_remote_command("npm run build", Some("/var/www/app dir")),
+            "cd '/var/www/app dir' && npm run build"
+        );
+        assert_eq!(wrap_remote_command("uptime", None), "uptime");
+    }
+
+    #[test]
+    fn truncate_command_output_marks_overflow() {
+        let oversized = "x".repeat(super::MAX_COMMAND_OUTPUT_CHARS + 8);
+        let truncated = truncate_command_output(oversized.as_bytes());
+        assert!(truncated.ends_with("… (truncated)"));
+        assert!(truncated.chars().count() > super::MAX_COMMAND_OUTPUT_CHARS);
     }
 
     #[test]

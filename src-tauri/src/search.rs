@@ -696,6 +696,13 @@ mod tests {
         ) -> Result<String, AppError> {
             unreachable!()
         }
+        async fn execute_commands(
+            &self,
+            _commands: &[String],
+            _working_directory: Option<&str>,
+        ) -> Result<Vec<siftlane_core::RemoteCommandResult>, AppError> {
+            unreachable!()
+        }
     }
 
     #[tokio::test]

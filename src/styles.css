@@ -390,7 +390,22 @@ button:disabled { cursor: default; opacity: .38; }
 .session-actions-add:hover { background: var(--teal-soft); }
 .saved-action-dialog { width: min(440px, calc(100vw - 32px)); }
 .saved-action-hint { margin: 2px 0 6px; color: var(--muted); font-size: 11px; line-height: 1.4; }
-.saved-action-dialog select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); color: var(--text); font: inherit; }
+.saved-action-field-hint { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.saved-action-dialog select,
+.saved-action-dialog textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); color: var(--text); font: inherit; }
+.saved-action-dialog select { height: 34px; padding: 0 10px; }
+.saved-action-dialog textarea { min-height: 120px; padding: 8px 10px; resize: vertical; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+.remote-commands-result-dialog { width: min(560px, calc(100vw - 32px)); }
+.remote-commands-result-list { display: grid; gap: 10px; padding: 14px 20px; }
+.remote-command-result { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); overflow: hidden; }
+.remote-command-result > header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11px; }
+.remote-command-result > header code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.remote-command-result > header span { color: var(--muted); flex: 0 0 auto; }
+.remote-command-result.ok > header { color: var(--green, #1f7a4d); }
+.remote-command-result.failed > header { color: var(--red); }
+.remote-command-result pre { margin: 0; padding: 8px 10px; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.4; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.remote-command-result pre.stderr { border-top: 1px solid var(--border); color: var(--red); background: color-mix(in srgb, var(--red) 6%, transparent); }
+.remote-command-empty { margin: 0; padding: 8px 10px; color: var(--muted); font-size: 11px; }
 .connection-header { height: 36px; flex: 0 0 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--border); animation: fade-up var(--dur-slow) var(--ease-out) both; }
 .secure-status { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .lock-circle { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; color: var(--teal); border-radius: 50%; background: var(--teal-soft); transition: transform var(--dur) var(--ease-bounce), background-color var(--dur) var(--ease-soft); }
