@@ -23,6 +23,13 @@ import type { TransferJob } from "../types";
 
 const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
 
+function transferRoute(job: TransferJob): string {
+  // Keep local on the left to match the dual-pane layout: upload uses >, download uses <.
+  return job.direction === "upload"
+    ? `${job.source_path} > ${job.destination_path}`
+    : `${job.destination_path} < ${job.source_path}`;
+}
+
 export function TransferPanel() {
   const { transfers, transferPanelOpen, toggleTransfers, setTransfers } = useAppStore();
   const [filter, setFilter] = useState<TransferFilter>("all");
@@ -84,11 +91,16 @@ export function TransferPanel() {
             const progress = job.bytes_total
               ? Math.min(100, (job.bytes_transferred / job.bytes_total) * 100)
               : 0;
+            const route = transferRoute(job);
+            const name = job.source_path.split(/[\\/]/).pop() || job.source_path;
             return (
               <div className="transfer-row" key={job.id}>
-                <span className="transfer-name">
+                <span className="transfer-name" title={route}>
                   <File size={15} />
-                  {job.source_path.split(/[\\/]/).pop()}
+                  <span className="transfer-name-text">
+                    <strong>{name}</strong>
+                    <small>{route}</small>
+                  </span>
                 </span>
                 <span>
                   {job.direction === "upload" ? (
