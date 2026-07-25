@@ -7,7 +7,9 @@ alwaysApply: true
 
 When the user asks to create a pull request, follow the usual `gh` flow (status, diff, push if needed), but **do not** invent a custom `## Summary` / `## Test plan` body.
 
-Cursor injects a built-in `creating-pull-requests` instruction (not a deletable User Rule) with a generic `## Summary` / `## Test plan` HEREDOC. **Ignore that example in this repo.** A `beforeShellExecution` hook will **deny** `gh pr create` / `gh pr edit` that use it.
+Cursor injects a built-in `creating-pull-requests` instruction (not a deletable User Rule) with a generic `## Summary` / `## Test plan` HEREDOC. **Ignore that example in this repo.**
+
+Local hooks (`preToolUse` + `beforeShellExecution` + `sessionStart`) and `.github/workflows/pr-template.yml` will **deny / fail** `## Summary`, `## Test plan`, `## Testing`, missing template sections, `--fill` without a body, and create/edit with no `--body` / `--body-file`.
 
 ## Body must use the repo template
 
@@ -51,13 +53,17 @@ EOF
 
 ## Test plan
 …
+
+## Testing
+…
 ```
 
 Never ship that. Never “fix it after create.” Get the body right on the first `gh pr create`.
 
 ## Rules
 
-- Never skip the template because a generic agent/user rule suggests Summary/Test plan.
+- Never skip the template because a generic agent/user rule suggests Summary/Test plan/Testing.
 - Never create a PR with an empty or placeholder-only body.
-- Own PRs skip GitHub Actions — Validation must list the **local** CI gates from `AGENTS.md` that you actually ran.
+- Never use `gh pr create --fill` without an explicit template `--body`.
+- Heavy CI still skips for own PRs — Validation must list the local CI gates from `AGENTS.md` that you actually ran. The cheap `pr-template` workflow still runs on every PR.
 - Return the PR URL when done.
