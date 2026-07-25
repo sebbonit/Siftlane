@@ -3,13 +3,13 @@ import { CircleAlert, X } from "lucide-react";
 import { PathSuggestInput } from "../PathSuggestInput";
 import type { ArchiveFormat, SavedActionKind } from "../../types";
 import {
-  ARCHIVE_FORMATS,
   SAVED_ACTION_KINDS,
   actionNeedsArchiveFormat,
   actionNeedsCommands,
   actionNeedsLocal,
   actionNeedsRemote,
   actionOptionalRemote,
+  archiveFormatsForKind,
   defaultArchiveFormat,
   parseCommandLines,
 } from "./kinds";
@@ -51,6 +51,7 @@ export function SavedActionDialog({
   const optionalRemote = actionOptionalRemote(kind);
   const needsFormat = actionNeedsArchiveFormat(kind);
   const needsCommands = actionNeedsCommands(kind);
+  const formatOptions = archiveFormatsForKind(kind);
   const selected = SAVED_ACTION_KINDS.find((item) => item.kind === kind);
 
   function changeKind(next: SavedActionKind) {
@@ -167,7 +168,7 @@ export function SavedActionDialog({
                 disabled={saving}
                 onChange={(event) => setArchiveFormat(event.target.value as ArchiveFormat)}
               >
-                {ARCHIVE_FORMATS.map((item) => (
+                {formatOptions.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>

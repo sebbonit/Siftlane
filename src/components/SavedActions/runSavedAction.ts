@@ -8,7 +8,7 @@ import type {
   TransferJob,
   UUID,
 } from "../../types";
-import { archiveExtension, defaultArchiveFormat } from "./kinds";
+import { archiveExtension, resolveArchiveFormat } from "./kinds";
 
 export type RunSavedActionResult = {
   message?: string;
@@ -65,8 +65,6 @@ export async function runSavedAction(
       const localPath = requirePath(action.local_path, "local");
       const remotePath = requirePath(action.remote_path, "remote");
       const format = resolveFormat(action);
-      await context.navigate("local", localPath);
-      await context.navigate("remote", remotePath);
       const archive = await api.packageRemoteDirectory(tab.id, remotePath, format);
       const archiveName = archive.split("/").pop() ?? `archive.${archiveExtension(format)}`;
       const job = await api.enqueueTransfer({
@@ -103,7 +101,7 @@ export async function runSavedAction(
 }
 
 function resolveFormat(action: SavedAction): ArchiveFormat {
-  return action.archive_format ?? defaultArchiveFormat(action.kind);
+  return resolveArchiveFormat(action.kind, action.archive_format);
 }
 
 async function requireLocal(

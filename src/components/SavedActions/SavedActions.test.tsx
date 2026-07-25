@@ -58,8 +58,10 @@ describe("saved session actions", () => {
       within(dialog).getByLabelText(/action type/i),
       "package_and_download",
     );
-    expect(within(dialog).getByLabelText(/archive format/i)).toBeInTheDocument();
-    await userEvent.selectOptions(within(dialog).getByLabelText(/archive format/i), "zip");
+    const formatSelect = within(dialog).getByLabelText(/archive format/i);
+    expect(formatSelect).toBeInTheDocument();
+    expect(within(formatSelect).queryByRole("option", { name: /zip/i })).not.toBeInTheDocument();
+    await userEvent.selectOptions(formatSelect, "tar");
     await userEvent.clear(within(dialog).getByLabelText(/local directory/i));
     await userEvent.type(within(dialog).getByLabelText(/local directory/i), "/Users/alex/Downloads");
     await userEvent.clear(within(dialog).getByLabelText(/remote directory/i));
