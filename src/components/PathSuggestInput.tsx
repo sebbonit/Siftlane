@@ -7,6 +7,7 @@ export function PathSuggestInput({
   remote,
   placeholder,
   disabled,
+  required = true,
   onChange,
   onListDirectories,
 }: {
@@ -14,6 +15,7 @@ export function PathSuggestInput({
   remote: boolean;
   placeholder?: string;
   disabled?: boolean;
+  required?: boolean;
   onChange: (value: string) => void;
   onListDirectories: (parentPath: string) => Promise<string[]>;
 }) {
@@ -110,7 +112,7 @@ export function PathSuggestInput({
         disabled={disabled}
         placeholder={placeholder}
         spellCheck={false}
-        required
+        required={required}
         role="combobox"
         aria-expanded={open}
         aria-controls={listId}

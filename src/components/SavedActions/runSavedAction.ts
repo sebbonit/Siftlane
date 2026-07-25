@@ -1,6 +1,13 @@
 import { api } from "../../lib/ipc";
 import { joinPath } from "../../lib/paths";
-import type { ArchiveFormat, SavedAction, SessionTab, TransferJob, UUID } from "../../types";
+import type {
+  ArchiveFormat,
+  RemoteCommandResult,
+  SavedAction,
+  SessionTab,
+  TransferJob,
+  UUID,
+} from "../../types";
 import { archiveExtension, defaultArchiveFormat } from "./kinds";
 
 export type RunSavedActionResult = {
@@ -8,6 +15,8 @@ export type RunSavedActionResult = {
   transfers?: TransferJob[];
   refreshLocal?: boolean;
   refreshRemote?: boolean;
+  remoteCommandResults?: RemoteCommandResult[];
+  actionLabel?: string;
 };
 
 export async function runSavedAction(
@@ -71,6 +80,22 @@ export async function runSavedAction(
         message: `Created ${archive} and queued download`,
         transfers: [job],
         refreshLocal: true,
+        refreshRemote: true,
+      };
+    }
+    case "run_remote_commands": {
+      const tab = requireTab(context.tab);
+      const commands = (action.commands ?? [])
+        .map((command) => command.trim())
+        .filter((command) => command.length > 0);
+      if (commands.length === 0) {
+        throw new Error("This action has no remote commands");
+      }
+      const workingDirectory = action.remote_path?.trim() || null;
+      const results = await api.runRemoteCommands(tab.id, commands, workingDirectory);
+      return {
+        remoteCommandResults: results,
+        actionLabel: action.label,
         refreshRemote: true,
       };
     }

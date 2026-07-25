@@ -193,6 +193,7 @@ pub fn run() {
             crate::commands::delete_favorite,
             crate::commands::package_local_directory,
             crate::commands::package_remote_directory,
+            crate::commands::run_remote_commands,
             crate::commands::start_search_local,
             crate::commands::start_search_remote,
             crate::commands::cancel_search,

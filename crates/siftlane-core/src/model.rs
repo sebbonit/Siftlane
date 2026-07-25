@@ -162,6 +162,7 @@ pub enum SavedActionKind {
     PackageLocal,
     PackageRemote,
     PackageAndDownload,
+    RunRemoteCommands,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,6 +174,9 @@ pub struct SavedAction {
     pub remote_path: Option<String>,
     #[serde(default)]
     pub archive_format: Option<ArchiveFormat>,
+    /// Shell commands to run remotely for [`SavedActionKind::RunRemoteCommands`].
+    #[serde(default)]
+    pub commands: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -192,6 +196,7 @@ impl SavedAction {
             local_path,
             remote_path,
             archive_format: None,
+            commands: Vec::new(),
             created_at: now,
             updated_at: now,
         }

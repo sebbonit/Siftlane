@@ -14,6 +14,15 @@ pub struct RemoteCapabilities {
     pub atomic_rename: bool,
 }
 
+/// Result of one remote shell command executed over SSH.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteCommandResult {
+    pub command: String,
+    pub exit_status: Option<u32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 #[async_trait]
 pub trait RemoteFilesystem: Send + Sync {
     fn capabilities(&self) -> RemoteCapabilities;
@@ -57,4 +66,12 @@ pub trait RemoteFilesystem: Send + Sync {
         directory_path: &str,
         format: crate::ArchiveFormat,
     ) -> Result<String, AppError>;
+    /// Run shell commands sequentially over SSH. Stops after the first non-zero exit
+    /// (still returns results collected so far). Optional `working_directory` is applied
+    /// via a quoted `cd` prefix. SFTP only.
+    async fn execute_commands(
+        &self,
+        commands: &[String],
+        working_directory: Option<&str>,
+    ) -> Result<Vec<RemoteCommandResult>, AppError>;
 }

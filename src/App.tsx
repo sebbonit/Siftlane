@@ -58,6 +58,7 @@ import { ImagePreview } from "./components/ImagePreview";
 import { LoadingOverlay } from "./components/LoadingOverlay";
 import { MarkdownPreview } from "./components/MarkdownPreview";
 import {
+  RemoteCommandsResultDialog,
   SavedActionDialog,
   SessionActionsMenu,
   newSavedActionId,
@@ -87,6 +88,7 @@ import type {
   HostKeyChallenge,
   Preferences,
   PreviewFile,
+  RemoteCommandResult,
   SavedAction,
   SessionTab,
   UUID,
@@ -154,6 +156,10 @@ export default function App() {
   const [savedActions, setSavedActions] = useState<SavedAction[]>([]);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
+  const [remoteCommandResults, setRemoteCommandResults] = useState<{
+    label: string;
+    results: RemoteCommandResult[];
+  } | null>(null);
   const [paneHidden, setPaneHidden] = useState<Record<PaneSide, boolean | null>>({
     local: null,
     remote: null,
@@ -483,6 +489,12 @@ export default function App() {
       if (result.refreshRemote && activeTab) {
         void loadPane("remote", action.remote_path ?? activeTab.remotePath);
       }
+      if (result.remoteCommandResults?.length) {
+        setRemoteCommandResults({
+          label: result.actionLabel ?? action.label,
+          results: result.remoteCommandResults,
+        });
+      }
     } catch (reason) {
       setError(errorMessage(reason));
     }
@@ -494,6 +506,7 @@ export default function App() {
     localPath: string | null;
     remotePath: string | null;
     archiveFormat: SavedAction["archive_format"];
+    commands: string[];
   }) {
     const now = new Date().toISOString();
     const action: SavedAction = {
@@ -503,6 +516,7 @@ export default function App() {
       local_path: draft.localPath,
       remote_path: draft.remotePath,
       archive_format: draft.archiveFormat ?? null,
+      commands: draft.commands,
       created_at: now,
       updated_at: now,
     };
@@ -1115,6 +1129,13 @@ export default function App() {
           onSubmit={handleSaveAction}
           onListLocalDirectories={(directory) => listDirectoryNames("local", directory)}
           onListRemoteDirectories={(directory) => listDirectoryNames("remote", directory)}
+        />
+      )}
+      {remoteCommandResults && (
+        <RemoteCommandsResultDialog
+          label={remoteCommandResults.label}
+          results={remoteCommandResults.results}
+          onClose={() => setRemoteCommandResults(null)}
         />
       )}
       {connectionDialog && (

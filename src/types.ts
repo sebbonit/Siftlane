@@ -154,9 +154,17 @@ export type SavedActionKind =
   | "download_dir"
   | "package_local"
   | "package_remote"
-  | "package_and_download";
+  | "package_and_download"
+  | "run_remote_commands";
 
 export type ArchiveFormat = "zip" | "tar" | "tar_gz";
+
+export interface RemoteCommandResult {
+  command: string;
+  exit_status: number | null;
+  stdout: string;
+  stderr: string;
+}
 
 export interface SavedAction {
   id: UUID;
@@ -165,6 +173,8 @@ export interface SavedAction {
   local_path: string | null;
   remote_path: string | null;
   archive_format?: ArchiveFormat | null;
+  /** Shell commands for `run_remote_commands` (one entry per command). */
+  commands?: string[];
   created_at: string;
   updated_at: string;
 }

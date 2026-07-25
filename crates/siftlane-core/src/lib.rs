@@ -7,5 +7,5 @@ mod transfer;
 
 pub use error::{AppError, ErrorCode};
 pub use model::*;
-pub use remote::{RemoteCapabilities, RemoteFilesystem};
+pub use remote::{RemoteCapabilities, RemoteCommandResult, RemoteFilesystem};
 pub use transfer::{TransferListFilter, TransferQueue};

@@ -15,6 +15,7 @@ import type {
   EditableFile,
   Preferences,
   PreviewFile,
+  RemoteCommandResult,
   SavedAction,
   SearchMatch,
   SearchProgress,
@@ -757,6 +758,27 @@ export const api = {
     if (desktop) return call<string>("package_remote_directory", { sessionId, path, format });
     void sessionId;
     return `${path.replace(/\/+$/, "") || "/"}.${format === "tar_gz" ? "tar.gz" : format}`;
+  },
+  async runRemoteCommands(
+    sessionId: UUID,
+    commands: string[],
+    workingDirectory: string | null = null,
+  ) {
+    if (desktop) {
+      return call<RemoteCommandResult[]>("run_remote_commands", {
+        sessionId,
+        commands,
+        workingDirectory,
+      });
+    }
+    void sessionId;
+    void workingDirectory;
+    return commands.map((command, index) => ({
+      command,
+      exit_status: 0,
+      stdout: `demo output for step ${index + 1}\n`,
+      stderr: "",
+    }));
   },
   async startSearchLocal(root: string, query: string) {
     if (desktop) return call<UUID>("start_search_local", { root, query });

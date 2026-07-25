@@ -6,9 +6,12 @@ import {
   ARCHIVE_FORMATS,
   SAVED_ACTION_KINDS,
   actionNeedsArchiveFormat,
+  actionNeedsCommands,
   actionNeedsLocal,
   actionNeedsRemote,
+  actionOptionalRemote,
   defaultArchiveFormat,
+  parseCommandLines,
 } from "./kinds";
 
 export function SavedActionDialog({
@@ -28,6 +31,7 @@ export function SavedActionDialog({
     localPath: string | null;
     remotePath: string | null;
     archiveFormat: ArchiveFormat | null;
+    commands: string[];
   }) => Promise<void>;
   onListLocalDirectories: (parentPath: string) => Promise<string[]>;
   onListRemoteDirectories: (parentPath: string) => Promise<string[]>;
@@ -36,6 +40,7 @@ export function SavedActionDialog({
   const [kind, setKind] = useState<SavedActionKind>("open_both");
   const [localPath, setLocalPath] = useState(initialLocalPath);
   const [remotePath, setRemotePath] = useState(initialRemotePath);
+  const [commandsText, setCommandsText] = useState("");
   const [archiveFormat, setArchiveFormat] = useState<ArchiveFormat>(
     defaultArchiveFormat("package_local"),
   );
@@ -43,7 +48,9 @@ export function SavedActionDialog({
   const [error, setError] = useState<string | null>(null);
   const needsLocal = actionNeedsLocal(kind);
   const needsRemote = actionNeedsRemote(kind);
+  const optionalRemote = actionOptionalRemote(kind);
   const needsFormat = actionNeedsArchiveFormat(kind);
+  const needsCommands = actionNeedsCommands(kind);
   const selected = SAVED_ACTION_KINDS.find((item) => item.kind === kind);
 
   function changeKind(next: SavedActionKind) {
@@ -61,13 +68,24 @@ export function SavedActionDialog({
       return;
     }
     const nextLocal = needsLocal ? localPath.trim() : null;
-    const nextRemote = needsRemote ? remotePath.trim().replace(/\/+$/, "") || "/" : null;
+    const showRemote = needsRemote || optionalRemote;
+    const trimmedRemote = remotePath.trim().replace(/\/+$/, "") || "/";
+    const nextRemote = needsRemote
+      ? trimmedRemote
+      : optionalRemote && remotePath.trim()
+        ? trimmedRemote
+        : null;
+    const nextCommands = needsCommands ? parseCommandLines(commandsText) : [];
     if (needsLocal && !nextLocal) {
       setError("A local directory is required");
       return;
     }
     if (needsRemote && !nextRemote) {
       setError("A remote directory is required");
+      return;
+    }
+    if (needsCommands && nextCommands.length === 0) {
+      setError("Enter at least one remote command");
       return;
     }
     setSaving(true);
@@ -77,8 +95,9 @@ export function SavedActionDialog({
         label: trimmedLabel,
         kind,
         localPath: nextLocal,
-        remotePath: nextRemote,
+        remotePath: showRemote ? nextRemote : null,
         archiveFormat: needsFormat ? archiveFormat : null,
+        commands: nextCommands,
       });
       onClose();
     } catch (reason) {
@@ -156,6 +175,25 @@ export function SavedActionDialog({
               </select>
             </label>
           )}
+          {needsCommands && (
+            <label>
+              Commands
+              <textarea
+                value={commandsText}
+                disabled={saving}
+                rows={6}
+                placeholder={"git pull\nnpm ci\nnpm run build"}
+                spellCheck={false}
+                aria-describedby="saved-action-commands-hint"
+                onChange={(event) => setCommandsText(event.target.value)}
+              />
+            </label>
+          )}
+          {needsCommands && (
+            <p id="saved-action-commands-hint" className="saved-action-field-hint">
+              One shell command per line
+            </p>
+          )}
           {needsLocal && (
             <label>
               Local directory
@@ -169,14 +207,15 @@ export function SavedActionDialog({
               />
             </label>
           )}
-          {needsRemote && (
+          {(needsRemote || optionalRemote) && (
             <label>
-              Remote directory
+              {optionalRemote ? "Working directory (optional)" : "Remote directory"}
               <PathSuggestInput
                 value={remotePath}
                 remote
                 placeholder="/var/www/html"
                 disabled={saving}
+                required={!optionalRemote}
                 onChange={setRemotePath}
                 onListDirectories={onListRemoteDirectories}
               />

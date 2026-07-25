@@ -288,6 +288,17 @@ impl RemoteFilesystem for FtpClient {
             "Packaging remote directories requires an SFTP connection",
         ))
     }
+
+    async fn execute_commands(
+        &self,
+        _commands: &[String],
+        _working_directory: Option<&str>,
+    ) -> Result<Vec<siftlane_core::RemoteCommandResult>, AppError> {
+        Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Running remote commands requires an SFTP connection",
+        ))
+    }
 }
 
 async fn read_chunk<T: suppaftp::tokio::TokioTlsStream + Send>(

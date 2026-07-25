@@ -20,6 +20,7 @@ The operating system, logged-in user account, system keyring, and SSH cryptograp
 - Partial destinations prevent an interrupted transfer from appearing complete.
 - Remote paths are normalized before filesystem commands.
 - Privileged SFTP commands use a separate SSH channel with fixed commands and shell-quoted paths; `sudo -n` is attempted before password fallback.
+- Saved “run remote commands” actions execute user-authored shell strings on an already-authenticated SFTP session (trusted-operator automation). Working directories are shell-quoted; command bodies are not logged.
 - Tauri capabilities and the webview CSP restrict exposed native functionality.
 
 ## Known limitations before stable release
