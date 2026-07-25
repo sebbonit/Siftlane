@@ -817,13 +817,17 @@ impl RemoteFilesystem for SftpClient {
         } else {
             format!("{parent}/{name}.{}", format.extension())
         };
+        // Prefer `tar` / `tar -z` — they ship with typical Linux bases. `zip` is often missing.
         let pack = match format {
-            ArchiveFormat::Zip => format!(
-                "(cd {parent} && zip -rq {archive_name} {name})",
-                parent = shell_quote(parent),
-                archive_name = shell_quote(&format!("{name}.zip")),
-                name = shell_quote(name),
-            ),
+            ArchiveFormat::Zip => {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "ZIP is not supported for remote packaging",
+                )
+                .with_detail(
+                    "Remote hosts may not have the zip command; use tar or tar.gz instead",
+                ));
+            }
             ArchiveFormat::Tar => format!(
                 "tar -cf {archive} -C {parent} {name}",
                 archive = shell_quote(&archive),

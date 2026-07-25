@@ -8,7 +8,7 @@ import type {
   TransferJob,
   UUID,
 } from "../../types";
-import { archiveExtension, defaultArchiveFormat } from "./kinds";
+import { archiveExtension, resolveArchiveFormat } from "./kinds";
 
 export type RunSavedActionResult = {
   message?: string;
@@ -103,7 +103,7 @@ export async function runSavedAction(
 }
 
 function resolveFormat(action: SavedAction): ArchiveFormat {
-  return action.archive_format ?? defaultArchiveFormat(action.kind);
+  return resolveArchiveFormat(action.kind, action.archive_format);
 }
 
 async function requireLocal(

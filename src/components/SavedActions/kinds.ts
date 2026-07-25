@@ -9,6 +9,21 @@ export const ARCHIVE_FORMATS: Array<{
   { value: "tar_gz", label: "TAR.GZ (.tar.gz)" },
 ];
 
+/** Formats available without extra tools on typical Linux remotes (`tar` / gzip). */
+export const REMOTE_ARCHIVE_FORMATS: Array<{
+  value: Exclude<ArchiveFormat, "zip">;
+  label: string;
+}> = [
+  { value: "tar", label: "TAR (.tar)" },
+  { value: "tar_gz", label: "TAR.GZ (.tar.gz)" },
+];
+
+export function archiveFormatsForKind(
+  kind: SavedActionKind,
+): Array<{ value: ArchiveFormat; label: string }> {
+  return kind === "package_local" ? ARCHIVE_FORMATS : REMOTE_ARCHIVE_FORMATS;
+}
+
 export const SAVED_ACTION_KINDS: Array<{
   kind: SavedActionKind;
   label: string;
@@ -82,7 +97,7 @@ export const SAVED_ACTION_KINDS: Array<{
   {
     kind: "package_remote",
     label: "Package remote directory",
-    description: "Create an archive of a remote directory next to it (SFTP)",
+    description: "Create a tar/tar.gz archive of a remote directory next to it (SFTP)",
     needsLocal: false,
     needsRemote: true,
     needsArchiveFormat: true,
@@ -92,7 +107,8 @@ export const SAVED_ACTION_KINDS: Array<{
   {
     kind: "package_and_download",
     label: "Package and download",
-    description: "Archive a remote directory, then download it to a local folder (SFTP)",
+    description:
+      "Create a tar/tar.gz archive of a remote directory, then download it to a local folder (SFTP)",
     needsLocal: true,
     needsRemote: true,
     needsArchiveFormat: true,
@@ -138,6 +154,18 @@ export function actionOptionalRemote(kind: SavedActionKind): boolean {
 
 export function defaultArchiveFormat(kind: SavedActionKind): ArchiveFormat {
   return kind === "package_local" ? "zip" : "tar_gz";
+}
+
+/** Remote packaging uses `tar` on the host; ZIP requires a non-default `zip` binary. */
+export function resolveArchiveFormat(
+  kind: SavedActionKind,
+  format: ArchiveFormat | null | undefined,
+): ArchiveFormat {
+  const resolved = format ?? defaultArchiveFormat(kind);
+  if (kind !== "package_local" && resolved === "zip") {
+    return "tar_gz";
+  }
+  return resolved;
 }
 
 export function archiveExtension(format: ArchiveFormat): string {
