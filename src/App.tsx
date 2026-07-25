@@ -484,10 +484,10 @@ export default function App() {
         ]);
       }
       if (result.refreshLocal && activeTab) {
-        void loadPane("local", action.local_path ?? activeTab.localPath);
+        void loadPane("local", activeTab.localPath);
       }
       if (result.refreshRemote && activeTab) {
-        void loadPane("remote", action.remote_path ?? activeTab.remotePath);
+        void loadPane("remote", activeTab.remotePath);
       }
       if (result.remoteCommandResults?.length) {
         setRemoteCommandResults({

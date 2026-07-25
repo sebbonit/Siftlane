@@ -65,8 +65,6 @@ export async function runSavedAction(
       const localPath = requirePath(action.local_path, "local");
       const remotePath = requirePath(action.remote_path, "remote");
       const format = resolveFormat(action);
-      await context.navigate("local", localPath);
-      await context.navigate("remote", remotePath);
       const archive = await api.packageRemoteDirectory(tab.id, remotePath, format);
       const archiveName = archive.split("/").pop() ?? `archive.${archiveExtension(format)}`;
       const job = await api.enqueueTransfer({
