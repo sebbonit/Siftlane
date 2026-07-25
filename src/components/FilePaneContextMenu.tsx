@@ -42,14 +42,14 @@ export function FilePaneContextMenu({
   onClose: () => void;
   onTransfer?: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
-  onOpenPrivileged: (entry: FileEntry) => void;
+  onOpenPrivileged?: (entry: FileEntry) => void;
   onCreateFile: () => void;
-  onCreateFilePrivileged: () => void;
+  onCreateFilePrivileged?: () => void;
   onCreateDirectory: () => void;
-  onCreateDirectoryPrivileged: () => void;
+  onCreateDirectoryPrivileged?: () => void;
   onShowInfo: (entry: FileEntry) => void;
   onRemove: (entry: FileEntry) => void;
-  onRemovePrivileged: (entry: FileEntry) => void;
+  onRemovePrivileged?: (entry: FileEntry) => void;
   onRevealInFileManager?: (path: string) => void;
 }) {
   function run(action: () => void) {
@@ -77,7 +77,7 @@ export function FilePaneContextMenu({
             {isImageFile(entry.name) ? <ImageIcon size={14} /> : <FileEdit size={14} />}
             {isImageFile(entry.name) ? "Preview image" : "Edit file"}
           </button>
-          {!isImageFile(entry.name) && (
+          {!isImageFile(entry.name) && onOpenPrivileged && (
             <button onClick={() => run(() => onOpenPrivileged(entry))}>
               <LockKeyhole size={14} />
               Edit with sudo
@@ -99,18 +99,22 @@ export function FilePaneContextMenu({
         <FilePlus2 size={14} />
         New file
       </button>
-      <button onClick={() => run(onCreateFilePrivileged)}>
-        <LockKeyhole size={14} />
-        New file with sudo
-      </button>
+      {onCreateFilePrivileged && (
+        <button onClick={() => run(onCreateFilePrivileged)}>
+          <LockKeyhole size={14} />
+          New file with sudo
+        </button>
+      )}
       <button onClick={() => run(onCreateDirectory)}>
         <FolderPlus size={14} />
         New folder
       </button>
-      <button onClick={() => run(onCreateDirectoryPrivileged)}>
-        <LockKeyhole size={14} />
-        New folder with sudo
-      </button>
+      {onCreateDirectoryPrivileged && (
+        <button onClick={() => run(onCreateDirectoryPrivileged)}>
+          <LockKeyhole size={14} />
+          New folder with sudo
+        </button>
+      )}
       {entry && (
         <>
           <i />
@@ -123,10 +127,12 @@ export function FilePaneContextMenu({
             <Trash2 size={14} />
             Delete
           </button>
-          <button className="danger" onClick={() => run(() => onRemovePrivileged(entry))}>
-            <LockKeyhole size={14} />
-            Delete with sudo
-          </button>
+          {onRemovePrivileged && (
+            <button className="danger" onClick={() => run(() => onRemovePrivileged(entry))}>
+              <LockKeyhole size={14} />
+              Delete with sudo
+            </button>
+          )}
         </>
       )}
     </ContextMenu>

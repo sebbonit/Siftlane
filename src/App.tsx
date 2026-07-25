@@ -969,12 +969,8 @@ export default function App() {
                   onToggleHidden={() => setPaneHidden((value) => ({ ...value, local: !(value.local ?? preferences?.show_hidden_files ?? true) }))}
                   onCreateFile={() => setEntryCreation({ side: "local", directory: false, privileged: false })}
                   onCreateDirectory={() => setEntryCreation({ side: "local", directory: true, privileged: false })}
-                  onCreateFilePrivileged={() => setEntryCreation({ side: "local", directory: false, privileged: true })}
-                  onCreateDirectoryPrivileged={() => setEntryCreation({ side: "local", directory: true, privileged: true })}
                   onRemove={(entry) => void removeSelected("local", false, entry)}
-                  onRemovePrivileged={(entry) => void removeSelected("local", true, entry)}
                   onOpenFile={(entry) => void openFile(entry, "local")}
-                  onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "local")}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "local" })}
                   onRevealInFileManager={(path) => void revealInFileManager(path)}
                   transferLabel="Upload"
