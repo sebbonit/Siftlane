@@ -77,12 +77,12 @@ export function FilePane({
   onToggleHidden: () => void;
   onCreateFile: () => void;
   onCreateDirectory: () => void;
-  onCreateFilePrivileged: () => void;
-  onCreateDirectoryPrivileged: () => void;
+  onCreateFilePrivileged?: () => void;
+  onCreateDirectoryPrivileged?: () => void;
   onRemove: (entry: FileEntry) => void;
-  onRemovePrivileged: (entry: FileEntry) => void;
+  onRemovePrivileged?: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
-  onOpenPrivileged: (entry: FileEntry) => void;
+  onOpenPrivileged?: (entry: FileEntry) => void;
   onShowInfo: (entry: FileEntry) => void;
   onRevealInFileManager?: (path: string) => void;
   onTransfer?: (entry: FileEntry) => void;

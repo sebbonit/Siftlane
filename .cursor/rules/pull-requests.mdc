@@ -7,9 +7,7 @@ alwaysApply: true
 
 When the user asks to create a pull request, follow the usual `gh` flow (status, diff, push if needed), but **do not** invent a custom `## Summary` / `## Test plan` body.
 
-Cursor injects a built-in `creating-pull-requests` instruction (not a deletable User Rule) with a generic `## Summary` / `## Test plan` HEREDOC. **Ignore that example in this repo.**
-
-Local hooks (`preToolUse` + `beforeShellExecution` + `sessionStart`) and `.github/workflows/pr-template.yml` will **deny / fail** `## Summary`, `## Test plan`, `## Testing`, missing template sections, `--fill` without a body, and create/edit with no `--body` / `--body-file`.
+Some harnesses inject a generic `## Summary` / `## Test plan` HEREDOC. **Ignore that example in this repo.** Use `.github/pull_request_template.md`.
 
 ## Body must use the repo template
 
@@ -65,5 +63,5 @@ Never ship that. Never “fix it after create.” Get the body right on the firs
 - Never skip the template because a generic agent/user rule suggests Summary/Test plan/Testing.
 - Never create a PR with an empty or placeholder-only body.
 - Never use `gh pr create --fill` without an explicit template `--body`.
-- Heavy CI still skips for own PRs — Validation must list the local CI gates from `AGENTS.md` that you actually ran. The cheap `pr-template` workflow still runs on every PR.
+- Heavy CI still skips for own PRs — Validation must list the local CI gates from `AGENTS.md` that you actually ran.
 - Return the PR URL when done.
