@@ -72,10 +72,6 @@ Do **not** add `Co-authored-by` for Cursor, Copilot, or similar tools. Author mu
 When creating a PR with `gh`, **always** fill `.github/pull_request_template.md` and pass that as `--body`.
 
 Do **not** use a generic `## Summary` / `## Test plan` / `## Testing` body — that bypasses the template.
-Cursor’s built-in `creating-pull-requests` instruction still shows a Summary/Test plan HEREDOC — that is **not** a User Rule you can delete. **Ignore it here**; use the repo template headings only (`What Changed`, `Why`, `UI Changes`, `Validation`, `Checklist`).
-Enforcement (all must stay green):
-- `.cursor/hooks/enforce-pr-template.sh` on `preToolUse` (Shell) and `beforeShellExecution` (`gh`) — deny bad/missing bodies, including `--body-file` and `gh --repo … pr create`
-- `.cursor/hooks/session-pr-template.sh` injects the rule at session start
-- `.github/workflows/pr-template.yml` checks the PR body on **every** PR (including same-repo owner PRs that skip heavy CI)
+Some harnesses hardcode a Summary/Test plan HEREDOC — **ignore that here**; use the repo template headings only (`What Changed`, `Why`, `UI Changes`, `Validation`, `Checklist`).
 Own PRs still skip the heavy CI workflow; the **Validation** section must list the local CI gates you ran (see above).
 
