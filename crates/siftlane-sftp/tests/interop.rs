@@ -38,6 +38,10 @@ async fn transfers_and_resumes_against_a_real_sftp_server() {
             connect_timeout: Duration::from_secs(15),
             response_timeout: Duration::from_secs(30),
             keepalive_interval: Duration::from_secs(30),
+            proxy: None,
+            proxy_jump: None,
+            agent_forwarding: false,
+            algorithms: Default::default(),
         },
         Arc::new(AcceptConfiguredTestHost),
     )

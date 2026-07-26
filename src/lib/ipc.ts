@@ -16,6 +16,7 @@ import type {
   ExternalEditChange,
   ExternalEditChanged,
   ExternalEditStarted,
+  KnownHostsImportSummary,
   Preferences,
   PreviewFile,
   RemoteCommandResult,
@@ -25,6 +26,7 @@ import type {
   TransferDirection,
   TransferJob,
   TransferProgress,
+  TrustedHostKey,
   UUID,
 } from "../types";
 
@@ -39,6 +41,12 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "agent" },
     initial_remote_path: "/var/www/html",
     favorite: true,
+    ssh_options: {
+      proxy_jump_profile_id: null,
+      proxy: null,
+      agent_forwarding: "deny",
+      algorithms: { key_exchange: [], host_keys: [], ciphers: [], macs: [] },
+    },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -52,6 +60,12 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "password", remember: true },
     initial_remote_path: "/incoming",
     favorite: false,
+    ssh_options: {
+      proxy_jump_profile_id: null,
+      proxy: null,
+      agent_forwarding: "deny",
+      algorithms: { key_exchange: [], host_keys: [], ciphers: [], macs: [] },
+    },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -65,6 +79,17 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "private_key", path: "~/.ssh/id_ed25519", remember_passphrase: true },
     initial_remote_path: "/srv/staging",
     favorite: false,
+    ssh_options: {
+      proxy_jump_profile_id: "demo-production",
+      proxy: null,
+      agent_forwarding: "allow",
+      algorithms: {
+        key_exchange: ["curve25519-sha256"],
+        host_keys: ["ssh-ed25519", "rsa-sha2-512"],
+        ciphers: ["chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com"],
+        macs: ["hmac-sha2-512-etm@openssh.com"],
+      },
+    },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -85,6 +110,26 @@ function emitDemoSearch(progress: SearchProgress) {
   for (const listener of demoSearchListeners) listener(progress);
 }
 let browserProfiles = demoMode ? [...mockProfiles] : [];
+let browserTrustedHosts: TrustedHostKey[] = demoMode
+  ? [
+      {
+        host: "sftp.example.com",
+        port: 22,
+        algorithm: "ssh-ed25519",
+        fingerprint_sha256: "SHA256:Z8KhPvQwR9TXrW0uUj1b8Y3xIGYJ7nCkM4hG2VqN8Yk",
+        first_seen_at: "2026-04-12T09:14:00Z",
+        last_seen_at: new Date().toISOString(),
+      },
+      {
+        host: "bastion.corp.example",
+        port: 22,
+        algorithm: "ssh-ed25519",
+        fingerprint_sha256: "SHA256:rQh3L6iM0nFoP1eAsR4sZpVb7Ck2TxN9wYj5UaD8Efg",
+        first_seen_at: "2026-06-03T13:28:00Z",
+        last_seen_at: "2026-07-25T16:42:00Z",
+      },
+    ]
+  : [];
 let browserTransfers: TransferJob[] = demoMode
   ? [
       mockTransfer("app.js", 0.72, "upload", "running"),
@@ -556,6 +601,28 @@ export const api = {
   },
   trustHostKey(challengeId: UUID, accept: boolean) {
     return call<ConnectResult | null>("trust_host_key", { challengeId, accept });
+  },
+  async listTrustedHosts() {
+    return desktop ? call<TrustedHostKey[]>("list_trusted_hosts") : browserTrustedHosts;
+  },
+  async pickKnownHostsFile() {
+    if (!desktop) return demoMode ? "/Users/alex/.ssh/known_hosts" : null;
+    const selected = await openDialog({
+      title: "Import OpenSSH known_hosts",
+      multiple: false,
+      directory: false,
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+  async importKnownHosts(path: string) {
+    if (desktop) return call<KnownHostsImportSummary>("import_known_hosts", { path });
+    return { imported: 2, skipped: 1 } satisfies KnownHostsImportSummary;
+  },
+  async removeTrustedHost(host: string, port: number, algorithm: string) {
+    if (desktop) return call<void>("remove_trusted_host", { host, port, algorithm });
+    browserTrustedHosts = browserTrustedHosts.filter(
+      (key) => !(key.host === host && key.port === port && key.algorithm === algorithm),
+    );
   },
   disconnectSession(sessionId: UUID) {
     return desktop ? call<void>("disconnect_session", { sessionId }) : Promise.resolve();

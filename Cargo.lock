@@ -4723,6 +4723,7 @@ dependencies = [
  "flate2",
  "keyring",
  "rusqlite",
+ "russh",
  "secrecy",
  "serde",
  "serde_json",

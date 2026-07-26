@@ -4,5 +4,5 @@ mod client;
 
 pub use client::{
     HostKeyDecision, HostKeyVerifier, ObservedHostKey, SftpAuth, SftpClient, SftpConnectError,
-    SftpConnectOptions,
+    SftpConnectOptions, SftpProxyJump,
 };

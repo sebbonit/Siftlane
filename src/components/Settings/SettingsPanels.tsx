@@ -5,6 +5,7 @@ import type { ConnectionProfile, Preferences } from "../../types";
 import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
 import type { SettingsCategoryId } from "./categories";
 import { SettingsList, SettingsRow } from "./SettingsRow";
+import { TrustedHostsPanel } from "./TrustedHostsPanel";
 
 export function SettingsPanel({
   category,
@@ -25,6 +26,9 @@ export function SettingsPanel({
   }
   if (category === "connection") {
     return <ConnectionPanel draft={draft} onChange={onChange} />;
+  }
+  if (category === "trusted_hosts") {
+    return <TrustedHostsPanel />;
   }
   return <AboutPanel />;
 }

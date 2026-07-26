@@ -1,19 +1,12 @@
 use std::{fs, path::Path};
 
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use siftlane_core::{
     AppError, ConnectionProfile, ErrorCode, Favorite, FavoriteSide, Preferences, SavedAction,
-    TransferJob,
+    TransferJob, TrustedHostKey,
 };
 use uuid::Uuid;
-
-#[derive(Debug, Clone)]
-pub struct StoredHostKey {
-    pub host: String,
-    pub port: u16,
-    pub algorithm: String,
-    pub fingerprint: String,
-}
 
 #[derive(Clone)]
 pub struct Storage {
@@ -131,38 +124,123 @@ impl Storage {
         })
     }
 
-    pub fn host_keys(&self, host: &str, port: u16) -> Result<Vec<StoredHostKey>, AppError> {
+    pub fn host_keys(&self, host: &str, port: u16) -> Result<Vec<TrustedHostKey>, AppError> {
         self.with_connection(|connection| {
             let mut statement = connection.prepare(
-                "SELECT host, port, algorithm, fingerprint FROM known_hosts WHERE host = ?1 AND port = ?2",
+                "SELECT host, port, algorithm, fingerprint, first_seen_at, last_seen_at
+                 FROM known_hosts WHERE host = ?1 AND port = ?2",
             )?;
             statement
                 .query_map(params![host, port], |row| {
-                    Ok(StoredHostKey {
+                    Ok(TrustedHostKey {
                         host: row.get(0)?,
                         port: row.get::<_, u16>(1)?,
                         algorithm: row.get(2)?,
-                        fingerprint: row.get(3)?,
+                        fingerprint_sha256: row.get(3)?,
+                        first_seen_at: parse_database_time(row.get::<_, String>(4)?)?,
+                        last_seen_at: parse_database_time(row.get::<_, String>(5)?)?,
                     })
                 })?
                 .collect()
         })
     }
 
-    pub fn trust_host_key(&self, key: &StoredHostKey) -> Result<(), AppError> {
+    pub fn list_host_keys(&self) -> Result<Vec<TrustedHostKey>, AppError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT host, port, algorithm, fingerprint, first_seen_at, last_seen_at
+                 FROM known_hosts ORDER BY host COLLATE NOCASE, port, algorithm",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok(TrustedHostKey {
+                        host: row.get(0)?,
+                        port: row.get::<_, u16>(1)?,
+                        algorithm: row.get(2)?,
+                        fingerprint_sha256: row.get(3)?,
+                        first_seen_at: parse_database_time(row.get::<_, String>(4)?)?,
+                        last_seen_at: parse_database_time(row.get::<_, String>(5)?)?,
+                    })
+                })?
+                .collect()
+        })
+    }
+
+    pub fn trust_host_key(&self, key: &TrustedHostKey) -> Result<(), AppError> {
         self.with_connection(|connection| {
             let transaction = connection.transaction()?;
+            let existing = transaction
+                .query_row(
+                    "SELECT fingerprint FROM known_hosts
+                     WHERE host = ?1 AND port = ?2 AND algorithm = ?3",
+                    params![key.host, key.port, key.algorithm],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if existing.as_deref() == Some(&key.fingerprint_sha256) {
+                transaction.execute(
+                    "UPDATE known_hosts SET last_seen_at = ?1
+                     WHERE host = ?2 AND port = ?3 AND algorithm = ?4",
+                    params![
+                        key.last_seen_at.to_rfc3339(),
+                        key.host,
+                        key.port,
+                        key.algorithm
+                    ],
+                )?;
+                return transaction.commit();
+            }
             transaction.execute(
                 "DELETE FROM known_hosts WHERE host = ?1 AND port = ?2 AND algorithm = ?3",
                 params![key.host, key.port, key.algorithm],
             )?;
             transaction.execute(
                 "INSERT INTO known_hosts (host, port, algorithm, fingerprint, first_seen_at, last_seen_at)
-                 VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
-                params![key.host, key.port, key.algorithm, key.fingerprint],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    key.host,
+                    key.port,
+                    key.algorithm,
+                    key.fingerprint_sha256,
+                    key.first_seen_at.to_rfc3339(),
+                    key.last_seen_at.to_rfc3339()
+                ],
             )?;
             transaction.commit()
         })
+    }
+
+    pub fn touch_host_key(&self, key: &TrustedHostKey) -> Result<(), AppError> {
+        self.with_connection(|connection| {
+            connection.execute(
+                "UPDATE known_hosts SET last_seen_at = ?1
+                 WHERE host = ?2 AND port = ?3 AND algorithm = ?4 AND fingerprint = ?5",
+                params![
+                    key.last_seen_at.to_rfc3339(),
+                    key.host,
+                    key.port,
+                    key.algorithm,
+                    key.fingerprint_sha256
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn remove_host_key(&self, host: &str, port: u16, algorithm: &str) -> Result<(), AppError> {
+        let removed = self.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM known_hosts WHERE host = ?1 AND port = ?2 AND algorithm = ?3",
+                params![host, port, algorithm],
+            )
+        })?;
+        if removed == 0 {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                "The trusted host key was not found",
+            ));
+        }
+        Ok(())
     }
 
     pub fn load_preferences(&self) -> Result<Preferences, AppError> {
@@ -522,6 +600,21 @@ fn serialization_error(source: serde_json::Error) -> AppError {
         .with_detail(source.to_string())
 }
 
+fn parse_database_time(value: String) -> rusqlite::Result<DateTime<Utc>> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(&value) {
+        return Ok(value.with_timezone(&Utc));
+    }
+    NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S")
+        .map(|value| value.and_utc())
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
+}
+
 fn favorite_side_value(side: FavoriteSide) -> &'static str {
     match side {
         FavoriteSide::Local => "local",
@@ -575,7 +668,8 @@ fn parse_favorite(
 
 #[cfg(test)]
 mod tests {
-    use siftlane_core::{AuthRef, ConnectionProfile, Favorite, FavoriteSide};
+    use chrono::Utc;
+    use siftlane_core::{AuthRef, ConnectionProfile, Favorite, FavoriteSide, TrustedHostKey};
 
     use super::Storage;
 
@@ -641,6 +735,37 @@ mod tests {
 
         storage.delete_favorite(remote.id).unwrap();
         assert_eq!(storage.list_favorites().unwrap(), vec![local]);
+    }
+
+    #[test]
+    fn trusted_host_keys_keep_auditable_timestamps_and_can_be_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = Storage::open(temp.path().join("siftlane.sqlite3")).unwrap();
+        let seen = Utc::now();
+        let key = TrustedHostKey {
+            host: "bastion.example.com".into(),
+            port: 22,
+            algorithm: "ssh-ed25519".into(),
+            fingerprint_sha256: "SHA256:test".into(),
+            first_seen_at: seen,
+            last_seen_at: seen,
+        };
+        storage.trust_host_key(&key).unwrap();
+        assert_eq!(storage.list_host_keys().unwrap(), vec![key.clone()]);
+
+        let later = seen + chrono::Duration::minutes(5);
+        storage
+            .touch_host_key(&TrustedHostKey {
+                last_seen_at: later,
+                ..key.clone()
+            })
+            .unwrap();
+        assert_eq!(storage.list_host_keys().unwrap()[0].last_seen_at, later);
+
+        storage
+            .remove_host_key(&key.host, key.port, &key.algorithm)
+            .unwrap();
+        assert!(storage.list_host_keys().unwrap().is_empty());
     }
 
     #[test]

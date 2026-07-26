@@ -13,6 +13,9 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - SFTP password, private-key, and SSH-agent authentication through `russh`
 - FTP and explicit FTPS password or anonymous authentication
 - Unknown and changed host-key confirmation with SHA-256 fingerprints
+- Single-hop ProxyJump through saved SFTP bastion profiles, plus SOCKS5 and HTTP CONNECT routing
+- Deny-by-default SSH agent forwarding and ordered key-exchange, host-key, cipher, and MAC policies
+- OpenSSH `known_hosts` import and auditable trusted-key management with first/last-seen timestamps
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
 - Native Finder/Explorer file drops onto the remote pane, including folder targets and recursive
@@ -115,6 +118,30 @@ Reusable local-time schedules can override the global rate—for example, an ove
 window—and a configured global rate can be activated temporarily for one hour.
 
 ![Bandwidth limits and reusable schedules](docs/images/bandwidth-settings.png)
+
+## Enterprise SSH connectivity
+
+SFTP profiles can route through a saved SFTP profile as a single ProxyJump bastion. Siftlane opens
+an SSH `direct-tcpip` channel from the authenticated bastion to the destination and verifies both
+servers against the same local trust store. Nested jumps are rejected deliberately. A SOCKS5 or
+HTTP CONNECT proxy can be used for the direct connection—or to reach the bastion when both options
+are configured. Proxy authentication is not yet supported.
+
+Agent forwarding is denied by default. When explicitly enabled for a profile, remote command
+channels can reach only the user's running local SSH agent; private-key material still never enters
+Siftlane. Profiles may also replace the safe `russh` defaults with ordered allowlists for key
+exchange, host-key, cipher, and MAC algorithms. Unsupported names fail before a network connection
+is attempted.
+
+![ProxyJump, HTTP or SOCKS routing, forwarding policy, and SSH algorithms](docs/images/enterprise-ssh-profile.png)
+
+**Settings → Trusted hosts** lists every trusted SHA-256 fingerprint with its first-seen and
+last-seen timestamps. OpenSSH `known_hosts` files can be imported; concrete hostnames and
+`[host]:port` entries are supported, while hashed hosts, wildcard patterns, revocations, and
+certificate-authority markers are reported as skipped. Removing trust requires a separate
+confirmation before the record is deleted.
+
+![Trusted SSH host-key management](docs/images/trusted-host-management.png)
 
 ## Project structure
 

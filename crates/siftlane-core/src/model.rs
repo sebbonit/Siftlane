@@ -40,6 +40,8 @@ pub struct ConnectionProfile {
     pub auth: AuthRef,
     pub initial_remote_path: String,
     pub favorite: bool,
+    #[serde(default)]
+    pub ssh_options: SshOptions,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -57,10 +59,55 @@ impl ConnectionProfile {
             auth,
             initial_remote_path: "/".into(),
             favorite: false,
+            ssh_options: SshOptions::default(),
             created_at: now,
             updated_at: now,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshOptions {
+    pub proxy_jump_profile_id: Option<ProfileId>,
+    pub proxy: Option<SshProxy>,
+    #[serde(default)]
+    pub agent_forwarding: AgentForwardingPolicy,
+    #[serde(default)]
+    pub algorithms: SshAlgorithmPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SshProxyKind {
+    Socks5,
+    HttpConnect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshProxy {
+    pub kind: SshProxyKind,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentForwardingPolicy {
+    #[default]
+    Deny,
+    Allow,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshAlgorithmPolicy {
+    #[serde(default)]
+    pub key_exchange: Vec<String>,
+    #[serde(default)]
+    pub host_keys: Vec<String>,
+    #[serde(default)]
+    pub ciphers: Vec<String>,
+    #[serde(default)]
+    pub macs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +258,22 @@ pub struct HostKeyChallenge {
     pub algorithm: String,
     pub fingerprint_sha256: String,
     pub changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrustedHostKey {
+    pub host: String,
+    pub port: u16,
+    pub algorithm: String,
+    pub fingerprint_sha256: String,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownHostsImportSummary {
+    pub imported: usize,
+    pub skipped: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

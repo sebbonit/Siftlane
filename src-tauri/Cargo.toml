@@ -16,6 +16,7 @@ tauri-build = { version = "2.6.3", features = [] }
 async-trait.workspace = true
 chrono.workspace = true
 keyring = "4.1.5"
+russh.workspace = true
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 secrecy.workspace = true
 serde.workspace = true

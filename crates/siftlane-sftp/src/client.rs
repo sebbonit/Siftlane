@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{borrow::Cow, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use russh::{
-    ChannelMsg,
-    client::{self, AuthResult, Handle},
+    Channel, ChannelMsg, ChannelOpenFailure,
+    client::{self, AuthResult, ChannelOpenHandle, Handle, Msg, Session},
     keys::{
         PrivateKeyWithHashAlg,
         agent::{AgentIdentity, client::AgentClient},
@@ -18,10 +18,11 @@ use russh_sftp::{
 use secrecy::{ExposeSecret, SecretString};
 use siftlane_core::{
     AppError, ArchiveFormat, EntryKind, ErrorCode, FileEntry, RemoteCapabilities,
-    RemoteCommandResult, RemoteFilesystem,
+    RemoteCommandResult, RemoteFilesystem, SshAlgorithmPolicy, SshProxy, SshProxyKind,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, SeekFrom},
+    net::TcpStream,
     sync::Mutex,
     time::timeout,
 };
@@ -64,6 +65,18 @@ pub struct SftpConnectOptions {
     pub connect_timeout: Duration,
     pub response_timeout: Duration,
     pub keepalive_interval: Duration,
+    pub proxy: Option<SshProxy>,
+    pub proxy_jump: Option<SftpProxyJump>,
+    pub agent_forwarding: bool,
+    pub algorithms: SshAlgorithmPolicy,
+}
+
+#[derive(Clone)]
+pub struct SftpProxyJump {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth: SftpAuth,
 }
 
 impl SftpConnectOptions {
@@ -76,6 +89,10 @@ impl SftpConnectOptions {
             connect_timeout: Duration::from_secs(15),
             response_timeout: Duration::from_secs(30),
             keepalive_interval: Duration::from_secs(30),
+            proxy: None,
+            proxy_jump: None,
+            agent_forwarding: false,
+            algorithms: SshAlgorithmPolicy::default(),
         }
     }
 }
@@ -91,6 +108,7 @@ struct ClientHandler {
     port: u16,
     verifier: Arc<dyn HostKeyVerifier>,
     observation: Arc<Mutex<Option<(ObservedHostKey, HostKeyDecision)>>>,
+    allow_agent_forwarding: bool,
 }
 
 impl client::Handler for ClientHandler {
@@ -110,11 +128,64 @@ impl client::Handler for ClientHandler {
         *self.observation.lock().await = Some((observed, decision));
         Ok(decision == HostKeyDecision::Trusted)
     }
+
+    fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let allowed = self.allow_agent_forwarding;
+        async move {
+            if !allowed {
+                reply
+                    .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
+                return Ok(());
+            }
+            #[cfg(unix)]
+            {
+                let Some(socket_path) = std::env::var_os("SSH_AUTH_SOCK") else {
+                    reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                    return Ok(());
+                };
+                let Ok(mut agent) = tokio::net::UnixStream::connect(socket_path).await else {
+                    reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                    return Ok(());
+                };
+                reply.accept().await;
+                tokio::spawn(async move {
+                    let mut forwarded = channel.into_stream();
+                    let _ = tokio::io::copy_bidirectional(&mut forwarded, &mut agent).await;
+                });
+            }
+            #[cfg(windows)]
+            {
+                let socket_path = std::env::var_os("SSH_AUTH_SOCK")
+                    .unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".into());
+                let Ok(mut agent) =
+                    tokio::net::windows::named_pipe::ClientOptions::new().open(socket_path)
+                else {
+                    reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                    return Ok(());
+                };
+                reply.accept().await;
+                tokio::spawn(async move {
+                    let mut forwarded = channel.into_stream();
+                    let _ = tokio::io::copy_bidirectional(&mut forwarded, &mut agent).await;
+                });
+            }
+            Ok(())
+        }
+    }
 }
 
 pub struct SftpClient {
     sftp: SftpSession,
     _ssh: Mutex<Handle<ClientHandler>>,
+    _proxy_jump: Option<Mutex<Handle<ClientHandler>>>,
+    observed_host_keys: Vec<ObservedHostKey>,
+    agent_forwarding: bool,
     /// Serialize SFTP requests. Concurrent calls on one `SftpSession` can fail
     /// with generic I/O errors (e.g. search overlapping pane listing).
     io: Mutex<()>,
@@ -133,21 +204,94 @@ impl SftpClient {
         options: SftpConnectOptions,
         verifier: Arc<dyn HostKeyVerifier>,
     ) -> Result<Self, SftpConnectError> {
+        let config =
+            ssh_config(options.keepalive_interval, &options.algorithms).map_err(|error| {
+                SftpConnectError {
+                    error,
+                    host_key: None,
+                }
+            })?;
+        let (stream, proxy_jump, jump_observation) = if let Some(jump) = options.proxy_jump.clone()
+        {
+            let observation = Arc::new(Mutex::new(None));
+            let handler = ClientHandler {
+                host: jump.host.clone(),
+                port: jump.port,
+                verifier: verifier.clone(),
+                observation: observation.clone(),
+                allow_agent_forwarding: false,
+            };
+            let stream = open_tcp_stream(
+                &jump.host,
+                jump.port,
+                options.proxy.as_ref(),
+                options.connect_timeout,
+            )
+            .await
+            .map_err(|error| SftpConnectError {
+                error,
+                host_key: None,
+            })?;
+            let connect = client::connect_stream(config.clone(), stream, handler);
+            let mut handle = match timeout(options.connect_timeout, connect).await {
+                Ok(Ok(handle)) => handle,
+                Ok(Err(source)) => {
+                    return Err(connect_error(
+                        source.to_string(),
+                        observation.lock().await.clone(),
+                    ));
+                }
+                Err(_) => return Err(connect_timeout_error()),
+            };
+            authenticate(&mut handle, &jump.username, jump.auth)
+                .await
+                .map_err(|error| SftpConnectError {
+                    error,
+                    host_key: None,
+                })?;
+            let channel = handle
+                .channel_open_direct_tcpip(
+                    options.host.clone(),
+                    u32::from(options.port),
+                    "127.0.0.1",
+                    0,
+                )
+                .await
+                .map_err(|source| SftpConnectError {
+                    error: connection_failure(format!(
+                        "The bastion could not reach the destination: {source}"
+                    )),
+                    host_key: None,
+                })?;
+            (
+                Box::new(channel.into_stream()) as BoxedStream,
+                Some(handle),
+                Some(observation),
+            )
+        } else {
+            let stream = open_tcp_stream(
+                &options.host,
+                options.port,
+                options.proxy.as_ref(),
+                options.connect_timeout,
+            )
+            .await
+            .map_err(|error| SftpConnectError {
+                error,
+                host_key: None,
+            })?;
+            (stream, None, None)
+        };
+
         let observation = Arc::new(Mutex::new(None));
         let handler = ClientHandler {
             host: options.host.clone(),
             port: options.port,
             verifier,
             observation: observation.clone(),
+            allow_agent_forwarding: options.agent_forwarding,
         };
-        let config = Arc::new(client::Config {
-            keepalive_interval: Some(options.keepalive_interval),
-            keepalive_max: 3,
-            nodelay: true,
-            ..Default::default()
-        });
-
-        let connect = client::connect(config, (options.host.as_str(), options.port), handler);
+        let connect = client::connect_stream(config, stream, handler);
         let mut ssh = match timeout(options.connect_timeout, connect).await {
             Ok(Ok(handle)) => handle,
             Ok(Err(source)) => {
@@ -156,13 +300,7 @@ impl SftpClient {
                     observation.lock().await.clone(),
                 ));
             }
-            Err(_) => {
-                return Err(SftpConnectError {
-                    error: AppError::new(ErrorCode::TimedOut, "The SSH connection timed out")
-                        .retryable(),
-                    host_key: None,
-                });
-            }
+            Err(_) => return Err(connect_timeout_error()),
         };
 
         authenticate(&mut ssh, &options.username, options.auth)
@@ -194,11 +332,28 @@ impl SftpClient {
             })?;
         sftp.set_timeout(options.response_timeout.as_secs());
 
+        let mut observed_host_keys = Vec::new();
+        if let Some(observation) = jump_observation
+            && let Some((key, _)) = observation.lock().await.clone()
+        {
+            observed_host_keys.push(key);
+        }
+        if let Some((key, _)) = observation.lock().await.clone() {
+            observed_host_keys.push(key);
+        }
+
         Ok(Self {
             sftp,
             _ssh: Mutex::new(ssh),
+            _proxy_jump: proxy_jump.map(Mutex::new),
+            observed_host_keys,
+            agent_forwarding: options.agent_forwarding,
             io: Mutex::new(()),
         })
+    }
+
+    pub fn observed_host_keys(&self) -> &[ObservedHostKey] {
+        &self.observed_host_keys
     }
 
     pub async fn disconnect(&self) -> Result<(), AppError> {
@@ -220,6 +375,12 @@ impl SftpClient {
                 .await
                 .map_err(|source| connection_failure(source.to_string()))?
         };
+        if self.agent_forwarding {
+            channel
+                .agent_forward(true)
+                .await
+                .map_err(|source| connection_failure(source.to_string()))?;
+        }
         channel
             .exec(true, command)
             .await
@@ -291,6 +452,203 @@ impl SftpClient {
         input.extend_from_slice(content);
         self.execute_command(password_command, Some(input)).await
     }
+}
+
+trait AsyncStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncStream for T {}
+type BoxedStream = Box<dyn AsyncStream>;
+
+fn connect_timeout_error() -> SftpConnectError {
+    SftpConnectError {
+        error: AppError::new(ErrorCode::TimedOut, "The SSH connection timed out").retryable(),
+        host_key: None,
+    }
+}
+
+fn ssh_config(
+    keepalive_interval: Duration,
+    algorithms: &SshAlgorithmPolicy,
+) -> Result<Arc<client::Config>, AppError> {
+    let mut preferred = russh::Preferred::default();
+    if !algorithms.key_exchange.is_empty() {
+        preferred.kex = Cow::Owned(parse_names(
+            &algorithms.key_exchange,
+            "key exchange",
+            |name| russh::kex::Name::try_from(name),
+        )?);
+    }
+    if !algorithms.host_keys.is_empty() {
+        preferred.key = Cow::Owned(
+            algorithms
+                .host_keys
+                .iter()
+                .map(|name| name.parse())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| invalid_algorithm("host key"))?,
+        );
+    }
+    if !algorithms.ciphers.is_empty() {
+        preferred.cipher = Cow::Owned(parse_names(&algorithms.ciphers, "cipher", |name| {
+            russh::cipher::Name::try_from(name)
+        })?);
+    }
+    if !algorithms.macs.is_empty() {
+        preferred.mac = Cow::Owned(parse_names(&algorithms.macs, "MAC", |name| {
+            russh::mac::Name::try_from(name)
+        })?);
+    }
+    Ok(Arc::new(client::Config {
+        keepalive_interval: Some(keepalive_interval),
+        keepalive_max: 3,
+        nodelay: true,
+        preferred,
+        ..Default::default()
+    }))
+}
+
+fn parse_names<T: Copy>(
+    names: &[String],
+    kind: &str,
+    parser: impl Fn(&str) -> Result<T, ()>,
+) -> Result<Vec<T>, AppError> {
+    names
+        .iter()
+        .map(|name| parser(name).map_err(|()| invalid_algorithm(kind)))
+        .collect()
+}
+
+fn invalid_algorithm(kind: &str) -> AppError {
+    AppError::new(
+        ErrorCode::InvalidInput,
+        format!("The SSH {kind} policy contains an unsupported algorithm"),
+    )
+}
+
+async fn open_tcp_stream(
+    host: &str,
+    port: u16,
+    proxy: Option<&SshProxy>,
+    connect_timeout: Duration,
+) -> Result<BoxedStream, AppError> {
+    let endpoint = proxy
+        .map(|value| (value.host.as_str(), value.port))
+        .unwrap_or((host, port));
+    let mut stream = timeout(connect_timeout, TcpStream::connect(endpoint))
+        .await
+        .map_err(|_| {
+            AppError::new(ErrorCode::TimedOut, "The TCP connection timed out").retryable()
+        })?
+        .map_err(|source| connection_failure(source.to_string()))?;
+    stream
+        .set_nodelay(true)
+        .map_err(|source| connection_failure(source.to_string()))?;
+    if let Some(proxy) = proxy {
+        match proxy.kind {
+            SshProxyKind::Socks5 => socks5_connect(&mut stream, host, port).await?,
+            SshProxyKind::HttpConnect => http_connect(&mut stream, host, port).await?,
+        }
+    }
+    Ok(Box::new(stream))
+}
+
+async fn socks5_connect(stream: &mut TcpStream, host: &str, port: u16) -> Result<(), AppError> {
+    if host.len() > u8::MAX as usize {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "The SOCKS destination hostname is too long",
+        ));
+    }
+    stream
+        .write_all(&[5, 1, 0])
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    let mut greeting = [0_u8; 2];
+    stream
+        .read_exact(&mut greeting)
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    if greeting != [5, 0] {
+        return Err(connection_failure(
+            "The SOCKS5 proxy requires an unsupported authentication method",
+        ));
+    }
+    let mut request = Vec::with_capacity(host.len() + 7);
+    request.extend_from_slice(&[5, 1, 0, 3, host.len() as u8]);
+    request.extend_from_slice(host.as_bytes());
+    request.extend_from_slice(&port.to_be_bytes());
+    stream
+        .write_all(&request)
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    let mut response = [0_u8; 4];
+    stream
+        .read_exact(&mut response)
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    if response[0] != 5 || response[1] != 0 {
+        return Err(connection_failure(format!(
+            "The SOCKS5 proxy rejected the destination (code {})",
+            response[1]
+        )));
+    }
+    let address_length = match response[3] {
+        1 => 4,
+        3 => {
+            let mut length = [0_u8; 1];
+            stream
+                .read_exact(&mut length)
+                .await
+                .map_err(|source| connection_failure(source.to_string()))?;
+            usize::from(length[0])
+        }
+        4 => 16,
+        _ => {
+            return Err(connection_failure(
+                "The SOCKS5 proxy returned an invalid address",
+            ));
+        }
+    };
+    let mut ignored = vec![0_u8; address_length + 2];
+    stream
+        .read_exact(&mut ignored)
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    Ok(())
+}
+
+async fn http_connect(stream: &mut TcpStream, host: &str, port: u16) -> Result<(), AppError> {
+    let authority = format!("{host}:{port}");
+    let request = format!(
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nProxy-Connection: keep-alive\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|source| connection_failure(source.to_string()))?;
+    let mut response = Vec::with_capacity(256);
+    while !response.ends_with(b"\r\n\r\n") {
+        if response.len() >= 16 * 1024 {
+            return Err(connection_failure(
+                "The HTTP proxy returned an oversized response",
+            ));
+        }
+        let byte = stream
+            .read_u8()
+            .await
+            .map_err(|source| connection_failure(source.to_string()))?;
+        response.push(byte);
+    }
+    let status = String::from_utf8_lossy(&response);
+    let accepted = status
+        .lines()
+        .next()
+        .is_some_and(|line| line.split_whitespace().nth(1) == Some("200"));
+    if !accepted {
+        return Err(connection_failure(
+            "The HTTP proxy rejected the CONNECT request",
+        ));
+    }
+    Ok(())
 }
 
 fn shell_quote(value: &str) -> String {
@@ -971,9 +1329,11 @@ fn empty_attributes_with_permissions(permissions: u32) -> FileAttributes {
 #[cfg(test)]
 mod tests {
     use super::{
-        privileged_command, privileged_shell_command, shell_quote, truncate_command_output,
-        wrap_remote_command,
+        privileged_command, privileged_shell_command, shell_quote, ssh_config,
+        truncate_command_output, wrap_remote_command,
     };
+    use siftlane_core::SshAlgorithmPolicy;
+    use std::time::Duration;
 
     #[test]
     fn shell_quote_keeps_remote_paths_in_one_argument() {
@@ -1019,5 +1379,14 @@ mod tests {
         assert!(create.contains("exit 17"));
         assert!(delete.contains("rmdir"));
         assert!(create.ends_with(" '/opt/app dir'"));
+    }
+
+    #[test]
+    fn rejects_unknown_algorithm_names_before_connecting() {
+        let policy = SshAlgorithmPolicy {
+            ciphers: vec!["not-a-real-cipher".into()],
+            ..Default::default()
+        };
+        assert!(ssh_config(Duration::from_secs(30), &policy).is_err());
     }
 }
