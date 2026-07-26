@@ -1,7 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { homeDir } from "@tauri-apps/api/path";
-import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  confirm as confirmDialog,
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppError,
@@ -9,6 +13,8 @@ import type {
   ConflictPolicy,
   ConnectResult,
   ConnectionProfile,
+  ConfigurationImportSummary,
+  ConfigurationSummary,
   DirectoryTransferMode,
   Favorite,
   FileEntry,
@@ -36,6 +42,10 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "agent" },
     initial_remote_path: "/var/www/html",
     favorite: true,
+    folder: "Work",
+    tags: ["production", "web"],
+    color: "#28a884",
+    notes: "Primary production web server.",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -49,6 +59,10 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "password", remember: true },
     initial_remote_path: "/incoming",
     favorite: false,
+    folder: "Archives",
+    tags: ["media", "ftps"],
+    color: "#5d83d6",
+    notes: "Long-term media archive.",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -62,6 +76,10 @@ const mockProfiles: ConnectionProfile[] = [
     auth: { kind: "private_key", path: "~/.ssh/id_ed25519", remember_passphrase: true },
     initial_remote_path: "/srv/staging",
     favorite: false,
+    folder: "Work",
+    tags: ["staging", "web"],
+    color: "#dc8b42",
+    notes: "Pre-production deployment target.",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -442,6 +460,73 @@ export const api = {
       defaultPath,
     });
     return typeof selected === "string" ? selected : null;
+  },
+  async pickConfigurationExport(includeSecrets: boolean) {
+    if (!desktop) return `siftlane-config${includeSecrets ? "-encrypted" : ""}.json`;
+    const selected = await saveDialog({
+      title: includeSecrets
+        ? "Export encrypted Siftlane configuration"
+        : "Export Siftlane configuration",
+      defaultPath: includeSecrets
+        ? "siftlane-config-encrypted.json"
+        : "siftlane-config.json",
+      filters: [{ name: "JSON document", extensions: ["json"] }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+  async pickConfigurationImport() {
+    if (!desktop) return "siftlane-config.json";
+    const selected = await openDialog({
+      title: "Import Siftlane configuration",
+      multiple: false,
+      directory: false,
+      filters: [{ name: "JSON document", extensions: ["json"] }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+  async exportConfiguration(
+    path: string,
+    includeSecrets: boolean,
+    passphrase?: string,
+  ) {
+    if (desktop) {
+      return call<ConfigurationSummary>("export_configuration", {
+        path,
+        includeSecrets,
+        passphrase,
+      });
+    }
+    return {
+      version: 1,
+      profiles: browserProfiles.length,
+      bookmarks: browserFavorites.length,
+      saved_actions: browserSavedActions.length,
+      secrets_included: includeSecrets,
+    } satisfies ConfigurationSummary;
+  },
+  async inspectConfiguration(path: string) {
+    if (desktop) return call<ConfigurationSummary>("inspect_configuration", { path });
+    return {
+      version: 1,
+      profiles: browserProfiles.length,
+      bookmarks: browserFavorites.length,
+      saved_actions: browserSavedActions.length,
+      secrets_included: path.includes("encrypted"),
+    } satisfies ConfigurationSummary;
+  },
+  async importConfiguration(path: string, passphrase?: string) {
+    if (desktop) {
+      return call<ConfigurationImportSummary>("import_configuration", {
+        path,
+        passphrase,
+      });
+    }
+    return {
+      profiles: browserProfiles.length,
+      bookmarks: browserFavorites.length,
+      saved_actions: browserSavedActions.length,
+      secrets_imported: passphrase ? 1 : 0,
+    } satisfies ConfigurationImportSummary;
   },
   async revealInFileManager(path: string) {
     if (!desktop) return;

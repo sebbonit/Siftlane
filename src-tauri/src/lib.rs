@@ -1,4 +1,5 @@
 mod commands;
+mod configuration;
 mod package;
 mod scheduler;
 mod search;

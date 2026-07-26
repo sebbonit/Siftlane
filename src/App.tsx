@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import prettier from "prettier/standalone";
 import * as babelPlugin from "prettier/plugins/babel";
 import * as cssPlugin from "prettier/plugins/postcss";
@@ -30,6 +37,7 @@ import {
   EyeOff,
   FileEdit,
   FileKey2,
+  Folder,
   FolderClock,
   FolderHeart,
   KeyRound,
@@ -40,6 +48,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Search,
   Server,
@@ -1054,6 +1063,16 @@ export default function App() {
       <SettingsView
         value={preferences}
         profiles={profiles}
+        onConfigurationImported={async () => {
+          const [nextProfiles, nextFavorites, nextActions] = await Promise.all([
+            api.listProfiles(),
+            api.listFavorites(),
+            api.listSavedActions(),
+          ]);
+          setProfiles(orderProfiles(nextProfiles));
+          setFavorites(nextFavorites);
+          setSavedActions(nextActions);
+        }}
         onBack={() => setSettingsOpen(false)}
         onChange={(next) => {
           setPreferences(next);
@@ -1083,6 +1102,7 @@ export default function App() {
         connectingId={connectingId}
         collapsed={sidebarCollapsed}
         onProfileClick={handleProfileClick}
+        onEditProfile={(profile) => setConnectionDialog(profile)}
         onToggleFavorite={toggleFavorite}
         onOpenBookmark={(bookmark) => void openBookmark(bookmark)}
         onRemoveBookmark={(bookmark) => void removeBookmark(bookmark)}
@@ -1425,6 +1445,13 @@ export default function App() {
       {connectionDialog && (
         <ConnectionDialog
           existing={connectionDialog === "new" ? null : connectionDialog}
+          folders={[
+            ...new Set(
+              profiles
+                .map((profile) => profile.folder)
+                .filter((folder): folder is string => !!folder),
+            ),
+          ].sort((left, right) => left.localeCompare(right))}
           onClose={() => setConnectionDialog(null)}
           onSubmit={async (profile, credential) => {
             const saved = await api.saveProfile(profile);
@@ -1493,6 +1520,7 @@ function Sidebar({
   connectingId,
   collapsed,
   onProfileClick,
+  onEditProfile,
   onToggleFavorite,
   onOpenBookmark,
   onRemoveBookmark,
@@ -1510,6 +1538,7 @@ function Sidebar({
   connectingId: UUID | null;
   collapsed: boolean;
   onProfileClick: (profile: ConnectionProfile) => void;
+  onEditProfile: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
   onOpenBookmark: (bookmark: Favorite) => void;
   onRemoveBookmark: (bookmark: Favorite) => void;
@@ -1518,9 +1547,32 @@ function Sidebar({
   onNew: () => void;
   onSettings: () => void;
 }) {
+  const [profileQuery, setProfileQuery] = useState("");
   const connectionBookmarks = bookmarksForConnection(favorites, activeProfileId);
   const orderedIds = orderForProfile(bookmarkOrder, activeProfileId);
   const visibleBookmarks = orderBookmarks(connectionBookmarks, orderedIds);
+  const normalizedProfileQuery = profileQuery.trim().toLowerCase();
+  const visibleProfiles = profiles.filter((profile) => {
+    if (!normalizedProfileQuery) return true;
+    return [
+      profile.label,
+      profile.host,
+      profile.username,
+      profile.folder ?? "",
+      profile.notes,
+      ...profile.tags,
+    ].some((value) => value.toLowerCase().includes(normalizedProfileQuery));
+  });
+  const profileGroups = [...new Set(visibleProfiles.map((profile) => profile.folder ?? ""))]
+    .sort((left, right) => {
+      if (!left) return 1;
+      if (!right) return -1;
+      return left.localeCompare(right);
+    })
+    .map((folder) => ({
+      folder,
+      profiles: visibleProfiles.filter((profile) => (profile.folder ?? "") === folder),
+    }));
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -1547,12 +1599,50 @@ function Sidebar({
         />
       )}
       <SidebarSection title="Connections" icon={<Server size={14} />}>
+        {profiles.length > 0 && (
+          <label className="profile-search">
+            <Search size={13} />
+            <input
+              aria-label="Search profiles"
+              value={profileQuery}
+              onChange={(event) => setProfileQuery(event.target.value)}
+              placeholder="Search profiles"
+            />
+            {profileQuery && (
+              <button aria-label="Clear profile search" onClick={() => setProfileQuery("")}>
+                <X size={12} />
+              </button>
+            )}
+          </label>
+        )}
         {profiles.length === 0 && <p className="empty-note">No saved connections</p>}
-        {profiles.map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} />)}
+        {profiles.length > 0 && visibleProfiles.length === 0 && (
+          <p className="empty-note">No matching profiles</p>
+        )}
+        {profileGroups.map((group) => (
+          <div className="profile-folder" key={group.folder || "unfiled"}>
+            <div className="profile-folder-heading">
+              <Folder size={12} />
+              <span>{group.folder || "Unfiled"}</span>
+              <small>{group.profiles.length}</small>
+            </div>
+            {group.profiles.map((profile) => (
+              <ConnectionItem
+                key={profile.id}
+                profile={profile}
+                active={activeProfileId === profile.id}
+                connecting={connectingId === profile.id}
+                onOpen={onProfileClick}
+                onEdit={onEditProfile}
+                onToggleFavorite={onToggleFavorite}
+              />
+            ))}
+          </div>
+        ))}
       </SidebarSection>
       <SidebarSection title="Favorites" icon={<FolderHeart size={14} />}>
         {profiles.every((profile) => !profile.favorite) && <p className="empty-note">Star a connection to keep it here</p>}
-        {profiles.filter((profile) => profile.favorite).map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onToggleFavorite={onToggleFavorite} compact />)}
+        {profiles.filter((profile) => profile.favorite).map((profile) => <ConnectionItem key={profile.id} profile={profile} active={activeProfileId === profile.id} connecting={connectingId === profile.id} onOpen={onProfileClick} onEdit={onEditProfile} onToggleFavorite={onToggleFavorite} compact />)}
       </SidebarSection>
       <BookmarksSection
         bookmarks={visibleBookmarks}
@@ -1573,20 +1663,26 @@ function Sidebar({
   );
 }
 
-function ConnectionItem({ profile, active, connecting, compact = false, onOpen, onToggleFavorite }: {
+function ConnectionItem({ profile, active, connecting, compact = false, onOpen, onEdit, onToggleFavorite }: {
   profile: ConnectionProfile;
   active: boolean;
   connecting: boolean;
   compact?: boolean;
   onOpen: (profile: ConnectionProfile) => void;
+  onEdit: (profile: ConnectionProfile) => void;
   onToggleFavorite: (profile: ConnectionProfile) => void;
 }) {
-  return <div className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}>
+  return <div
+    className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}
+    style={{ "--profile-color": profile.color ?? "var(--teal)" } as CSSProperties}
+    title={profile.notes || undefined}
+  >
     <button className="connection-open" onClick={() => onOpen(profile)}>
       <span className="server-icon"><Server size={15} /></span>
-      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <small><span className="protocol-badge">{profile.protocol.toUpperCase()}</span>{profile.username}@{profile.host}</small>}</span>
+      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <><small><span className="protocol-badge">{profile.protocol.toUpperCase()}</span>{profile.username}@{profile.host}</small>{profile.tags.length > 0 && <span className="profile-tag-row">{profile.tags.slice(0, 3).map((tag) => <i key={tag}>{tag}</i>)}</span>}</>}</span>
       {connecting && <LoaderCircle className="spin" size={14} />}
     </button>
+    {!compact && <button className="profile-edit" aria-label={`Edit ${profile.label}`} title="Edit profile" onClick={() => onEdit(profile)}><Pencil size={13} /></button>}
     <button className="favorite-toggle" aria-label={profile.favorite ? `Remove ${profile.label} from favorites` : `Add ${profile.label} to favorites`} title={profile.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => onToggleFavorite(profile)}><Star size={14} fill={profile.favorite ? "currentColor" : "none"} /></button>
   </div>;
 }
@@ -1881,8 +1977,9 @@ function NewEntryDialog({ directory, side, privileged, onClose, onSubmit }: {
   </Dialog>;
 }
 
-function ConnectionDialog({ existing, onClose, onSubmit }: {
+function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
   existing: ConnectionProfile | null;
+  folders: string[];
   onClose: () => void;
   onSubmit: (profile: ConnectionProfile, credential: string) => Promise<void>;
 }) {
@@ -1892,6 +1989,10 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
   const [port, setPort] = useState(existing?.port ?? 22);
   const [username, setUsername] = useState(existing?.username ?? "");
   const [path, setPath] = useState(existing?.initial_remote_path ?? "/");
+  const [folder, setFolder] = useState(existing?.folder ?? "");
+  const [tags, setTags] = useState(existing?.tags.join(", ") ?? "");
+  const [color, setColor] = useState(existing?.color ?? "#28a884");
+  const [notes, setNotes] = useState(existing?.notes ?? "");
   const [authKind, setAuthKind] = useState<AuthRef["kind"]>(existing?.auth.kind ?? "password");
   const [keyPath, setKeyPath] = useState(existing?.auth.kind === "private_key" ? existing.auth.path : "");
   const [credential, setCredential] = useState("");
@@ -1933,6 +2034,10 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
         auth,
         initial_remote_path: path,
         favorite: existing?.favorite ?? false,
+        folder: folder.trim() || null,
+        tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+        color,
+        notes,
         created_at: existing?.created_at ?? now,
         updated_at: now,
       }, credential);
@@ -1942,11 +2047,12 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
       setSaving(false);
     }
   }
-  return <Dialog title={existing ? `Connect to ${existing.label}` : "New connection"} subtitle={`${protocolLabel} connection details`} onClose={onClose}>
+  return <Dialog title={existing ? `Edit ${existing.label}` : "New connection"} subtitle={`${protocolLabel} connection details`} onClose={onClose}>
     <form className="connection-form" onSubmit={submit}>
       <fieldset><legend>Protocol</legend><div className="segmented protocol-options">{(["sftp", "ftp", "ftps"] as const).map((kind) => <button type="button" key={kind} className={protocol === kind ? "active" : ""} onClick={() => chooseProtocol(kind)}>{kind === "sftp" ? "SFTP" : kind === "ftp" ? "FTP" : "FTPS"}</button>)}</div></fieldset>
       {protocol === "ftp" && <p className="protocol-warning"><CircleAlert size={14} />FTP does not encrypt your sign-in or file transfers. Use FTPS or SFTP whenever the server supports it.</p>}
       <div className="form-grid"><label className="wide">Display name<input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Production server" required /></label><label className="host">Host<input value={host} onChange={(e) => setHost(e.target.value)} placeholder={sshProtocol ? "sftp.example.com" : "ftp.example.com"} required /></label><label>Port<input type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} required /></label><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder={sshProtocol ? "deploy" : "ftp-user"} required /></label><label>Initial path<input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/html" /></label></div>
+      <fieldset className="profile-organization"><legend>Organization</legend><div className="form-grid"><label className="host">Folder<input list="profile-folders" value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="Work / Client name" /><datalist id="profile-folders">{folders.map((value) => <option value={value} key={value} />)}</datalist></label><label className="profile-color-field">Color<span><input type="color" value={color} onChange={(event) => setColor(event.target.value)} /><code>{color.toUpperCase()}</code></span></label><label className="wide">Tags<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="production, client, web" /></label><label className="wide">Notes<textarea value={notes} maxLength={4000} onChange={(event) => setNotes(event.target.value)} placeholder="Purpose, owner, maintenance notes…" /></label></div></fieldset>
       <fieldset><legend>Authentication</legend><div className={`segmented ${sshProtocol ? "" : "two-options"}`}>{(sshProtocol ? ["password", "private_key", "agent"] : ["password", "anonymous"]).map((kind) => <button type="button" key={kind} className={authKind === kind ? "active" : ""} onClick={() => setAuthKind(kind as AuthRef["kind"])}>{kind === "password" ? "Password" : kind === "private_key" ? "Private key" : kind === "agent" ? "SSH agent" : "Anonymous"}</button>)}</div>
         {authKind === "private_key" && <label>Private key file<span className="file-picker-field"><input value={keyPath} onChange={(e) => setKeyPath(e.target.value)} placeholder="Choose an SSH private key" required /><button type="button" className="secondary" onClick={() => void choosePrivateKey()}><FileKey2 size={15} /> Browse…</button></span></label>}
         {(authKind === "password" || authKind === "private_key") && <><label>{authKind === "password" ? "Password" : "Passphrase (if required)"}<span className="secret-field"><input type={showSecret ? "text" : "password"} value={credential} onChange={(e) => setCredential(e.target.value)} required={authKind === "password" && !existing} /><button type="button" aria-label={showSecret ? "Hide secret" : "Show secret"} onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></span></label><label className="checkbox"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Store securely in the OS keyring</label></>}
@@ -1954,7 +2060,7 @@ function ConnectionDialog({ existing, onClose, onSubmit }: {
         {authKind === "agent" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will try identities from your running SSH agent. Private keys never enter the app.</span></div>}
       </fieldset>
       {dialogError && <p className="dialog-error"><CircleAlert size={14} />{dialogError}</p>}
-      <div className="dialog-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={15} />}{existing ? "Connect" : "Save & Connect"}</button></div>
+      <div className="dialog-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={15} />}Save & Connect</button></div>
     </form>
   </Dialog>;
 }

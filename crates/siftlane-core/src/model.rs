@@ -40,6 +40,14 @@ pub struct ConnectionProfile {
     pub auth: AuthRef,
     pub initial_remote_path: String,
     pub favorite: bool,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub notes: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -57,6 +65,10 @@ impl ConnectionProfile {
             auth,
             initial_remote_path: "/".into(),
             favorite: false,
+            folder: None,
+            tags: Vec::new(),
+            color: None,
+            notes: String::new(),
             created_at: now,
             updated_at: now,
         }
