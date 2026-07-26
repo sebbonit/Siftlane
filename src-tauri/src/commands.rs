@@ -41,12 +41,39 @@ pub fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ConnectionProfile
 #[tauri::command]
 pub fn save_profile(
     state: State<'_, AppState>,
+    profile: ConnectionProfile,
+) -> Result<ConnectionProfile, AppError> {
+    let profile = normalize_profile(profile)?;
+    state.storage.save_profile(&profile)?;
+    Ok(profile)
+}
+
+pub(crate) fn normalize_profile(
     mut profile: ConnectionProfile,
 ) -> Result<ConnectionProfile, AppError> {
     profile.label = profile.label.trim().to_string();
     profile.host = profile.host.trim().to_string();
     profile.username = profile.username.trim().to_string();
     profile.initial_remote_path = normalize_remote_path(&profile.initial_remote_path)?;
+    profile.folder = profile
+        .folder
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    profile.tags = profile
+        .tags
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    profile.tags.sort_by_key(|value| value.to_lowercase());
+    profile
+        .tags
+        .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    profile.notes = profile.notes.trim().to_string();
+    profile.color = profile
+        .color
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
     if profile.label.is_empty() || profile.host.is_empty() || profile.username.is_empty() {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
@@ -57,6 +84,29 @@ pub fn save_profile(
         return Err(AppError::new(
             ErrorCode::InvalidInput,
             "Port must be between 1 and 65535",
+        ));
+    }
+    if profile
+        .folder
+        .as_ref()
+        .is_some_and(|value| value.len() > 80)
+        || profile.tags.len() > 20
+        || profile.tags.iter().any(|value| value.len() > 40)
+        || profile.notes.len() > 4_000
+    {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Profile folders, tags, or notes exceed their supported length",
+        ));
+    }
+    if let Some(color) = &profile.color
+        && (!color.starts_with('#')
+            || color.len() != 7
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Profile color must use #RRGGBB format",
         ));
     }
     match (profile.protocol, &profile.auth) {
@@ -75,7 +125,6 @@ pub fn save_profile(
         _ => {}
     }
     profile.updated_at = Utc::now();
-    state.storage.save_profile(&profile)?;
     Ok(profile)
 }
 

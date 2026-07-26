@@ -128,4 +128,35 @@ describe("Siftlane shell", () => {
     expect(screen.queryByText(/does not encrypt your sign-in/i)).not.toBeInTheDocument();
     expect(screen.getByText(/FTPS \(explicit TLS\) connection details/i)).toBeInTheDocument();
   });
+
+  it("organizes profiles into folders and searches their metadata", async () => {
+    render(<App />);
+    const newButtons = await screen.findAllByRole("button", { name: /new connection/i });
+    await userEvent.click(newButtons[0]!);
+    await userEvent.type(screen.getByLabelText(/display name/i), "Analytics server");
+    await userEvent.type(screen.getByLabelText(/^host$/i), "analytics.example.com");
+    await userEvent.type(screen.getByLabelText(/username/i), "deploy");
+    await userEvent.type(screen.getByLabelText(/^folder$/i), "Clients");
+    await userEvent.type(screen.getByLabelText(/^tags$/i), "analytics, finance");
+    await userEvent.type(screen.getByLabelText(/^notes$/i), "Finance reporting workload");
+    await userEvent.click(screen.getByRole("button", { name: "SSH agent" }));
+    await userEvent.click(screen.getByRole("button", { name: /save & connect/i }));
+    await waitFor(() => expect(document.querySelector(".session-tabs")).toHaveClass("visible"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    const connections = screen.getByRole("button", { name: "Connections" }).closest("section");
+    expect(connections).not.toBeNull();
+    expect(within(connections!).getByText("Clients")).toBeInTheDocument();
+    expect(within(connections!).getByText("analytics")).toBeInTheDocument();
+
+    const search = within(connections!).getByRole("textbox", { name: "Search profiles" });
+    await userEvent.type(search, "finance");
+    expect(within(connections!).getByText("Analytics server")).toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, "no-match");
+    expect(
+      within(connections!).queryByRole("button", { name: /Analytics server/i }),
+    ).not.toBeInTheDocument();
+    expect(within(connections!).getByText("No matching profiles")).toBeInTheDocument();
+  });
 });

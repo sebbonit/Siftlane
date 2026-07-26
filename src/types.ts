@@ -16,8 +16,27 @@ export interface ConnectionProfile {
   auth: AuthRef;
   initial_remote_path: string;
   favorite: boolean;
+  folder: string | null;
+  tags: string[];
+  color: string | null;
+  notes: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ConfigurationSummary {
+  version: number;
+  profiles: number;
+  bookmarks: number;
+  saved_actions: number;
+  secrets_included: boolean;
+}
+
+export interface ConfigurationImportSummary {
+  profiles: number;
+  bookmarks: number;
+  saved_actions: number;
+  secrets_imported: number;
 }
 
 export type EntryKind = "file" | "directory" | "symlink" | "other";
