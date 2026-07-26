@@ -9,13 +9,14 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent }
 import { formatBytes, formatDate, formatPermissions } from "../lib/format";
 import { isTransferableEntry } from "../lib/filePaneDnD";
 import { isImageFile } from "../lib/media";
-import type { FileEntry } from "../types";
+import type { ComparisonStatus, FileEntry } from "../types";
 
 export function FilePaneRows({
   loading,
   entriesEmpty,
   visible,
-  selected,
+  selectedPaths,
+  comparisonByName,
   dragOverFolderPath,
   draggingPath,
   onSelect,
@@ -27,10 +28,11 @@ export function FilePaneRows({
   loading: boolean;
   entriesEmpty: boolean;
   visible: FileEntry[];
-  selected: FileEntry | null;
+  selectedPaths: Set<string>;
+  comparisonByName?: Record<string, ComparisonStatus>;
   dragOverFolderPath: string | null;
   draggingPath: string | null;
-  onSelect: (entry: FileEntry) => void;
+  onSelect: (entry: FileEntry, event: ReactMouseEvent) => void;
   onNavigate: (path: string) => void;
   onOpenFile: (entry: FileEntry) => void;
   onContextMenu: (event: ReactMouseEvent, entry: FileEntry) => void;
@@ -47,6 +49,7 @@ export function FilePaneRows({
   return (
     <>
       {visible.map((entry) => {
+        const comparison = comparisonByName?.[entry.name];
         const transferable = isTransferableEntry(entry);
         const isFolderDropTarget =
           entry.kind === "directory" && dragOverFolderPath === entry.path;
@@ -56,14 +59,14 @@ export function FilePaneRows({
             key={entry.path}
             type="button"
             data-drop-folder={entry.kind === "directory" ? entry.path : undefined}
-            className={`file-row${selected?.path === entry.path ? " selected" : ""}${isFolderDropTarget ? " is-drop-target" : ""}${transferable ? " is-draggable" : ""}${isDragging ? " is-dragging" : ""}`}
-            onClick={() => onSelect(entry)}
+            className={`file-row${selectedPaths.has(entry.path) ? " selected" : ""}${isFolderDropTarget ? " is-drop-target" : ""}${transferable ? " is-draggable" : ""}${isDragging ? " is-dragging" : ""}${comparison && comparison !== "same" ? ` comparison-${comparison}` : ""}`}
+            onClick={(event) => onSelect(entry, event)}
             onDoubleClick={() =>
               entry.kind === "directory" ? onNavigate(entry.path) : onOpenFile(entry)
             }
             onContextMenu={(event) => {
               event.stopPropagation();
-              onSelect(entry);
+              onSelect(entry, event);
               onContextMenu(event, entry);
             }}
             onPointerDown={(event) => onPointerDownRow(event, entry)}
@@ -72,6 +75,11 @@ export function FilePaneRows({
             <span className="file-name">
               {fileIcon(entry)}
               <span>{entry.name}</span>
+              {comparison && comparison !== "same" && (
+                <em className="comparison-badge">
+                  {comparison.replaceAll("_", " ")}
+                </em>
+              )}
               {entry.kind === "symlink" && <small>→ {entry.symlink_target}</small>}
             </span>
             <span className="file-size">

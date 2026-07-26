@@ -72,6 +72,47 @@ impl TransferQueue {
         Ok(())
     }
 
+    pub fn record_retry(&mut self, id: TransferId, error: String) -> Result<(), AppError> {
+        let job = self.job_mut(id)?;
+        job.retry_history.push(crate::RetryRecord {
+            at: Utc::now(),
+            error,
+        });
+        job.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn set_priority(
+        &mut self,
+        id: TransferId,
+        priority: crate::TransferPriority,
+    ) -> Result<(), AppError> {
+        let job = self.job_mut(id)?;
+        job.priority = priority;
+        job.updated_at = Utc::now();
+        self.order.sort_by_key(|item| {
+            std::cmp::Reverse(
+                self.jobs
+                    .get(item)
+                    .map(|value| value.priority)
+                    .unwrap_or_default(),
+            )
+        });
+        Ok(())
+    }
+
+    pub fn reorder(&mut self, id: TransferId, before: Option<TransferId>) -> Result<(), AppError> {
+        if !self.jobs.contains_key(&id) {
+            return Err(AppError::new(ErrorCode::NotFound, "Transfer not found"));
+        }
+        self.order.retain(|item| *item != id);
+        let index = before
+            .and_then(|target| self.order.iter().position(|item| *item == target))
+            .unwrap_or(self.order.len());
+        self.order.insert(index, id);
+        Ok(())
+    }
+
     pub fn set_verification(
         &mut self,
         id: TransferId,
@@ -202,6 +243,7 @@ fn is_valid_transition(from: TransferState, to: TransferState) -> bool {
     matches!(
         (from, to),
         (Queued | Interrupted, Running)
+            | (Queued, Paused)
             | (Interrupted, WaitingForAuthentication | Failed)
             | (Queued | Running | Paused | Interrupted, Cancelled)
             | (

@@ -1,7 +1,7 @@
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { useAppVersion } from "../../hooks/useAppVersion";
-import type { Preferences } from "../../types";
+import type { ConnectionProfile, Preferences } from "../../types";
 import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
 import type { SettingsCategoryId } from "./categories";
 import { SettingsList, SettingsRow } from "./SettingsRow";
@@ -10,16 +10,18 @@ export function SettingsPanel({
   category,
   draft,
   onChange,
+  profiles = [],
 }: {
   category: SettingsCategoryId;
   draft: Preferences;
   onChange: (next: Preferences) => void;
+  profiles?: ConnectionProfile[];
 }) {
   if (category === "general") {
     return <GeneralPanel draft={draft} onChange={onChange} />;
   }
   if (category === "transfers") {
-    return <TransfersPanel draft={draft} onChange={onChange} />;
+    return <TransfersPanel draft={draft} onChange={onChange} profiles={profiles} />;
   }
   if (category === "connection") {
     return <ConnectionPanel draft={draft} onChange={onChange} />;
@@ -55,6 +57,21 @@ function GeneralPanel({
           <option value="ocean">Ocean</option>
           <option value="graphite">Graphite</option>
         </select>
+      </SettingsRow>
+      <SettingsRow
+        label="Restore sessions"
+        description="Reconnect open tabs and restore their paths and layouts when Siftlane launches."
+        htmlFor="settings-restore-sessions"
+      >
+        <span className="settings-toggle">
+          <input
+            id="settings-restore-sessions"
+            type="checkbox"
+            checked={draft.restore_sessions}
+            onChange={(event) => onChange({ ...draft, restore_sessions: event.target.checked })}
+          />
+          <span />
+        </span>
       </SettingsRow>
       <SettingsRow
         label="Default layout"
@@ -99,9 +116,11 @@ function GeneralPanel({
 function TransfersPanel({
   draft,
   onChange,
+  profiles,
 }: {
   draft: Preferences;
   onChange: (next: Preferences) => void;
+  profiles: ConnectionProfile[];
 }) {
   return (
     <SettingsList title="Transfers">
@@ -123,6 +142,214 @@ function TransfersPanel({
             })
           }
         />
+      </SettingsRow>
+      <SettingsRow
+        label="Global upload limit"
+        description="Shared across all uploads. Set 0 for unlimited."
+        htmlFor="settings-upload-limit"
+      >
+        <input
+          id="settings-upload-limit"
+          type="number"
+          min={0}
+          value={Math.round((draft.global_upload_limit_bps ?? 0) / 1024)}
+          onChange={(event) => onChange({
+            ...draft,
+            global_upload_limit_bps: Number(event.target.value) > 0
+              ? Number(event.target.value) * 1024
+              : null,
+          })}
+        />
+        <small>KB/s</small>
+      </SettingsRow>
+      <SettingsRow
+        label="Global download limit"
+        description="Shared across all downloads. Set 0 for unlimited."
+        htmlFor="settings-download-limit"
+      >
+        <input
+          id="settings-download-limit"
+          type="number"
+          min={0}
+          value={Math.round((draft.global_download_limit_bps ?? 0) / 1024)}
+          onChange={(event) => onChange({
+            ...draft,
+            global_download_limit_bps: Number(event.target.value) > 0
+              ? Number(event.target.value) * 1024
+              : null,
+          })}
+        />
+        <small>KB/s</small>
+      </SettingsRow>
+      {profiles.map((profile) => {
+        const limit = draft.profile_bandwidth_limits[profile.id] ?? {
+          upload_bps: null,
+          download_bps: null,
+        };
+        return (
+          <SettingsRow
+            key={profile.id}
+            label={`${profile.label} bandwidth`}
+            description="Per-profile upload / download limits in KB/s. Zero is unlimited."
+            htmlFor={`profile-limit-${profile.id}`}
+          >
+            <span className="profile-bandwidth">
+              <input
+                id={`profile-limit-${profile.id}`}
+                type="number"
+                min={0}
+                aria-label={`${profile.label} upload limit`}
+                value={Math.round((limit.upload_bps ?? 0) / 1024)}
+                onChange={(event) => onChange({
+                  ...draft,
+                  profile_bandwidth_limits: {
+                    ...draft.profile_bandwidth_limits,
+                    [profile.id]: {
+                      ...limit,
+                      upload_bps: Number(event.target.value) > 0
+                        ? Number(event.target.value) * 1024
+                        : null,
+                    },
+                  },
+                })}
+              />
+              <span>/</span>
+              <input
+                type="number"
+                min={0}
+                aria-label={`${profile.label} download limit`}
+                value={Math.round((limit.download_bps ?? 0) / 1024)}
+                onChange={(event) => onChange({
+                  ...draft,
+                  profile_bandwidth_limits: {
+                    ...draft.profile_bandwidth_limits,
+                    [profile.id]: {
+                      ...limit,
+                      download_bps: Number(event.target.value) > 0
+                        ? Number(event.target.value) * 1024
+                        : null,
+                    },
+                  },
+                })}
+              />
+            </span>
+          </SettingsRow>
+        );
+      })}
+      <SettingsRow
+        label="Temporary limit"
+        description="Use the current global limits for one hour, then automatically expire."
+      >
+        {draft.temporary_bandwidth_limit &&
+        Date.parse(draft.temporary_bandwidth_limit.expires_at) > Date.now() ? (
+          <button
+            className="secondary"
+            onClick={() => onChange({ ...draft, temporary_bandwidth_limit: null })}
+          >
+            Clear one-hour limit
+          </button>
+        ) : (
+          <button
+            className="secondary"
+            disabled={!draft.global_upload_limit_bps && !draft.global_download_limit_bps}
+            title={
+              !draft.global_upload_limit_bps && !draft.global_download_limit_bps
+                ? "Set a global upload or download limit first"
+                : undefined
+            }
+            onClick={() => onChange({
+              ...draft,
+              temporary_bandwidth_limit: {
+                upload_bps: draft.global_upload_limit_bps,
+                download_bps: draft.global_download_limit_bps,
+                expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+              },
+            })}
+          >
+            Limit for one hour
+          </button>
+        )}
+      </SettingsRow>
+      {draft.bandwidth_schedules.map((schedule) => (
+        <SettingsRow
+          key={schedule.id}
+          label={schedule.label}
+          description="Active window (local time). Empty limits mean unlimited."
+        >
+          <span className="schedule-controls">
+            <input
+              type="checkbox"
+              aria-label={`Enable ${schedule.label}`}
+              checked={schedule.enabled}
+              onChange={(event) => onChange({
+                ...draft,
+                bandwidth_schedules: draft.bandwidth_schedules.map((item) =>
+                  item.id === schedule.id ? { ...item, enabled: event.target.checked } : item,
+                ),
+              })}
+            />
+            <input
+              type="time"
+              aria-label={`${schedule.label} start time`}
+              value={schedule.start_time}
+              onChange={(event) => onChange({
+                ...draft,
+                bandwidth_schedules: draft.bandwidth_schedules.map((item) =>
+                  item.id === schedule.id ? { ...item, start_time: event.target.value } : item,
+                ),
+              })}
+            />
+            <span>to</span>
+            <input
+              type="time"
+              aria-label={`${schedule.label} end time`}
+              value={schedule.end_time}
+              onChange={(event) => onChange({
+                ...draft,
+                bandwidth_schedules: draft.bandwidth_schedules.map((item) =>
+                  item.id === schedule.id ? { ...item, end_time: event.target.value } : item,
+                ),
+              })}
+            />
+            <button
+              className="secondary"
+              onClick={() => onChange({
+                ...draft,
+                bandwidth_schedules: draft.bandwidth_schedules.filter(
+                  (item) => item.id !== schedule.id,
+                ),
+              })}
+            >
+              Remove
+            </button>
+          </span>
+        </SettingsRow>
+      ))}
+      <SettingsRow
+        label="Schedules"
+        description="Reusable time windows override global limits while active."
+      >
+        <button
+          className="secondary"
+          onClick={() => onChange({
+            ...draft,
+            bandwidth_schedules: [
+              ...draft.bandwidth_schedules,
+              {
+                id: crypto.randomUUID(),
+                label: "Unlimited after 18:00",
+                start_time: "18:00",
+                end_time: "08:00",
+                upload_bps: null,
+                download_bps: null,
+                days: [0, 1, 2, 3, 4, 5, 6],
+                enabled: true,
+              },
+            ],
+          })}
+        >
+          Add “unlimited after 18:00”
+        </button>
       </SettingsRow>
       <SettingsRow
         label="Per-host parallel transfers"

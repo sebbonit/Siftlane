@@ -392,6 +392,11 @@ function mockTransfer(
     verification: state === "completed" ? "size_verified" : "pending",
     speed_bytes_per_second: state === "running" ? 1_240_000 : null,
     error: null,
+    priority: "normal",
+    preserve_modified_time: false,
+    preserve_permissions: false,
+    symlink_policy: "skip",
+    retry_history: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -619,6 +624,9 @@ export const api = {
     sourcePath: string;
     destinationPath: string;
     conflictPolicy?: ConflictPolicy;
+    symlinkPolicy?: "skip" | "copy_link" | "dereference";
+    preserveModifiedTime?: boolean;
+    preservePermissions?: boolean;
   }) {
     if (desktop) return call<TransferJob>("enqueue_transfer", { draft });
     const name = draft.sourcePath.split(/[\\/]/).pop() ?? "transfer";
@@ -642,6 +650,9 @@ export const api = {
     job.destination_path = draft.destinationPath;
     job.partial_path = `${draft.destinationPath}.siftlane-part-${job.id}`;
     job.conflict_policy = draft.conflictPolicy ?? "ask";
+    job.symlink_policy = draft.symlinkPolicy ?? "skip";
+    job.preserve_modified_time = draft.preserveModifiedTime ?? false;
+    job.preserve_permissions = draft.preservePermissions ?? false;
     const sourceEntry = demoList(
       draft.direction === "upload" ? localDemoTree : remoteDemoTree,
       demoParent(draft.sourcePath, draft.direction === "download"),
@@ -657,6 +668,9 @@ export const api = {
     destinationPath: string;
     conflictPolicy?: ConflictPolicy;
     mode: DirectoryTransferMode;
+    symlinkPolicy?: "skip" | "copy_link" | "dereference";
+    preserveModifiedTime?: boolean;
+    preservePermissions?: boolean;
   }) {
     if (desktop) return call<TransferJob[]>("enqueue_directory_transfer", { draft });
     const files = demoAllFiles(
@@ -683,15 +697,49 @@ export const api = {
           : file.path;
       job.destination_path = `${draft.destinationPath.replace(/\/+$/, "")}/${relative}`;
       job.partial_path = `${job.destination_path}.part`;
+      job.symlink_policy = draft.symlinkPolicy ?? "skip";
+      job.preserve_modified_time = draft.preserveModifiedTime ?? false;
+      job.preserve_permissions = draft.preservePermissions ?? false;
       return job;
     });
     browserTransfers = [...jobs, ...browserTransfers];
     return jobs;
   },
   controlTransfer(transferId: UUID, action: "pause" | "resume" | "cancel" | "retry") {
-    return desktop
-      ? call<TransferJob>("control_transfer", { transferId, action })
-      : Promise.resolve(browserTransfers.find((job) => job.id === transferId)!);
+    if (desktop) return call<TransferJob>("control_transfer", { transferId, action });
+    const job = browserTransfers.find((item) => item.id === transferId)!;
+    job.state = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
+    return Promise.resolve(job);
+  },
+  async controlAllTransfers(action: "pause" | "resume") {
+    if (desktop) return call<TransferJob[]>("control_all_transfers", { action });
+    browserTransfers = browserTransfers.map((job) => {
+      const matches = action === "pause"
+        ? ["running", "queued"].includes(job.state)
+        : ["paused", "interrupted"].includes(job.state);
+      return matches ? { ...job, state: action === "pause" ? "paused" : "queued" } : job;
+    }) as TransferJob[];
+    return browserTransfers;
+  },
+  async setTransferPriority(transferId: UUID, priority: "low" | "normal" | "high") {
+    if (desktop) return call<TransferJob[]>("set_transfer_priority", { transferId, priority });
+    browserTransfers = browserTransfers
+      .map((job) => job.id === transferId ? { ...job, priority } : job)
+      .sort((left, right) => ["low", "normal", "high"].indexOf(right.priority ?? "normal") - ["low", "normal", "high"].indexOf(left.priority ?? "normal"));
+    return browserTransfers;
+  },
+  async reorderTransfer(transferId: UUID, beforeTransferId: UUID | null) {
+    if (desktop) {
+      return call<TransferJob[]>("reorder_transfer", { transferId, beforeTransferId });
+    }
+    const job = browserTransfers.find((item) => item.id === transferId);
+    if (!job) return browserTransfers;
+    browserTransfers = browserTransfers.filter((item) => item.id !== transferId);
+    const index = beforeTransferId
+      ? browserTransfers.findIndex((item) => item.id === beforeTransferId)
+      : browserTransfers.length;
+    browserTransfers.splice(index < 0 ? browserTransfers.length : index, 0, job);
+    return browserTransfers;
   },
   async resolveConflict(
     transferId: UUID,
@@ -737,6 +785,13 @@ export const api = {
       response_timeout_seconds: 30,
       keepalive_seconds: 30,
       bookmark_order: {},
+      restore_sessions: true,
+      global_upload_limit_bps: null,
+      global_download_limit_bps: null,
+      profile_bandwidth_limits: {},
+      bandwidth_schedules: [],
+      temporary_bandwidth_limit: null,
+      sync_roots: {},
     } satisfies Preferences;
   },
   savePreferences(preferences: Preferences) {

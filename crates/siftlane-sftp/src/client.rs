@@ -619,6 +619,13 @@ impl RemoteFilesystem for SftpClient {
             .map_err(map_sftp_error)
     }
 
+    async fn create_symlink(&self, path: &str, target: &str) -> Result<(), AppError> {
+        self.sftp
+            .symlink(path, target)
+            .await
+            .map_err(map_sftp_error)
+    }
+
     async fn read_chunk(&self, path: &str, offset: u64, length: u32) -> Result<Vec<u8>, AppError> {
         let _guard = self.io.lock().await;
         let mut file = self.sftp.open(path).await.map_err(map_sftp_error)?;

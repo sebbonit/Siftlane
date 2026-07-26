@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RotateCcw } from "lucide-react";
 import { desktop } from "../../lib/ipc";
-import type { Preferences } from "../../types";
+import type { ConnectionProfile, Preferences } from "../../types";
 import { type SettingsCategoryId } from "./categories";
 import { SettingsPanel } from "./SettingsPanels";
 import { SettingsSidebar } from "./SettingsSidebar";
@@ -19,6 +19,13 @@ export const DEFAULT_PREFERENCES: Preferences = {
   response_timeout_seconds: 30,
   keepalive_seconds: 30,
   bookmark_order: {},
+  restore_sessions: true,
+  global_upload_limit_bps: null,
+  global_download_limit_bps: null,
+  profile_bandwidth_limits: {},
+  bandwidth_schedules: [],
+  temporary_bandwidth_limit: null,
+  sync_roots: {},
 };
 
 function preferencesEqual(left: Preferences, right: Preferences) {
@@ -33,6 +40,9 @@ function preferencesEqual(left: Preferences, right: Preferences) {
     left.connect_timeout_seconds === right.connect_timeout_seconds &&
     left.response_timeout_seconds === right.response_timeout_seconds &&
     left.keepalive_seconds === right.keepalive_seconds
+    && left.restore_sessions === right.restore_sessions
+    && left.global_upload_limit_bps === right.global_upload_limit_bps
+    && left.global_download_limit_bps === right.global_download_limit_bps
   );
 }
 
@@ -40,10 +50,12 @@ export function SettingsView({
   value,
   onBack,
   onChange,
+  profiles = [],
 }: {
   value: Preferences;
   onBack: () => void;
   onChange: (value: Preferences) => void;
+  profiles?: ConnectionProfile[];
 }) {
   const [category, setCategory] = useState<SettingsCategoryId>("general");
   const [draft, setDraft] = useState(value);
@@ -86,7 +98,7 @@ export function SettingsView({
           </button>
         </header>
         <section className="settings-content" aria-label="Settings">
-          <SettingsPanel category={category} draft={draft} onChange={commit} />
+          <SettingsPanel category={category} draft={draft} onChange={commit} profiles={profiles} />
         </section>
       </main>
     </div>

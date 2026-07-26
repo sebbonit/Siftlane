@@ -34,6 +34,12 @@ pub trait RemoteFilesystem: Send + Sync {
     async fn remove_file(&self, path: &str) -> Result<(), AppError>;
     async fn remove_directory(&self, path: &str) -> Result<(), AppError>;
     async fn set_permissions(&self, path: &str, permissions: u32) -> Result<(), AppError>;
+    async fn create_symlink(&self, _path: &str, _target: &str) -> Result<(), AppError> {
+        Err(AppError::new(
+            crate::ErrorCode::Unsupported,
+            "This protocol does not support symbolic links",
+        ))
+    }
     async fn read_chunk(&self, path: &str, offset: u64, length: u32) -> Result<Vec<u8>, AppError>;
     async fn write_chunk(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), AppError>;
     async fn sync_file(&self, path: &str) -> Result<(), AppError>;

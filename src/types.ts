@@ -67,6 +67,8 @@ export type ConnectResult =
 export type TransferDirection = "upload" | "download";
 export type ConflictPolicy = "ask" | "skip" | "overwrite" | "rename";
 export type DirectoryTransferMode = "include_root" | "contents_only";
+export type SymlinkPolicy = "skip" | "copy_link" | "dereference";
+export type TransferPriority = "low" | "normal" | "high";
 export type TransferState =
   | "queued"
   | "running"
@@ -95,6 +97,11 @@ export interface TransferJob {
   verification: TransferVerification;
   speed_bytes_per_second: number | null;
   error: string | null;
+  priority?: TransferPriority;
+  preserve_modified_time?: boolean;
+  preserve_permissions?: boolean;
+  symlink_policy?: SymlinkPolicy;
+  retry_history?: Array<{ at: string; error: string }>;
   created_at: string;
   updated_at: string;
 }
@@ -131,7 +138,50 @@ export interface Preferences {
   keepalive_seconds: number;
   /** Per-connection collapsed bookmark tile order (profile id → favorite ids). */
   bookmark_order: Record<string, string[]>;
+  restore_sessions: boolean;
+  global_upload_limit_bps: number | null;
+  global_download_limit_bps: number | null;
+  profile_bandwidth_limits: Record<
+    string,
+    { upload_bps: number | null; download_bps: number | null }
+  >;
+  bandwidth_schedules: BandwidthSchedule[];
+  temporary_bandwidth_limit: TemporaryBandwidthLimit | null;
+  sync_roots: Record<string, SyncRootPair>;
 }
+
+export interface BandwidthSchedule {
+  id: UUID;
+  label: string;
+  start_time: string;
+  end_time: string;
+  upload_bps: number | null;
+  download_bps: number | null;
+  days: number[];
+  enabled: boolean;
+}
+
+export interface TemporaryBandwidthLimit {
+  upload_bps: number | null;
+  download_bps: number | null;
+  expires_at: string;
+}
+
+export interface SyncRootPair {
+  local_root: string;
+  remote_root: string;
+  enabled: boolean;
+}
+
+export type ComparisonStatus =
+  | "same"
+  | "local_only"
+  | "remote_only"
+  | "local_newer"
+  | "remote_newer"
+  | "size_mismatch";
+
+export type SyncMode = "upload_mirror" | "download_mirror" | "two_way";
 
 export interface AppError {
   code: string;
@@ -150,6 +200,11 @@ export interface SessionTab {
   remotePath: string;
   layout: "dual_pane" | "remote_focused";
   connected: boolean;
+}
+
+export interface RestoredSessionState {
+  tabs: SessionTab[];
+  activeTabId: UUID | null;
 }
 
 export type SavedActionKind =

@@ -16,8 +16,8 @@ use serde::Deserialize;
 use siftlane_core::{
     AppError, ArchiveFormat, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind,
     ErrorCode, Favorite, FavoriteSide, FileEntry, HostKeyChallenge, Preferences, Protocol,
-    RemoteCommandResult, RemoteFilesystem, SavedAction, TransferDirection, TransferJob,
-    TransferListFilter, TransferState,
+    RemoteCommandResult, RemoteFilesystem, SavedAction, SymlinkPolicy, TransferDirection,
+    TransferJob, TransferListFilter, TransferPriority, TransferState,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
@@ -1382,6 +1382,9 @@ pub struct TransferDraft {
     pub source_path: String,
     pub destination_path: String,
     pub conflict_policy: Option<ConflictPolicy>,
+    pub symlink_policy: Option<SymlinkPolicy>,
+    pub preserve_modified_time: Option<bool>,
+    pub preserve_permissions: Option<bool>,
 }
 
 #[tauri::command]
@@ -1396,6 +1399,78 @@ pub async fn enqueue_transfer(
             "Source and destination are required",
         ));
     }
+    if draft.symlink_policy == Some(SymlinkPolicy::CopyLink) {
+        let remote = profile_client(&state, draft.profile_id).await?;
+        let target = match draft.direction {
+            TransferDirection::Upload => {
+                let metadata = std::fs::symlink_metadata(&draft.source_path).map_err(|source| {
+                    AppError::new(ErrorCode::Io, "Could not inspect local symbolic link")
+                        .with_detail(source.to_string())
+                })?;
+                metadata
+                    .file_type()
+                    .is_symlink()
+                    .then(|| {
+                        std::fs::read_link(&draft.source_path)
+                            .ok()
+                            .and_then(|path| path.to_str().map(str::to_owned))
+                    })
+                    .flatten()
+            }
+            TransferDirection::Download => remote
+                .metadata(&draft.source_path)
+                .await?
+                .filter(|entry| entry.kind == EntryKind::Symlink)
+                .and_then(|entry| entry.symlink_target),
+        };
+        if let Some(target) = target {
+            if match draft.direction {
+                TransferDirection::Upload => {
+                    remote.metadata(&draft.destination_path).await?.is_some()
+                }
+                TransferDirection::Download => Path::new(&draft.destination_path).exists(),
+            } {
+                return Err(AppError::new(
+                    ErrorCode::AlreadyExists,
+                    "Review or remove the existing destination before copying this symbolic link",
+                ));
+            }
+            match draft.direction {
+                TransferDirection::Upload => {
+                    remote
+                        .create_symlink(&draft.destination_path, &target)
+                        .await?;
+                }
+                TransferDirection::Download => {
+                    #[cfg(unix)]
+                    std::os::unix::fs::symlink(&target, &draft.destination_path).map_err(
+                        |source| {
+                            AppError::new(ErrorCode::Io, "Could not create local symbolic link")
+                                .with_detail(source.to_string())
+                        },
+                    )?;
+                    #[cfg(not(unix))]
+                    return Err(AppError::new(
+                        ErrorCode::Unsupported,
+                        "Copying symbolic links is not supported on this platform",
+                    ));
+                }
+            }
+            let mut job = TransferJob::new(
+                draft.profile_id,
+                draft.direction,
+                draft.source_path,
+                draft.destination_path,
+                Some(0),
+            );
+            job.state = TransferState::Completed;
+            job.symlink_policy = SymlinkPolicy::CopyLink;
+            let mut queue = state.transfers.lock().await;
+            queue.enqueue(job.clone());
+            state.storage.save_transfer(&job)?;
+            return Ok(job);
+        }
+    }
     let mut job = TransferJob::new(
         draft.profile_id,
         draft.direction,
@@ -1406,6 +1481,9 @@ pub async fn enqueue_transfer(
     if let Some(policy) = draft.conflict_policy {
         job.conflict_policy = policy;
     }
+    job.symlink_policy = draft.symlink_policy.unwrap_or_default();
+    job.preserve_modified_time = draft.preserve_modified_time.unwrap_or(false);
+    job.preserve_permissions = draft.preserve_permissions.unwrap_or(false);
     {
         let mut queue = state.transfers.lock().await;
         queue.enqueue(job.clone());
@@ -1424,6 +1502,9 @@ pub struct DirectoryTransferDraft {
     pub destination_path: String,
     pub conflict_policy: Option<ConflictPolicy>,
     pub mode: DirectoryTransferMode,
+    pub symlink_policy: Option<SymlinkPolicy>,
+    pub preserve_modified_time: Option<bool>,
+    pub preserve_permissions: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -1461,7 +1542,8 @@ pub async fn enqueue_directory_transfer(
             let source = PathBuf::from(&draft.source_path);
             let plan = tokio::task::spawn_blocking({
                 let destination = draft.destination_path.clone();
-                move || plan_local_directory(&source, &destination, true, mode)
+                let symlink_policy = draft.symlink_policy.unwrap_or_default();
+                move || plan_local_directory(&source, &destination, true, mode, symlink_policy)
             })
             .await
             .map_err(|source| {
@@ -1476,7 +1558,14 @@ pub async fn enqueue_directory_transfer(
             let destination = draft.destination_path.clone();
             let plan = match tokio::time::timeout(
                 std::time::Duration::from_secs(120),
-                plan_remote_directory(remote.as_ref(), &source, &destination, false, mode),
+                plan_remote_directory(
+                    remote.as_ref(),
+                    &source,
+                    &destination,
+                    false,
+                    mode,
+                    draft.symlink_policy.unwrap_or_default(),
+                ),
             )
             .await
             {
@@ -1492,6 +1581,35 @@ pub async fn enqueue_directory_transfer(
             plan
         }
     };
+    for link in &plan.symlinks {
+        match draft.direction {
+            TransferDirection::Upload => {
+                if remote.metadata(&link.destination_path).await?.is_some() {
+                    return Err(AppError::new(
+                        ErrorCode::AlreadyExists,
+                        format!("Review the existing destination {}", link.destination_path),
+                    ));
+                }
+                remote
+                    .create_symlink(&link.destination_path, &link.target)
+                    .await?;
+            }
+            TransferDirection::Download => {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&link.target, &link.destination_path).map_err(
+                    |source| {
+                        AppError::new(ErrorCode::Io, "Could not create local symbolic link")
+                            .with_detail(source.to_string())
+                    },
+                )?;
+                #[cfg(not(unix))]
+                return Err(AppError::new(
+                    ErrorCode::Unsupported,
+                    "Copying symbolic links is not supported on this platform",
+                ));
+            }
+        }
+    }
 
     let policy = draft.conflict_policy.unwrap_or(ConflictPolicy::Ask);
     let batch_id = Uuid::new_v4();
@@ -1508,6 +1626,9 @@ pub async fn enqueue_directory_transfer(
             );
             job.batch_id = Some(batch_id);
             job.conflict_policy = policy;
+            job.symlink_policy = draft.symlink_policy.unwrap_or_default();
+            job.preserve_modified_time = draft.preserve_modified_time.unwrap_or(false);
+            job.preserve_permissions = draft.preserve_permissions.unwrap_or(false);
             queue.enqueue(job.clone());
             state.storage.save_transfer(&job)?;
             jobs.push(job);
@@ -1569,13 +1690,80 @@ async fn profile_client(
         })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferAction {
     Pause,
     Resume,
     Cancel,
     Retry,
+}
+
+#[tauri::command]
+pub async fn control_all_transfers(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: TransferAction,
+) -> Result<Vec<TransferJob>, AppError> {
+    let candidates: Vec<_> = state
+        .transfers
+        .lock()
+        .await
+        .list()
+        .into_iter()
+        .filter(|job| match action {
+            TransferAction::Pause => {
+                matches!(job.state, TransferState::Running | TransferState::Queued)
+            }
+            TransferAction::Resume => matches!(
+                job.state,
+                TransferState::Paused | TransferState::Interrupted
+            ),
+            TransferAction::Cancel => !job.state.is_terminal(),
+            TransferAction::Retry => job.state == TransferState::Failed,
+        })
+        .map(|job| job.id)
+        .collect();
+    for id in candidates {
+        control_transfer(app.clone(), state.clone(), id, action).await?;
+    }
+    Ok(state.transfers.lock().await.list())
+}
+
+#[tauri::command]
+pub async fn set_transfer_priority(
+    state: State<'_, AppState>,
+    transfer_id: Uuid,
+    priority: TransferPriority,
+) -> Result<Vec<TransferJob>, AppError> {
+    let jobs = {
+        let mut queue = state.transfers.lock().await;
+        queue.set_priority(transfer_id, priority)?;
+        let job = queue.get(transfer_id).expect("transfer exists");
+        state.storage.save_transfer(job)?;
+        queue.list()
+    };
+    state
+        .transfer_scheduler
+        .set_waiting_order(&jobs.iter().map(|job| job.id).collect::<Vec<_>>());
+    Ok(jobs)
+}
+
+#[tauri::command]
+pub async fn reorder_transfer(
+    state: State<'_, AppState>,
+    transfer_id: Uuid,
+    before_transfer_id: Option<Uuid>,
+) -> Result<Vec<TransferJob>, AppError> {
+    let jobs = {
+        let mut queue = state.transfers.lock().await;
+        queue.reorder(transfer_id, before_transfer_id)?;
+        queue.list()
+    };
+    state
+        .transfer_scheduler
+        .set_waiting_order(&jobs.iter().map(|job| job.id).collect::<Vec<_>>());
+    Ok(jobs)
 }
 
 #[tauri::command]
