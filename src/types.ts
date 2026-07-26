@@ -82,7 +82,7 @@ export type ConnectResult =
   | { status: "needs_host_trust"; challenge: HostKeyChallenge }
   | { status: "needs_credential"; profile_id: UUID };
 
-export type TransferDirection = "upload" | "download";
+export type TransferDirection = "upload" | "download" | "remote_to_remote";
 export type ConflictPolicy = "ask" | "skip" | "overwrite" | "rename";
 export type DirectoryTransferMode = "include_root" | "contents_only";
 export type SymlinkPolicy = "skip" | "copy_link" | "dereference";
@@ -103,6 +103,11 @@ export interface TransferJob {
   id: UUID;
   batch_id: UUID | null;
   profile_id: UUID;
+  source_profile_id?: UUID | null;
+  source_session_id?: UUID | null;
+  destination_session_id?: UUID | null;
+  source_endpoint?: string | null;
+  destination_endpoint?: string | null;
   direction: TransferDirection;
   source_path: string;
   destination_path: string;

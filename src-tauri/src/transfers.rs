@@ -30,16 +30,22 @@ pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
                     };
                     tokio::time::sleep(delay).await;
                     let profile_id = match job_snapshot(&state, id).await {
-                        Ok(job) => job.profile_id,
+                        Ok(job) => (job.source_profile_id, job.profile_id),
                         Err(_) => break,
                     };
-                    if let Err(reconnect_error) =
-                        crate::commands::reconnect_profile_for_transfer(&app, &state, profile_id)
+                    for reconnect_id in [profile_id.0, Some(profile_id.1)].into_iter().flatten() {
+                        if let Err(reconnect_error) =
+                            crate::commands::reconnect_profile_for_transfer(
+                                &app,
+                                &state,
+                                reconnect_id,
+                            )
                             .await
-                        && !reconnect_error.retryable
-                    {
-                        let _ = fail(&app, &state, id, reconnect_error).await;
-                        break;
+                            && !reconnect_error.retryable
+                        {
+                            let _ = fail(&app, &state, id, reconnect_error).await;
+                            return;
+                        }
                     }
                 }
             }
@@ -50,12 +56,23 @@ pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
 async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppError> {
     let queued_job = job_snapshot(&state, id).await?;
     let profile = state.storage.get_profile(queued_job.profile_id)?;
-    let endpoint = format!(
+    let destination_endpoint = format!(
         "{:?}://{}:{}",
         profile.protocol,
         profile.host.to_lowercase(),
         profile.port
     );
+    let endpoint = if let Some(source_profile_id) = queued_job.source_profile_id {
+        let source = state.storage.get_profile(source_profile_id)?;
+        format!(
+            "{:?}://{}:{} -> {destination_endpoint}",
+            source.protocol,
+            source.host.to_lowercase(),
+            source.port
+        )
+    } else {
+        destination_endpoint
+    };
     let _permit = state.transfer_scheduler.acquire(id, endpoint).await;
     let job = {
         let mut queue = state.transfers.lock().await;
@@ -76,24 +93,47 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
     };
     emit(&app, &progress_from_job(job.clone()));
 
-    let remote = state
-        .sessions
-        .read()
-        .await
-        .values()
-        .find(|session| session.profile_id == job.profile_id)
+    match job.direction {
+        TransferDirection::Upload => {
+            let remote = session_client(&state, job.destination_session_id, job.profile_id).await?;
+            upload(&app, &state, remote, id).await
+        }
+        TransferDirection::Download => {
+            let remote = session_client(&state, job.source_session_id, job.profile_id).await?;
+            download(&app, &state, remote, id).await
+        }
+        TransferDirection::RemoteToRemote => {
+            let source_profile_id = job
+                .source_profile_id
+                .ok_or_else(|| AppError::new(ErrorCode::Internal, "The source route is missing"))?;
+            let source = session_client(&state, job.source_session_id, source_profile_id).await?;
+            let destination =
+                session_client(&state, job.destination_session_id, job.profile_id).await?;
+            remote_to_remote(&app, &state, source, destination, id).await
+        }
+    }
+}
+
+async fn session_client(
+    state: &AppState,
+    session_id: Option<uuid::Uuid>,
+    profile_id: uuid::Uuid,
+) -> Result<Arc<dyn RemoteFilesystem>, AppError> {
+    let sessions = state.sessions.read().await;
+    session_id
+        .and_then(|id| sessions.get(&id))
+        .or_else(|| {
+            sessions
+                .values()
+                .find(|session| session.profile_id == profile_id)
+        })
         .map(|session| session.client.clone())
         .ok_or_else(|| {
             AppError::new(
                 ErrorCode::ConnectionClosed,
-                "Reconnect the profile before resuming this transfer",
+                "Reconnect both routed sessions before resuming this transfer",
             )
-        })?;
-
-    match job.direction {
-        TransferDirection::Upload => upload(&app, &state, remote, id).await,
-        TransferDirection::Download => download(&app, &state, remote, id).await,
-    }
+        })
 }
 
 async fn prepare_retry(
@@ -263,6 +303,92 @@ async fn download(
     complete(app, state, id).await
 }
 
+async fn remote_to_remote(
+    app: &AppHandle,
+    state: &AppState,
+    source: Arc<dyn RemoteFilesystem>,
+    destination: Arc<dyn RemoteFilesystem>,
+    id: TransferId,
+) -> Result<(), AppError> {
+    let job = job_snapshot(state, id).await?;
+    let metadata = source
+        .metadata(&job.source_path)
+        .await?
+        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "The remote source no longer exists"))?;
+    let total = metadata.size.ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Unsupported,
+            "The source server did not report a file size",
+        )
+    })?;
+    set_total(state, id, total).await?;
+    if handle_remote_conflict(state, destination.as_ref(), id).await? {
+        emit_current(app, state, id).await;
+        return Ok(());
+    }
+    let job = job_snapshot(state, id).await?;
+    let mut offset = destination
+        .metadata(&job.partial_path)
+        .await?
+        .and_then(|entry| entry.size)
+        .unwrap_or(0)
+        .min(total);
+    let started = Instant::now();
+    while offset < total {
+        ensure_running(state, id).await?;
+        let requested = (total - offset).min(CHUNK_SIZE as u64) as u32;
+        throttle(state, &job, requested as usize).await;
+        let bytes = source
+            .read_chunk(&job.source_path, offset, requested)
+            .await?;
+        if bytes.is_empty() || bytes.len() > requested as usize {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                "The source returned an invalid streaming chunk",
+            ));
+        }
+        destination
+            .write_chunk(&job.partial_path, offset, &bytes)
+            .await?;
+        offset += bytes.len() as u64;
+        record_progress(app, state, id, offset, started).await?;
+    }
+    destination.sync_file(&job.partial_path).await?;
+    let destination_size = destination
+        .metadata(&job.partial_path)
+        .await?
+        .and_then(|entry| entry.size);
+    if destination_size != Some(total) {
+        return Err(verification_error(total, destination_size));
+    }
+    let verification = if total <= MAX_SHA256_VERIFICATION_BYTES {
+        let (source_hash, destination_hash) = tokio::try_join!(
+            hash_remote_file(source.as_ref(), &job.source_path, total),
+            hash_remote_file(destination.as_ref(), &job.partial_path, total)
+        )?;
+        if source_hash != destination_hash {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "SHA-256 verification failed; the destination partial file was retained",
+            ));
+        }
+        TransferVerification::Sha256Verified
+    } else {
+        TransferVerification::SizeVerified
+    };
+    set_verification(state, id, verification).await?;
+    commit_remote(state, destination.as_ref(), id).await?;
+    if job.preserve_permissions
+        && destination.capabilities().chmod
+        && let Some(permissions) = metadata.permissions
+    {
+        destination
+            .set_permissions(&job.destination_path, permissions)
+            .await?;
+    }
+    complete(app, state, id).await
+}
+
 async fn throttle(state: &AppState, job: &siftlane_core::TransferJob, bytes: usize) {
     let Ok(preferences) = state.storage.load_preferences() else {
         return;
@@ -274,6 +400,7 @@ async fn throttle(state: &AppState, job: &siftlane_core::TransferJob, bytes: usi
             match job.direction {
                 TransferDirection::Upload => "upload",
                 TransferDirection::Download => "download",
+                TransferDirection::RemoteToRemote => "remote",
             },
             job.profile_id,
             bytes,
@@ -297,16 +424,26 @@ fn bandwidth_limits(
         match job.direction {
             TransferDirection::Upload => limit.upload_bps,
             TransferDirection::Download => limit.download_bps,
+            TransferDirection::RemoteToRemote => {
+                strictest_limit(limit.upload_bps, limit.download_bps)
+            }
         }
     } else if let Some(schedule) = scheduled {
         match job.direction {
             TransferDirection::Upload => schedule.upload_bps,
             TransferDirection::Download => schedule.download_bps,
+            TransferDirection::RemoteToRemote => {
+                strictest_limit(schedule.upload_bps, schedule.download_bps)
+            }
         }
     } else {
         match job.direction {
             TransferDirection::Upload => preferences.global_upload_limit_bps,
             TransferDirection::Download => preferences.global_download_limit_bps,
+            TransferDirection::RemoteToRemote => strictest_limit(
+                preferences.global_upload_limit_bps,
+                preferences.global_download_limit_bps,
+            ),
         }
     };
     let profile = preferences
@@ -315,8 +452,19 @@ fn bandwidth_limits(
         .and_then(|limit| match job.direction {
             TransferDirection::Upload => limit.upload_bps,
             TransferDirection::Download => limit.download_bps,
+            TransferDirection::RemoteToRemote => {
+                strictest_limit(limit.upload_bps, limit.download_bps)
+            }
         });
     (global, profile)
+}
+
+fn strictest_limit(first: Option<u64>, second: Option<u64>) -> Option<u64> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.min(second)),
+        (Some(limit), None) | (None, Some(limit)) => Some(limit),
+        (None, None) => None,
+    }
 }
 
 fn active_schedule(preferences: &Preferences) -> Option<&siftlane_core::BandwidthSchedule> {
@@ -820,5 +968,17 @@ fn progress_from_job(job: siftlane_core::TransferJob) -> TransferProgress {
         retry_count: job.retry_count,
         verification: job.verification,
         error: job.error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strictest_limit;
+
+    #[test]
+    fn remote_stream_uses_the_strictest_configured_rate() {
+        assert_eq!(strictest_limit(Some(4_000), Some(2_000)), Some(2_000));
+        assert_eq!(strictest_limit(Some(4_000), None), Some(4_000));
+        assert_eq!(strictest_limit(None, None), None);
     }
 }

@@ -213,6 +213,7 @@ pub fn run() {
             crate::commands::list_transfers,
             crate::commands::clear_transfers,
             crate::commands::enqueue_transfer,
+            crate::commands::enqueue_remote_transfer,
             crate::commands::enqueue_directory_transfer,
             crate::commands::control_transfer,
             crate::commands::control_all_transfers,

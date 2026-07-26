@@ -226,6 +226,7 @@ pub enum ConnectResult {
 pub enum TransferDirection {
     Upload,
     Download,
+    RemoteToRemote,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -296,6 +297,16 @@ pub struct TransferJob {
     #[serde(default)]
     pub batch_id: Option<Uuid>,
     pub profile_id: ProfileId,
+    #[serde(default)]
+    pub source_profile_id: Option<ProfileId>,
+    #[serde(default)]
+    pub source_session_id: Option<SessionId>,
+    #[serde(default)]
+    pub destination_session_id: Option<SessionId>,
+    #[serde(default)]
+    pub source_endpoint: Option<String>,
+    #[serde(default)]
+    pub destination_endpoint: Option<String>,
     pub direction: TransferDirection,
     pub source_path: String,
     pub destination_path: String,
@@ -338,6 +349,11 @@ impl TransferJob {
             id,
             batch_id: None,
             profile_id,
+            source_profile_id: None,
+            source_session_id: None,
+            destination_session_id: None,
+            source_endpoint: None,
+            destination_endpoint: None,
             direction,
             source_path,
             destination_path,
@@ -358,6 +374,33 @@ impl TransferJob {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_remote_to_remote(
+        source_profile_id: ProfileId,
+        source_session_id: SessionId,
+        source_endpoint: String,
+        destination_profile_id: ProfileId,
+        destination_session_id: SessionId,
+        destination_endpoint: String,
+        source_path: String,
+        destination_path: String,
+        bytes_total: u64,
+    ) -> Self {
+        let mut job = Self::new(
+            destination_profile_id,
+            TransferDirection::RemoteToRemote,
+            source_path,
+            destination_path,
+            Some(bytes_total),
+        );
+        job.source_profile_id = Some(source_profile_id);
+        job.source_session_id = Some(source_session_id);
+        job.destination_session_id = Some(destination_session_id);
+        job.source_endpoint = Some(source_endpoint);
+        job.destination_endpoint = Some(destination_endpoint);
+        job
     }
 }
 

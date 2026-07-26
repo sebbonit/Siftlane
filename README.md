@@ -28,6 +28,8 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Recursive local and remote filename search from the session header
 - Upload/download queue with progress, pause, cancel, bounded automatic retry, conflict prompts,
   Keep Both, partial files, restart recovery, integrity verification, and recursive directory transfers
+- Remote-to-remote file copies between two open sessions, streamed through the client with bounded
+  memory, explicit routing, resumable partials, integrity verification, and atomic destination commit
 - Queue-wide pause/resume, transfer priorities, drag ordering, per-job and overall ETA, remaining
   bytes, and a detail drawer with timestamps, retry history, partial paths, and errors
 - Global and per-profile upload/download rate limits, reusable time schedules, and temporary
@@ -62,6 +64,23 @@ For a remote UTF-8 text file, choose **Edit in external editor** from its contex
    root automatically when Siftlane exits.
 
 ![External-editor save diff and upload confirmation](docs/images/native-external-edit-review.png)
+
+## Remote-to-remote transfers
+
+Select one or more regular files in a remote pane and choose **Copy to session…**. The route review
+names both open sessions and every source/destination path before anything is queued. Choose how
+destination conflicts should be handled, then start the copy without creating a manually managed
+local download.
+
+![Remote-to-remote route review](docs/images/remote-to-remote-route.jpg)
+
+The initial implementation streams through the desktop client in chunks no larger than 256 KB, so
+memory use stays bounded regardless of file size. Interrupted copies resume from a uniquely named
+destination partial. Siftlane verifies the resulting size (and SHA-256 for files up to 64 MB) before
+an atomic rename; overwrite uses the same backup-and-rename safety sequence as uploads. The queue
+keeps the source and destination endpoints visible throughout the transfer.
+
+![Remote-to-remote transfer in the queue](docs/images/remote-to-remote-queue.jpg)
 
 ## Synchronization and queue workflows
 

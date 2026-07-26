@@ -1401,6 +1401,12 @@ pub async fn enqueue_transfer(
     state: State<'_, AppState>,
     draft: TransferDraft,
 ) -> Result<TransferJob, AppError> {
+    if draft.direction == TransferDirection::RemoteToRemote {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Use the remote-to-remote transfer command for two remote sessions",
+        ));
+    }
     if draft.source_path.is_empty() || draft.destination_path.is_empty() {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
@@ -1430,6 +1436,7 @@ pub async fn enqueue_transfer(
                 .await?
                 .filter(|entry| entry.kind == EntryKind::Symlink)
                 .and_then(|entry| entry.symlink_target),
+            TransferDirection::RemoteToRemote => None,
         };
         if let Some(target) = target {
             if match draft.direction {
@@ -1437,6 +1444,7 @@ pub async fn enqueue_transfer(
                     remote.metadata(&draft.destination_path).await?.is_some()
                 }
                 TransferDirection::Download => Path::new(&draft.destination_path).exists(),
+                TransferDirection::RemoteToRemote => false,
             } {
                 return Err(AppError::new(
                     ErrorCode::AlreadyExists,
@@ -1463,6 +1471,7 @@ pub async fn enqueue_transfer(
                         "Copying symbolic links is not supported on this platform",
                     ));
                 }
+                TransferDirection::RemoteToRemote => unreachable!(),
             }
             let mut job = TransferJob::new(
                 draft.profile_id,
@@ -1492,6 +1501,94 @@ pub async fn enqueue_transfer(
     job.symlink_policy = draft.symlink_policy.unwrap_or_default();
     job.preserve_modified_time = draft.preserve_modified_time.unwrap_or(false);
     job.preserve_permissions = draft.preserve_permissions.unwrap_or(false);
+    {
+        let mut queue = state.transfers.lock().await;
+        queue.enqueue(job.clone());
+        state.storage.save_transfer(&job)?;
+    }
+    crate::transfers::spawn(app, state.inner().clone(), job.id);
+    Ok(job)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteTransferDraft {
+    pub source_session_id: Uuid,
+    pub destination_session_id: Uuid,
+    pub source_path: String,
+    pub destination_path: String,
+    pub conflict_policy: Option<ConflictPolicy>,
+}
+
+#[tauri::command]
+pub async fn enqueue_remote_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: RemoteTransferDraft,
+) -> Result<TransferJob, AppError> {
+    if draft.source_session_id == draft.destination_session_id {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Choose a different destination session",
+        ));
+    }
+    let source_path = normalize_remote_path(&draft.source_path)?;
+    let destination_path = normalize_remote_path(&draft.destination_path)?;
+    let (source, destination) = {
+        let sessions = state.sessions.read().await;
+        let source = sessions
+            .get(&draft.source_session_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCode::ConnectionClosed,
+                    "The source session is disconnected",
+                )
+            })?;
+        let destination = sessions
+            .get(&draft.destination_session_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCode::ConnectionClosed,
+                    "The destination session is disconnected",
+                )
+            })?;
+        (source, destination)
+    };
+    let metadata =
+        source.client.metadata(&source_path).await?.ok_or_else(|| {
+            AppError::new(ErrorCode::NotFound, "The source file no longer exists")
+        })?;
+    if metadata.kind != EntryKind::File {
+        return Err(AppError::new(
+            ErrorCode::Unsupported,
+            "Remote-to-remote transfer currently supports regular files",
+        ));
+    }
+    let bytes_total = metadata.size.ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Unsupported,
+            "The source server did not report a file size",
+        )
+    })?;
+    let source_profile = state.storage.get_profile(source.profile_id)?;
+    let destination_profile = state.storage.get_profile(destination.profile_id)?;
+    let endpoint = |profile: &ConnectionProfile| {
+        format!("{} ({}:{})", profile.label, profile.host, profile.port)
+    };
+    let mut job = TransferJob::new_remote_to_remote(
+        source.profile_id,
+        draft.source_session_id,
+        endpoint(&source_profile),
+        destination.profile_id,
+        draft.destination_session_id,
+        endpoint(&destination_profile),
+        source_path,
+        destination_path,
+        bytes_total,
+    );
+    job.conflict_policy = draft.conflict_policy.unwrap_or(ConflictPolicy::Ask);
     {
         let mut queue = state.transfers.lock().await;
         queue.enqueue(job.clone());
@@ -1537,6 +1634,12 @@ pub async fn enqueue_directory_transfer(
     state: State<'_, AppState>,
     draft: DirectoryTransferDraft,
 ) -> Result<Vec<TransferJob>, AppError> {
+    if draft.direction == TransferDirection::RemoteToRemote {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Remote directory transfers are not supported yet",
+        ));
+    }
     if draft.source_path.is_empty() || draft.destination_path.is_empty() {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
@@ -1588,6 +1691,7 @@ pub async fn enqueue_directory_transfer(
             ensure_local_directories(&plan)?;
             plan
         }
+        TransferDirection::RemoteToRemote => unreachable!(),
     };
     for link in &plan.symlinks {
         match draft.direction {
@@ -1616,6 +1720,7 @@ pub async fn enqueue_directory_transfer(
                     "Copying symbolic links is not supported on this platform",
                 ));
             }
+            TransferDirection::RemoteToRemote => unreachable!(),
         }
     }
 
