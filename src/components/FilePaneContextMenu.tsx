@@ -1,5 +1,6 @@
 import {
   Download,
+  ExternalLink,
   FileEdit,
   FilePlus2,
   FolderOpen,
@@ -25,6 +26,7 @@ export function FilePaneContextMenu({
   onTransfer,
   onOpenFile,
   onOpenPrivileged,
+  onEditExternal,
   onCreateFile,
   onCreateFilePrivileged,
   onCreateDirectory,
@@ -43,6 +45,7 @@ export function FilePaneContextMenu({
   onTransfer?: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
   onOpenPrivileged?: (entry: FileEntry) => void;
+  onEditExternal?: (entry: FileEntry) => void;
   onCreateFile: () => void;
   onCreateFilePrivileged?: () => void;
   onCreateDirectory: () => void;
@@ -81,6 +84,12 @@ export function FilePaneContextMenu({
             <button onClick={() => run(() => onOpenPrivileged(entry))}>
               <LockKeyhole size={14} />
               Edit with sudo
+            </button>
+          )}
+          {!isImageFile(entry.name) && onEditExternal && (
+            <button onClick={() => run(() => onEditExternal(entry))}>
+              <ExternalLink size={14} />
+              Edit in external editor
             </button>
           )}
           <i />

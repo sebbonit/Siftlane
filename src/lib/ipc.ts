@@ -2,7 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { homeDir } from "@tauri-apps/api/path";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppError,
   ArchiveFormat,
@@ -13,6 +13,9 @@ import type {
   Favorite,
   FileEntry,
   EditableFile,
+  ExternalEditChange,
+  ExternalEditChanged,
+  ExternalEditStarted,
   Preferences,
   PreviewFile,
   RemoteCommandResult,
@@ -91,6 +94,11 @@ let browserTransfers: TransferJob[] = demoMode
   : [];
 let browserSavedActions: SavedAction[] = [];
 let browserFavorites: Favorite[] = [];
+const browserExternalEdits = new Map<
+  UUID,
+  ExternalEditStarted & { original_content: string; modified_content: string }
+>();
+const browserExternalEditListeners = new Set<(event: ExternalEditChanged) => void>();
 
 function demoEntry(
   base: string,
@@ -446,6 +454,89 @@ export const api = {
   async revealInFileManager(path: string) {
     if (!desktop) return;
     await revealItemInDir(path);
+  },
+  async inspectLocalPath(path: string) {
+    if (desktop) return call<FileEntry>("inspect_local_path", { path });
+    const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+    return {
+      ...browserEntry(path.replace(/[\\/][^\\/]+$/, ""), name, false),
+      path,
+      size: 1024,
+    };
+  },
+  async beginExternalEdit(sessionId: UUID, path: string) {
+    if (desktop) {
+      return call<ExternalEditStarted>("begin_external_edit", { sessionId, path });
+    }
+    void sessionId;
+    const file = demoFile(path);
+    const edit: ExternalEditStarted & {
+      original_content: string;
+      modified_content: string;
+    } = {
+      edit_id: crypto.randomUUID(),
+      remote_path: path,
+      name: file.name,
+      local_path: `/tmp/siftlane-demo/${file.name}`,
+      original_content: file.content,
+      modified_content: file.content,
+    };
+    browserExternalEdits.set(edit.edit_id, edit);
+    window.setTimeout(() => {
+      const active = browserExternalEdits.get(edit.edit_id);
+      if (!active) return;
+      active.modified_content = active.original_content.replace(
+        "Edit this remote file",
+        "Deploy the reviewed external edit",
+      );
+      for (const listener of browserExternalEditListeners) {
+        listener({
+          edit_id: active.edit_id,
+          remote_path: active.remote_path,
+          name: active.name,
+        });
+      }
+    }, 650);
+    return edit;
+  },
+  async openExternalEdit(path: string) {
+    if (desktop) await openPath(path);
+  },
+  async getExternalEditChange(editId: UUID) {
+    if (desktop) {
+      return call<ExternalEditChange>("get_external_edit_change", { editId });
+    }
+    const edit = browserExternalEdits.get(editId);
+    if (!edit) {
+      throw {
+        code: "not_found",
+        message: "The external edit is no longer active",
+        retryable: false,
+      } satisfies AppError;
+    }
+    return edit;
+  },
+  async commitExternalEdit(editId: UUID) {
+    if (desktop) return call<void>("commit_external_edit", { editId });
+    const edit = browserExternalEdits.get(editId);
+    if (edit) edit.original_content = edit.modified_content;
+  },
+  async endExternalEdit(editId: UUID) {
+    if (desktop) return call<void>("end_external_edit", { editId });
+    browserExternalEdits.delete(editId);
+  },
+  async onExternalEditChanged(
+    callback: (event: ExternalEditChanged) => void,
+  ): Promise<UnlistenFn> {
+    if (desktop) {
+      return listen<ExternalEditChanged>("external-edit-changed", ({ payload }) =>
+        callback(payload),
+      );
+    }
+    browserExternalEditListeners.add(callback);
+    return () => {
+      browserExternalEditListeners.delete(callback);
+    };
   },
   async listProfiles() {
     return desktop ? call<ConnectionProfile[]>("list_profiles") : browserProfiles;

@@ -59,6 +59,7 @@ export function FilePane({
   onRemovePrivileged,
   onOpenFile,
   onOpenPrivileged,
+  onEditExternal,
   onShowInfo,
   onRevealInFileManager,
   onTransfer,
@@ -68,6 +69,9 @@ export function FilePane({
   onToggleBookmark,
   comparisonByName,
   warning,
+  nativeDropActive = false,
+  nativeDropCount = 0,
+  nativeDropDestination,
 }: {
   title: string;
   subtitle?: string;
@@ -91,6 +95,7 @@ export function FilePane({
   onRemovePrivileged?: (entry: FileEntry) => void;
   onOpenFile: (entry: FileEntry) => void;
   onOpenPrivileged?: (entry: FileEntry) => void;
+  onEditExternal?: (entry: FileEntry) => void;
   onShowInfo: (entry: FileEntry) => void;
   onRevealInFileManager?: (path: string) => void;
   onTransfer?: (entry: FileEntry) => void;
@@ -100,6 +105,9 @@ export function FilePane({
   onToggleBookmark?: () => void;
   comparisonByName?: Record<string, ComparisonStatus>;
   warning?: string | null;
+  nativeDropActive?: boolean;
+  nativeDropCount?: number;
+  nativeDropDestination?: string;
 }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -194,7 +202,7 @@ export function FilePane({
 
   return (
     <section
-      className={`file-pane${dnd.dragOverPane ? " is-drop-target" : ""}`}
+      className={`file-pane${dnd.dragOverPane || nativeDropActive ? " is-drop-target" : ""}`}
       aria-label={`${title} files`}
       data-pane-side={side}
       data-pane-path={path}
@@ -282,6 +290,15 @@ export function FilePane({
         </label>
       </div>
       <div className="file-table" role="table">
+        {nativeDropActive && (
+          <div className="native-drop-hint" role="status">
+            <strong>Upload to {nativeDropDestination ?? path}</strong>
+            <span>
+              Drop {nativeDropCount || "selected"} item{nativeDropCount === 1 ? "" : "s"} from your
+              computer
+            </span>
+          </div>
+        )}
         {warning && <div className="pane-warning">{warning}</div>}
         <div className="file-header" role="row">
           {SORT_COLUMNS.map((column) => (
@@ -342,6 +359,7 @@ export function FilePane({
           onClose={() => setContextMenu(null)}
           onOpenFile={onOpenFile}
           onOpenPrivileged={onOpenPrivileged}
+          onEditExternal={onEditExternal}
           onCreateFile={onCreateFile}
           onCreateFilePrivileged={onCreateFilePrivileged}
           onCreateDirectory={onCreateDirectory}
