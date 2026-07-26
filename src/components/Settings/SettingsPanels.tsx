@@ -160,6 +160,25 @@ function TransfersPanel({
           <span />
         </span>
       </SettingsRow>
+      <SettingsRow
+        label="Automatic retries"
+        description="Retry transient network failures before requiring attention."
+        htmlFor="settings-automatic-retries"
+      >
+        <input
+          id="settings-automatic-retries"
+          type="number"
+          min={0}
+          max={10}
+          value={draft.automatic_retry_limit}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              automatic_retry_limit: Number(event.target.value),
+            })
+          }
+        />
+      </SettingsRow>
     </SettingsList>
   );
 }

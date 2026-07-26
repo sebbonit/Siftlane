@@ -20,6 +20,7 @@ import {
 } from "../lib/transferFilters";
 import { useAppStore } from "../store";
 import type { TransferJob } from "../types";
+import { TransferConflictDialog } from "./TransferConflictDialog";
 
 const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
 
@@ -30,11 +31,29 @@ function transferRoute(job: TransferJob): string {
     : `${job.destination_path} < ${job.source_path}`;
 }
 
+function transferStatus(job: TransferJob): string {
+  if (job.error) return job.error;
+  if (job.state === "completed" && job.verification === "sha256_verified") {
+    return "Completed · SHA-256 verified";
+  }
+  if (job.state === "completed" && job.verification === "size_verified") {
+    return "Completed · Size verified";
+  }
+  return capitalize(job.state.replaceAll("_", " "));
+}
+
 export function TransferPanel() {
   const { transfers, transferPanelOpen, toggleTransfers, setTransfers } = useAppStore();
   const [filter, setFilter] = useState<TransferFilter>("all");
   const filtered = transfers.filter((job) => matchesTransferFilter(job, filter));
   const clearableCount = countTransferFilter(transfers, filter);
+  const conflict = transfers.find((job) => job.state === "waiting_for_conflict") ?? null;
+  const batchRemaining =
+    conflict?.batch_id == null
+      ? 1
+      : transfers.filter(
+          (job) => job.batch_id === conflict.batch_id && !["completed", "cancelled"].includes(job.state),
+        ).length;
 
   async function act(job: TransferJob, action: "pause" | "resume" | "cancel" | "retry") {
     const updated = await api.controlTransfer(job.id, action);
@@ -47,7 +66,20 @@ export function TransferPanel() {
     setTransfers(remaining);
   }
 
+  async function resolveConflict(
+    policy: "skip" | "overwrite" | "rename",
+    applyToBatch: boolean,
+  ) {
+    if (!conflict) return;
+    const updated = await api.resolveConflict(conflict.id, policy, applyToBatch);
+    const ids = new Set(updated.map((job) => job.id));
+    setTransfers([...updated, ...transfers.filter((job) => !ids.has(job.id))], {
+      expandOnNew: false,
+    });
+  }
+
   return (
+    <>
     <section className={`transfer-panel ${transferPanelOpen ? "open" : "closed"}`}>
       <header className="transfer-heading">
         <button className="transfer-title" onClick={toggleTransfers}>
@@ -123,7 +155,7 @@ export function TransferPanel() {
                 </span>
                 <span className={`state ${job.state}`}>
                   <i />
-                  {job.error ?? capitalize(job.state.replaceAll("_", " "))}
+                  {transferStatus(job)}
                 </span>
                 <span className="row-actions">
                   {job.state === "running" && (
@@ -158,5 +190,14 @@ export function TransferPanel() {
         </div>
       )}
     </section>
+    {conflict && (
+      <TransferConflictDialog
+        key={conflict.id}
+        job={conflict}
+        batchRemaining={batchRemaining}
+        onResolve={resolveConflict}
+      />
+    )}
+    </>
   );
 }

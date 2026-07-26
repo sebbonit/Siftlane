@@ -77,9 +77,11 @@ export type TransferState =
   | "failed"
   | "cancelled"
   | "interrupted";
+export type TransferVerification = "pending" | "size_verified" | "sha256_verified";
 
 export interface TransferJob {
   id: UUID;
+  batch_id: UUID | null;
   profile_id: UUID;
   direction: TransferDirection;
   source_path: string;
@@ -90,6 +92,7 @@ export interface TransferJob {
   state: TransferState;
   conflict_policy: ConflictPolicy;
   retry_count: number;
+  verification: TransferVerification;
   speed_bytes_per_second: number | null;
   error: string | null;
   created_at: string;
@@ -102,6 +105,8 @@ export interface TransferProgress {
   bytes_transferred: number;
   bytes_total: number | null;
   speed_bytes_per_second: number | null;
+  retry_count: number;
+  verification: TransferVerification;
   error: string | null;
 }
 
@@ -120,6 +125,7 @@ export interface Preferences {
   global_parallel_transfers: number;
   per_host_parallel_transfers: number;
   expand_transfers_on_new: boolean;
+  automatic_retry_limit: number;
   connect_timeout_seconds: number;
   response_timeout_seconds: number;
   keepalive_seconds: number;

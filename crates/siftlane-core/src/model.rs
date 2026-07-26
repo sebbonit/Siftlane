@@ -251,6 +251,15 @@ pub enum TransferState {
     Interrupted,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferVerification {
+    #[default]
+    Pending,
+    SizeVerified,
+    Sha256Verified,
+}
+
 impl TransferState {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
@@ -260,6 +269,8 @@ impl TransferState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TransferJob {
     pub id: TransferId,
+    #[serde(default)]
+    pub batch_id: Option<Uuid>,
     pub profile_id: ProfileId,
     pub direction: TransferDirection,
     pub source_path: String,
@@ -270,6 +281,8 @@ pub struct TransferJob {
     pub state: TransferState,
     pub conflict_policy: ConflictPolicy,
     pub retry_count: u8,
+    #[serde(default)]
+    pub verification: TransferVerification,
     pub speed_bytes_per_second: Option<u64>,
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -289,6 +302,7 @@ impl TransferJob {
         let now = Utc::now();
         Self {
             id,
+            batch_id: None,
             profile_id,
             direction,
             source_path,
@@ -299,6 +313,7 @@ impl TransferJob {
             state: TransferState::Queued,
             conflict_policy: ConflictPolicy::Ask,
             retry_count: 0,
+            verification: TransferVerification::Pending,
             speed_bytes_per_second: None,
             error: None,
             created_at: now,
@@ -314,11 +329,17 @@ pub struct TransferProgress {
     pub bytes_transferred: u64,
     pub bytes_total: Option<u64>,
     pub speed_bytes_per_second: Option<u64>,
+    pub retry_count: u8,
+    pub verification: TransferVerification,
     pub error: Option<String>,
 }
 
 fn default_expand_transfers_on_new() -> bool {
     true
+}
+
+fn default_automatic_retry_limit() -> u8 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -330,6 +351,8 @@ pub struct Preferences {
     pub per_host_parallel_transfers: u8,
     #[serde(default = "default_expand_transfers_on_new")]
     pub expand_transfers_on_new: bool,
+    #[serde(default = "default_automatic_retry_limit")]
+    pub automatic_retry_limit: u8,
     pub connect_timeout_seconds: u64,
     pub response_timeout_seconds: u64,
     pub keepalive_seconds: u64,
@@ -347,6 +370,7 @@ impl Default for Preferences {
             global_parallel_transfers: 3,
             per_host_parallel_transfers: 2,
             expand_transfers_on_new: true,
+            automatic_retry_limit: 3,
             connect_timeout_seconds: 15,
             response_timeout_seconds: 30,
             keepalive_seconds: 30,

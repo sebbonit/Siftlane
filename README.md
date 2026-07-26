@@ -16,7 +16,8 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
 - Recursive local and remote filename search from the session header
-- Upload/download queue with progress, pause, cancel, retry, conflict prompts, partial files, restart recovery, and recursive directory transfers
+- Upload/download queue with progress, pause, cancel, bounded automatic retry, conflict prompts,
+  Keep Both, partial files, restart recovery, integrity verification, and recursive directory transfers
 - Remote create, rename, delete, and POSIX permission operations
 - Explicit sudo editing for protected local Unix files and SFTP files
 - Persistent preferences, window state, transfer history, and recent connections
@@ -103,6 +104,8 @@ If you do not have a paid Apple Developer account, create a local signing identi
 Protected-file operations use the existing SSH identity (including private keys and SSH agents) for connection authentication, then check the remote account's sudo policy separately. Siftlane probes `sudo -n` for `NOPASSWD` access and otherwise prompts for the account's sudo password for the immediate read, write, create, or delete operation; it never stores or logs that password. A terminal that does not prompt may be using a cached sudo timestamp, which is not shared with Siftlane's non-interactive SSH channel. Server administrators must configure an appropriate `NOPASSWD` policy when passwordless file operations are required.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/architecture.md](docs/architecture.md) for more detail.
+Release maintainers should also follow [docs/integration-testing.md](docs/integration-testing.md)
+and [docs/release-security.md](docs/release-security.md).
 
 ## License
 

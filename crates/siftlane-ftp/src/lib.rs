@@ -487,7 +487,12 @@ fn map_ftp_error(error: FtpError) -> AppError {
         ErrorCode::NotFound => "The remote FTP path was not found",
         _ => "The FTP server could not complete the operation",
     };
-    AppError::new(code, message).with_detail(error.to_string())
+    let app_error = AppError::new(code, message).with_detail(error.to_string());
+    if code == ErrorCode::ConnectionFailed {
+        app_error.retryable()
+    } else {
+        app_error
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,13 @@
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
+use sha2::{Digest, Sha256};
 use siftlane_core::{
     AppError, ConflictPolicy, ErrorCode, RemoteFilesystem, TransferDirection, TransferId,
-    TransferProgress, TransferState,
+    TransferProgress, TransferState, TransferVerification,
 };
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -10,20 +15,47 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use crate::state::AppState;
 
 const CHUNK_SIZE: usize = 256 * 1024;
+const MAX_SHA256_VERIFICATION_BYTES: u64 = 64 * 1024 * 1024;
 
 pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run(app.clone(), state.clone(), id).await {
-            let _ = fail(&app, &state, id, error).await;
+        loop {
+            match run(app.clone(), state.clone(), id).await {
+                Ok(()) => break,
+                Err(error) => {
+                    let Some(delay) = prepare_retry(&app, &state, id, &error).await else {
+                        let _ = fail(&app, &state, id, error).await;
+                        break;
+                    };
+                    tokio::time::sleep(delay).await;
+                    let profile_id = match job_snapshot(&state, id).await {
+                        Ok(job) => job.profile_id,
+                        Err(_) => break,
+                    };
+                    if let Err(reconnect_error) =
+                        crate::commands::reconnect_profile_for_transfer(&app, &state, profile_id)
+                            .await
+                        && !reconnect_error.retryable
+                    {
+                        let _ = fail(&app, &state, id, reconnect_error).await;
+                        break;
+                    }
+                }
+            }
         }
     });
 }
 
 async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppError> {
-    let _slot =
-        state.transfer_slots.acquire().await.map_err(|_| {
-            AppError::new(ErrorCode::Internal, "The transfer scheduler has stopped")
-        })?;
+    let queued_job = job_snapshot(&state, id).await?;
+    let profile = state.storage.get_profile(queued_job.profile_id)?;
+    let endpoint = format!(
+        "{:?}://{}:{}",
+        profile.protocol,
+        profile.host.to_lowercase(),
+        profile.port
+    );
+    let _permit = state.transfer_scheduler.acquire(id, endpoint).await;
     let job = {
         let mut queue = state.transfers.lock().await;
         let job = queue
@@ -35,6 +67,7 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
             TransferState::Queued | TransferState::Interrupted
         ) {
             queue.transition(id, TransferState::Running)?;
+            queue.set_error(id, None)?;
         }
         let updated = queue.get(id).cloned().expect("transfer exists");
         state.storage.save_transfer(&updated)?;
@@ -62,6 +95,42 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
     }
 }
 
+async fn prepare_retry(
+    app: &AppHandle,
+    state: &AppState,
+    id: TransferId,
+    error: &AppError,
+) -> Option<Duration> {
+    if !error.retryable {
+        return None;
+    }
+    let limit = state.storage.load_preferences().ok()?.automatic_retry_limit;
+    let mut queue = state.transfers.lock().await;
+    let job = queue.get(id)?.clone();
+    if job.state != TransferState::Running || job.retry_count >= limit {
+        return None;
+    }
+    let attempt = job.retry_count.saturating_add(1);
+    let delay_seconds = 2_u64
+        .saturating_pow(u32::from(attempt.saturating_sub(1)))
+        .min(30);
+    queue.transition(id, TransferState::Interrupted).ok()?;
+    queue.increment_retry(id).ok()?;
+    queue
+        .set_error(
+            id,
+            Some(format!(
+                "{} Retrying in {delay_seconds}s ({attempt}/{limit}).",
+                error.message
+            )),
+        )
+        .ok()?;
+    let updated = queue.get(id)?.clone();
+    state.storage.save_transfer(&updated).ok()?;
+    emit(app, &progress_from_job(updated));
+    Some(Duration::from_secs(delay_seconds))
+}
+
 async fn upload(
     app: &AppHandle,
     state: &AppState,
@@ -77,6 +146,7 @@ async fn upload(
         emit_current(app, state, id).await;
         return Ok(());
     }
+    let job = job_snapshot(state, id).await?;
 
     let partial_size = remote
         .metadata(&job.partial_path)
@@ -107,6 +177,7 @@ async fn upload(
         record_progress(app, state, id, offset, started).await?;
     }
     remote.sync_file(&job.partial_path).await?;
+    verify_upload(state, remote.as_ref(), id, source_metadata.len()).await?;
     commit_remote(state, remote.as_ref(), id).await?;
     complete(app, state, id).await
 }
@@ -133,6 +204,7 @@ async fn download(
         emit_current(app, state, id).await;
         return Ok(());
     }
+    let job = job_snapshot(state, id).await?;
     if let Some(parent) = Path::new(&job.partial_path).parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -180,8 +252,138 @@ async fn download(
     destination.flush().await.map_err(local_io_error)?;
     destination.sync_all().await.map_err(local_io_error)?;
     drop(destination);
+    verify_download(state, remote.as_ref(), id, total).await?;
     commit_local(state, id).await?;
     complete(app, state, id).await
+}
+
+async fn verify_upload(
+    state: &AppState,
+    remote: &dyn RemoteFilesystem,
+    id: TransferId,
+    expected_size: u64,
+) -> Result<(), AppError> {
+    let job = job_snapshot(state, id).await?;
+    let remote_size = remote
+        .metadata(&job.partial_path)
+        .await?
+        .and_then(|entry| entry.size);
+    if remote_size != Some(expected_size) {
+        return Err(verification_error(expected_size, remote_size));
+    }
+    let verification = if expected_size <= MAX_SHA256_VERIFICATION_BYTES {
+        let (local_hash, remote_hash) = tokio::try_join!(
+            hash_local_file(&job.source_path),
+            hash_remote_file(remote, &job.partial_path, expected_size)
+        )?;
+        if local_hash != remote_hash {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "SHA-256 verification failed; the uploaded partial file was retained",
+            ));
+        }
+        TransferVerification::Sha256Verified
+    } else {
+        TransferVerification::SizeVerified
+    };
+    set_verification(state, id, verification).await
+}
+
+async fn verify_download(
+    state: &AppState,
+    remote: &dyn RemoteFilesystem,
+    id: TransferId,
+    expected_size: u64,
+) -> Result<(), AppError> {
+    let job = job_snapshot(state, id).await?;
+    let local_size = tokio::fs::metadata(&job.partial_path)
+        .await
+        .map_err(local_io_error)?
+        .len();
+    let remote_size = remote
+        .metadata(&job.source_path)
+        .await?
+        .and_then(|entry| entry.size);
+    if local_size != expected_size || remote_size != Some(expected_size) {
+        return Err(verification_error(expected_size, remote_size));
+    }
+    let verification = if expected_size <= MAX_SHA256_VERIFICATION_BYTES {
+        let (local_hash, remote_hash) = tokio::try_join!(
+            hash_local_file(&job.partial_path),
+            hash_remote_file(remote, &job.source_path, expected_size)
+        )?;
+        if local_hash != remote_hash {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "SHA-256 verification failed; the downloaded partial file was retained",
+            ));
+        }
+        TransferVerification::Sha256Verified
+    } else {
+        TransferVerification::SizeVerified
+    };
+    set_verification(state, id, verification).await
+}
+
+async fn hash_local_file(path: &str) -> Result<[u8; 32], AppError> {
+    let mut file = tokio::fs::File::open(path).await.map_err(local_io_error)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; CHUNK_SIZE];
+    loop {
+        let count = file.read(&mut buffer).await.map_err(local_io_error)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+async fn hash_remote_file(
+    remote: &dyn RemoteFilesystem,
+    path: &str,
+    expected_size: u64,
+) -> Result<[u8; 32], AppError> {
+    let mut hasher = Sha256::new();
+    let mut offset = 0;
+    while offset < expected_size {
+        let remaining = (expected_size - offset).min(CHUNK_SIZE as u64) as u32;
+        let bytes = remote.read_chunk(path, offset, remaining).await?;
+        if bytes.is_empty() {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                "The remote file ended during integrity verification",
+            ));
+        }
+        offset += bytes.len() as u64;
+        hasher.update(bytes);
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn verification_error(expected_size: u64, actual_size: Option<u64>) -> AppError {
+    AppError::new(
+        ErrorCode::Conflict,
+        "Size verification failed; the partial file was retained",
+    )
+    .with_detail(format!(
+        "Expected {expected_size} bytes, found {}",
+        actual_size
+            .map(|size| size.to_string())
+            .unwrap_or_else(|| "an unknown size".into())
+    ))
+}
+
+async fn set_verification(
+    state: &AppState,
+    id: TransferId,
+    verification: TransferVerification,
+) -> Result<(), AppError> {
+    let mut queue = state.transfers.lock().await;
+    queue.set_verification(id, verification)?;
+    state
+        .storage
+        .save_transfer(queue.get(id).expect("transfer exists"))
 }
 
 async fn handle_remote_conflict(
@@ -203,10 +405,12 @@ async fn handle_remote_conflict(
             Ok(true)
         }
         ConflictPolicy::Overwrite => Ok(false),
-        ConflictPolicy::Rename => Err(AppError::new(
-            ErrorCode::Unsupported,
-            "Choose a new destination name before resuming the transfer",
-        )),
+        ConflictPolicy::Rename => {
+            let destination =
+                next_available_remote_destination(remote, &job.destination_path).await?;
+            update_destination(state, id, destination).await?;
+            Ok(false)
+        }
     }
 }
 
@@ -228,11 +432,69 @@ async fn handle_local_conflict(state: &AppState, id: TransferId) -> Result<bool,
             Ok(true)
         }
         ConflictPolicy::Overwrite => Ok(false),
-        ConflictPolicy::Rename => Err(AppError::new(
-            ErrorCode::Unsupported,
-            "Choose a new destination name before resuming the transfer",
-        )),
+        ConflictPolicy::Rename => {
+            let destination = next_available_local_destination(&job.destination_path).await?;
+            update_destination(state, id, destination).await?;
+            Ok(false)
+        }
     }
+}
+
+async fn next_available_remote_destination(
+    remote: &dyn RemoteFilesystem,
+    destination: &str,
+) -> Result<String, AppError> {
+    for index in 2..=10_000 {
+        let candidate = numbered_destination(destination, index);
+        if remote.metadata(&candidate).await?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::new(
+        ErrorCode::Conflict,
+        "Could not find an available destination name",
+    ))
+}
+
+async fn next_available_local_destination(destination: &str) -> Result<String, AppError> {
+    for index in 2..=10_000 {
+        let candidate = numbered_destination(destination, index);
+        if !tokio::fs::try_exists(&candidate)
+            .await
+            .map_err(local_io_error)?
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::new(
+        ErrorCode::Conflict,
+        "Could not find an available destination name",
+    ))
+}
+
+fn numbered_destination(destination: &str, index: usize) -> String {
+    let separator = destination
+        .rfind(['/', '\\'])
+        .map_or(0, |position| position + 1);
+    let (parent, name) = destination.split_at(separator);
+    let extension = name
+        .rfind('.')
+        .filter(|position| *position > 0)
+        .unwrap_or(name.len());
+    let (stem, suffix) = name.split_at(extension);
+    format!("{parent}{stem} ({index}){suffix}")
+}
+
+async fn update_destination(
+    state: &AppState,
+    id: TransferId,
+    destination: String,
+) -> Result<(), AppError> {
+    let mut queue = state.transfers.lock().await;
+    queue.update_destination(id, destination)?;
+    state
+        .storage
+        .save_transfer(queue.get(id).expect("transfer exists"))
 }
 
 async fn commit_remote(
@@ -354,8 +616,14 @@ async fn fail(
         return Ok(());
     }
     queue.set_error(id, Some(error.message.clone()))?;
-    if current == Some(TransferState::Running) {
-        let next = if error.code == ErrorCode::ConnectionClosed {
+    if matches!(
+        current,
+        Some(TransferState::Running | TransferState::Interrupted)
+    ) {
+        let next = if matches!(
+            error.code,
+            ErrorCode::ConnectionClosed | ErrorCode::AuthenticationFailed
+        ) {
             TransferState::WaitingForAuthentication
         } else {
             TransferState::Failed
@@ -408,6 +676,8 @@ fn progress_from_job(job: siftlane_core::TransferJob) -> TransferProgress {
         bytes_transferred: job.bytes_transferred,
         bytes_total: job.bytes_total,
         speed_bytes_per_second: job.speed_bytes_per_second,
+        retry_count: job.retry_count,
+        verification: job.verification,
         error: job.error,
     }
 }

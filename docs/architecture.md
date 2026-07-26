@@ -24,6 +24,12 @@ flowchart LR
 
 ## Transfer guarantees
 
-Jobs are persisted after state/progress changes. A running job discovered at startup becomes `interrupted`. When its profile reconnects, Siftlane requeues it and continues from the existing unique partial file. Final promotion uses rename, with a temporary destination backup for overwrites and rollback if promotion fails.
+Jobs are persisted after state/progress changes. A running job discovered at startup becomes
+`interrupted`. A fair scheduler enforces live global and per-endpoint limits. Retryable failures use
+bounded exponential backoff and reconnect from the OS keyring when possible. Conflict decisions can
+apply to a whole directory-transfer batch, including collision-free Keep Both names. Before final
+promotion, Siftlane performs SHA-256 read-back verification for files up to 64 MB and size
+verification for larger files. Final promotion uses rename, with a temporary destination backup for
+overwrites and rollback if promotion fails.
 
 The queue state machine is deliberately transport-neutral. FTP/FTPS can implement `RemoteFilesystem` later without rewriting UI or scheduling code.

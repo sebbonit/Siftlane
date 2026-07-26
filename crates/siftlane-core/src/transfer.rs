@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::{AppError, ErrorCode, TransferId, TransferJob, TransferState};
+use crate::{AppError, ErrorCode, TransferId, TransferJob, TransferState, TransferVerification};
 
 #[derive(Debug, Default)]
 pub struct TransferQueue {
@@ -49,6 +49,36 @@ impl TransferQueue {
     ) -> Result<(), AppError> {
         let job = self.job_mut(id)?;
         job.conflict_policy = policy;
+        job.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn update_destination(
+        &mut self,
+        id: TransferId,
+        destination_path: String,
+    ) -> Result<(), AppError> {
+        let job = self.job_mut(id)?;
+        job.destination_path = destination_path;
+        job.partial_path = format!("{}.siftlane-part-{}", job.destination_path, job.id);
+        job.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn increment_retry(&mut self, id: TransferId) -> Result<(), AppError> {
+        let job = self.job_mut(id)?;
+        job.retry_count = job.retry_count.saturating_add(1);
+        job.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn set_verification(
+        &mut self,
+        id: TransferId,
+        verification: TransferVerification,
+    ) -> Result<(), AppError> {
+        let job = self.job_mut(id)?;
+        job.verification = verification;
         job.updated_at = Utc::now();
         Ok(())
     }
@@ -172,6 +202,7 @@ fn is_valid_transition(from: TransferState, to: TransferState) -> bool {
     matches!(
         (from, to),
         (Queued | Interrupted, Running)
+            | (Interrupted, WaitingForAuthentication | Failed)
             | (Queued | Running | Paused | Interrupted, Cancelled)
             | (
                 Running,
