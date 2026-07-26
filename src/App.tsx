@@ -35,6 +35,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  ExternalLink,
   FileEdit,
   FileKey2,
   Folder,
@@ -59,6 +60,7 @@ import {
 } from "lucide-react";
 import { BookmarksSection } from "./components/BookmarksSection";
 import { FileInfoDialog } from "./components/FileInfoDialog";
+import { ExternalEditDialog } from "./components/ExternalEditDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { FilePaneDragGhost } from "./components/FilePaneDragGhost";
 import { GoToPathDialog } from "./components/GoToPathDialog";
@@ -108,6 +110,8 @@ import type {
   SessionTab,
   UUID,
   EditableFile,
+  ExternalEditChange,
+  ExternalEditStarted,
   SearchMatch,
   SymlinkPolicy,
   SyncMode,
@@ -170,6 +174,17 @@ export default function App() {
   const [editorSide, setEditorSide] = useState<PaneSide | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
+  const [externalEdit, setExternalEdit] = useState<ExternalEditStarted | null>(null);
+  const [externalEditChange, setExternalEditChange] = useState<ExternalEditChange | null>(null);
+  const [externalEditSaving, setExternalEditSaving] = useState(false);
+  const [nativeDrop, setNativeDrop] = useState<{
+    destinationPath: string;
+    count: number;
+  } | null>(() =>
+    !desktop && new URLSearchParams(window.location.search).get("dropPreview") === "1"
+      ? { destinationPath: "/var/www/html", count: 2 }
+      : null,
+  );
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const [previewLoading, setPreviewLoading] = useState<{ name: string; remote: boolean } | null>(null);
   const previewRequestId = useRef(0);
@@ -272,6 +287,71 @@ export default function App() {
       if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
     };
   }, [setExpandTransfersOnNew, setTransfers, updateTransfer]);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void api
+      .onExternalEditChanged(async (event) => {
+        try {
+          const change = await api.getExternalEditChange(event.edit_id);
+          setExternalEditChange(change);
+        } catch (reason) {
+          setError(errorMessage(reason));
+        }
+      })
+      .then((unlisten) => {
+        stop = unlisten;
+      });
+    return () => stop?.();
+  }, []);
+
+  useEffect(() => {
+    if (!desktop) return;
+    if (!activeTab) {
+      setNativeDrop(null);
+      return;
+    }
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    const windowHandle = getCurrentWindow();
+    void windowHandle
+      .onDragDropEvent(({ payload }) => {
+        if (payload.type === "leave") {
+          setNativeDrop(null);
+          return;
+        }
+        const position = payload.position;
+        void windowHandle.scaleFactor().then((scale) => {
+          const element = document.elementFromPoint(position.x / scale, position.y / scale);
+          const pane = element?.closest<HTMLElement>('[data-pane-side="remote"]');
+          if (!pane) {
+            setNativeDrop(null);
+            return;
+          }
+          const folder = element?.closest<HTMLElement>("[data-drop-folder]");
+          const destinationPath =
+            folder?.dataset.dropFolder || pane.dataset.panePath || activeTab.remotePath;
+          if (payload.type === "drop") {
+            setNativeDrop(null);
+            void uploadNativeDrop(payload.paths, destinationPath);
+          } else {
+            setNativeDrop((current) => ({
+              destinationPath,
+              count: payload.type === "enter" ? payload.paths.length : current?.count ?? 0,
+            }));
+          }
+        });
+      })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      });
+    return () => {
+      cancelled = true;
+      stop?.();
+      setNativeDrop(null);
+    };
+  }, [activeTab?.id, activeTab?.remotePath]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -527,13 +607,63 @@ export default function App() {
           }));
         }
       }
+      const currentTransfers = useAppStore.getState().transfers;
       setTransfers([
         ...queued,
-        ...transfers.filter((item) => !queued.some((job) => job.id === item.id)),
+        ...currentTransfers.filter((item) => !queued.some((job) => job.id === item.id)),
       ]);
       if (skippedSymlinks > 0) {
         setError(`Skipped ${skippedSymlinks} symbolic link${skippedSymlinks === 1 ? "" : "s"} by policy`);
       }
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function uploadNativeDrop(paths: string[], destinationPath: string) {
+    if (!activeProfile || paths.length === 0) return;
+    setError(null);
+    try {
+      const entries = await Promise.all(paths.map((path) => api.inspectLocalPath(path)));
+      const queued: TransferJob[] = [];
+      for (const entry of entries) {
+        if (entry.kind === "directory") {
+          queued.push(
+            ...(await api.enqueueDirectoryTransfer({
+              profileId: activeProfile.id,
+              direction: "upload",
+              sourcePath: entry.path,
+              destinationPath,
+              conflictPolicy: "ask",
+              mode: "include_root",
+              symlinkPolicy,
+              preserveModifiedTime: preserveMetadata,
+              preservePermissions: preserveMetadata,
+            })),
+          );
+        } else if (entry.kind === "file" || (entry.kind === "symlink" && symlinkPolicy !== "skip")) {
+          queued.push(
+            await api.enqueueTransfer({
+              profileId: activeProfile.id,
+              direction: "upload",
+              sourcePath: entry.path,
+              destinationPath: joinPath(destinationPath, entry.name, true),
+              conflictPolicy: "ask",
+              symlinkPolicy,
+              preserveModifiedTime: preserveMetadata,
+              preservePermissions: preserveMetadata,
+            }),
+          );
+        }
+      }
+      if (queued.length === 0) {
+        setError("The dropped items are not transferable with the current symbolic-link policy");
+        return;
+      }
+      setTransfers([
+        ...queued,
+        ...transfers.filter((item) => !queued.some((job) => job.id === item.id)),
+      ]);
     } catch (reason) {
       setError(errorMessage(reason));
     }
@@ -757,6 +887,48 @@ export default function App() {
       return;
     }
     await openEditor(entry, side);
+  }
+
+  async function beginExternalEdit(entry: FileEntry) {
+    if (!activeTab || entry.kind !== "file") return;
+    if (externalEdit) {
+      setError(`Finish the external edit of ${externalEdit.name} before opening another file`);
+      return;
+    }
+    setError(null);
+    try {
+      const edit = await api.beginExternalEdit(activeTab.id, entry.path);
+      setExternalEdit(edit);
+      await api.openExternalEdit(edit.local_path);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function uploadExternalEdit() {
+    if (!externalEditChange || !activeTab) return;
+    setExternalEditSaving(true);
+    setError(null);
+    try {
+      await api.commitExternalEdit(externalEditChange.edit_id);
+      setExternalEditChange(null);
+      await loadPane("remote", activeTab.remotePath);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setExternalEditSaving(false);
+    }
+  }
+
+  async function stopExternalEdit() {
+    if (!externalEdit) return;
+    try {
+      await api.endExternalEdit(externalEdit.edit_id);
+      setExternalEdit(null);
+      setExternalEditChange(null);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
   }
 
   function cancelPreviewLoading() {
@@ -1327,15 +1499,28 @@ export default function App() {
                   onRemovePrivileged={(entry) => void removeSelected("remote", true, entry)}
                   onOpenFile={(entry) => void openFile(entry, "remote")}
                   onOpenPrivileged={(entry) => void openPrivilegedEditor(entry, "remote")}
+                  onEditExternal={(entry) => void beginExternalEdit(entry)}
                   onShowInfo={(entry) => setInfoTarget({ entry, side: "remote" })}
                   transferLabel="Download"
                   onTransfer={(entry) => void addTransfer("download", entry)}
                   onPaneDrop={handlePaneDrop}
+                  nativeDropActive={!!nativeDrop}
+                  nativeDropCount={nativeDrop?.count ?? 0}
+                  nativeDropDestination={nativeDrop?.destinationPath}
                   bookmarked={!!findBookmark("remote", activeTab.remotePath, activeTab.profileId)}
                   onToggleBookmark={() => void toggleBookmark("remote")}
                 />
               </div>
             </section>
+            {externalEdit && (
+              <div className="external-edit-session" role="status">
+                <span>
+                  <ExternalLink size={14} />
+                  Watching <strong>{externalEdit.name}</strong> for external saves
+                </span>
+                <button onClick={() => void stopExternalEdit()}>Stop editing</button>
+              </div>
+            )}
             <TransferPanel />
           </>
         ) : (
@@ -1495,6 +1680,14 @@ export default function App() {
         />
       )}
       {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {externalEditChange && (
+        <ExternalEditDialog
+          change={externalEditChange}
+          saving={externalEditSaving}
+          onKeepEditing={() => setExternalEditChange(null)}
+          onUpload={() => void uploadExternalEdit()}
+        />
+      )}
       {previewLoading && (
         <LoadingOverlay
           label={previewLoading.remote ? "Downloading preview…" : "Opening preview…"}

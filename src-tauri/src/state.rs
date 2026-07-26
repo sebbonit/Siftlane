@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::{
+    external_edit::ExternalEditRecord,
     scheduler::{BandwidthLimiter, TransferScheduler},
     secrets::{SecretKind, SecretStore},
     storage::{Storage, StoredHostKey},
@@ -31,6 +32,10 @@ pub struct AppState {
     pub reconnect_guard: Arc<Mutex<()>>,
     pub last_reconnect: Arc<Mutex<HashMap<Uuid, Instant>>>,
     pub searches: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
+    pub external_edits: Arc<Mutex<HashMap<Uuid, ExternalEditRecord>>>,
+    /// Owned for the lifetime of the app. `TempDir` recursively removes every
+    /// external-edit working copy when the final app-state clone is dropped.
+    pub external_edit_root: Arc<tempfile::TempDir>,
 }
 
 #[derive(Clone)]
@@ -62,6 +67,16 @@ impl AppState {
         let storage = Storage::open(data_dir.join("siftlane.sqlite3"))?;
         let preferences = storage.load_preferences()?;
         let transfers = TransferQueue::restore(storage.load_transfers()?);
+        let external_edit_root = tempfile::Builder::new()
+            .prefix("siftlane-external-edits-")
+            .tempdir()
+            .map_err(|source| {
+                AppError::new(
+                    ErrorCode::Io,
+                    "Could not create the secure external-edit directory",
+                )
+                .with_detail(source.to_string())
+            })?;
         Ok(Self {
             storage,
             secrets: SecretStore,
@@ -76,6 +91,8 @@ impl AppState {
             reconnect_guard: Arc::new(Mutex::new(())),
             last_reconnect: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
+            external_edits: Arc::new(Mutex::new(HashMap::new())),
+            external_edit_root: Arc::new(external_edit_root),
         })
     }
 }
@@ -172,6 +189,11 @@ pub fn run() {
             crate::commands::list_remote_directory,
             crate::commands::read_remote_file,
             crate::commands::save_remote_file,
+            crate::external_edit::inspect_local_path,
+            crate::external_edit::begin_external_edit,
+            crate::external_edit::get_external_edit_change,
+            crate::external_edit::commit_external_edit,
+            crate::external_edit::end_external_edit,
             crate::commands::read_remote_preview,
             crate::commands::read_remote_file_privileged,
             crate::commands::save_remote_file_privileged,

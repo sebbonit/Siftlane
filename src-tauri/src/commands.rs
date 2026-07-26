@@ -898,6 +898,14 @@ pub async fn save_remote_file(
     }
     let path = normalize_remote_path(&path)?;
     let client = session_client(&state, session_id).await?;
+    save_remote_bytes_atomic(client.as_ref(), &path, content.as_bytes()).await
+}
+
+pub(crate) async fn save_remote_bytes_atomic(
+    client: &dyn RemoteFilesystem,
+    path: &str,
+    content: &[u8],
+) -> Result<(), AppError> {
     let parent = path
         .rsplit_once('/')
         .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
@@ -912,7 +920,7 @@ pub async fn save_remote_file(
     if content.is_empty() {
         client.write_chunk(&temp, 0, &[]).await?;
     } else {
-        for (offset, chunk) in content.as_bytes().chunks(64 * 1024).enumerate() {
+        for (offset, chunk) in content.chunks(64 * 1024).enumerate() {
             client
                 .write_chunk(&temp, (offset * 64 * 1024) as u64, chunk)
                 .await?;
@@ -925,9 +933,9 @@ pub async fn save_remote_file(
         Uuid::new_v4(),
         name
     ))?;
-    client.rename(&path, &backup).await?;
-    if let Err(error) = client.rename(&temp, &path).await {
-        let _ = client.rename(&backup, &path).await;
+    client.rename(path, &backup).await?;
+    if let Err(error) = client.rename(&temp, path).await {
+        let _ = client.rename(&backup, path).await;
         let _ = client.remove_file(&temp).await;
         return Err(error);
     }
@@ -1909,7 +1917,7 @@ pub async fn resolve_transfer_conflict(
     Ok(updated)
 }
 
-async fn session_client(
+pub(crate) async fn session_client(
     state: &AppState,
     session_id: Uuid,
 ) -> Result<Arc<dyn RemoteFilesystem>, AppError> {
@@ -2035,7 +2043,7 @@ fn persist_supplied_secret(
     Ok(())
 }
 
-fn normalize_remote_path(path: &str) -> Result<String, AppError> {
+pub(crate) fn normalize_remote_path(path: &str) -> Result<String, AppError> {
     if path.contains('\0') {
         return Err(AppError::new(
             ErrorCode::InvalidInput,

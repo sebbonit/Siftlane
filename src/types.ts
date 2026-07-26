@@ -61,6 +61,24 @@ export interface EditableFile {
   privileged?: boolean;
 }
 
+export interface ExternalEditStarted {
+  edit_id: UUID;
+  remote_path: string;
+  name: string;
+  local_path: string;
+}
+
+export interface ExternalEditChanged {
+  edit_id: UUID;
+  remote_path: string;
+  name: string;
+}
+
+export interface ExternalEditChange extends ExternalEditChanged {
+  original_content: string;
+  modified_content: string;
+}
+
 export interface PreviewFile {
   path: string;
   name: string;

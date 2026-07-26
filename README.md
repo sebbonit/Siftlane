@@ -18,6 +18,10 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Versioned JSON export/import for profiles, bookmarks, and saved actions; secrets are excluded by
   default and available only through an explicit encrypted export
 - Local/remote dual-pane browser with remote-focused mode
+- Native Finder/Explorer file drops onto the remote pane, including folder targets and recursive
+  upload planning
+- External-editor workflow for remote text files with private temporary copies, save watching,
+  side-by-side diff review, and confirmed atomic upload
 - Paired-directory comparison by name, size, and modification time, with visual local-only,
   remote-only, newer, and size-mismatch markers
 - Reviewed upload-mirror, download-mirror, and newest-wins two-way synchronization
@@ -41,6 +45,26 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Native macOS, Windows, and Linux packaging configuration
 - Signed in-app updates from GitHub Releases (Tauri updater; no Apple Developer account required)
 - Browser demo mode for fast UI work without a running Tauri backend
+
+## Native desktop file workflow
+
+Drop files or directories from Finder, Explorer, or a Linux file manager onto the remote pane.
+Siftlane highlights the resolved remote folder before accepting the drop, then sends files through
+the normal conflict-aware transfer queue. Directories use the existing bounded recursive planner,
+so native drops retain pause, retry, integrity-verification, and conflict behavior.
+
+![Native Finder or Explorer file drop targeting the remote pane](docs/images/native-file-drop.png)
+
+For a remote UTF-8 text file, choose **Edit in external editor** from its context menu. Siftlane:
+
+1. downloads the file into a randomly named, app-owned temporary directory;
+2. applies private directory/file permissions on Unix and opens the copy with the OS default editor;
+3. watches the working copy for saves and shows the remote and saved versions side by side;
+4. uploads only after confirmation, using a synchronized temporary remote file and atomic rename;
+5. removes an edit's temporary directory when the session ends, and removes the entire temporary
+   root automatically when Siftlane exits.
+
+![External-editor save diff and upload confirmation](docs/images/native-external-edit-review.png)
 
 ## Synchronization and queue workflows
 
@@ -181,7 +205,7 @@ cargo test --workspace
 - `src-tauri`: commands, SQLite persistence, OS keyring integration, sessions, and transfer runner
 - `src`: React UI, Zustand state, typed IPC boundary, and browser demo adapter
 
-SQLite never stores credentials. Keyring entries use the service name `app.siftlane.desktop`, keyed by connection UUID. Uploads and downloads first write uniquely named partial files and use a backup/rename commit sequence to reduce the chance of replacing a destination with incomplete data.
+SQLite never stores credentials. Keyring entries use the service name `app.siftlane.desktop`, keyed by connection UUID. Uploads and downloads first write uniquely named partial files and use a backup/rename commit sequence to reduce the chance of replacing a destination with incomplete data. External-editor working copies live under one process-owned temporary root, use `0700` directories and `0600` files on Unix, and are recursively removed when app state shuts down.
 
 ### macOS development Keychain access
 
