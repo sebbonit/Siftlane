@@ -904,6 +904,32 @@ export const api = {
     browserTransfers = [job, ...browserTransfers];
     return job;
   },
+  async enqueueRemoteTransfer(draft: {
+    sourceSessionId: UUID;
+    destinationSessionId: UUID;
+    sourcePath: string;
+    destinationPath: string;
+    conflictPolicy?: ConflictPolicy;
+  }) {
+    if (desktop) return call<TransferJob>("enqueue_remote_transfer", { draft });
+    const name = draft.sourcePath.split("/").pop() ?? "transfer";
+    const sourceEntry = demoList(
+      remoteDemoTree,
+      demoParent(draft.sourcePath, true),
+    ).find((entry) => entry.path === draft.sourcePath);
+    const job = mockTransfer(name, 0, "remote_to_remote", "queued");
+    job.source_path = draft.sourcePath;
+    job.destination_path = draft.destinationPath;
+    job.partial_path = `${draft.destinationPath}.siftlane-part-${job.id}`;
+    job.source_session_id = draft.sourceSessionId;
+    job.destination_session_id = draft.destinationSessionId;
+    job.source_endpoint = "Production (prod.example.com:22)";
+    job.destination_endpoint = "Staging (staging.example.com:22)";
+    job.bytes_total = sourceEntry?.size ?? job.bytes_total;
+    job.conflict_policy = draft.conflictPolicy ?? "ask";
+    browserTransfers = [job, ...browserTransfers];
+    return job;
+  },
   async enqueueDirectoryTransfer(draft: {
     profileId: UUID;
     direction: TransferDirection;

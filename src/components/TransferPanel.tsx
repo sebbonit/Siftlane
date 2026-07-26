@@ -11,6 +11,7 @@ import {
   Trash2,
   GripVertical,
   Info,
+  ArrowRightLeft,
   X,
 } from "lucide-react";
 import { capitalize, formatBytes } from "../lib/format";
@@ -27,6 +28,9 @@ import { TransferConflictDialog } from "./TransferConflictDialog";
 const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
 
 function transferRoute(job: TransferJob): string {
+  if (job.direction === "remote_to_remote") {
+    return `${job.source_endpoint ?? "Remote"}:${job.source_path} → ${job.destination_endpoint ?? "Remote"}:${job.destination_path}`;
+  }
   // Keep local on the left to match the dual-pane layout: upload uses >, download uses <.
   return job.direction === "upload"
     ? `${job.source_path} > ${job.destination_path}`
@@ -181,10 +185,12 @@ export function TransferPanel() {
                 <span>
                   {job.direction === "upload" ? (
                     <ArrowUpFromLine size={14} />
+                  ) : job.direction === "remote_to_remote" ? (
+                    <ArrowRightLeft size={14} />
                   ) : (
                     <ArrowDownToLine size={14} />
                   )}
-                  {capitalize(job.direction)}
+                  {capitalize(job.direction.replaceAll("_", " "))}
                   <select
                     aria-label={`Priority for ${name}`}
                     value={job.priority ?? "normal"}

@@ -319,6 +319,32 @@ mod tests {
     }
 
     #[test]
+    fn remote_copy_persists_both_session_routes() {
+        let source_profile = Uuid::new_v4();
+        let source_session = Uuid::new_v4();
+        let destination_profile = Uuid::new_v4();
+        let destination_session = Uuid::new_v4();
+        let job = TransferJob::new_remote_to_remote(
+            source_profile,
+            source_session,
+            "Production (prod.example.com:22)".into(),
+            destination_profile,
+            destination_session,
+            "Staging (staging.example.com:22)".into(),
+            "/var/www/app.js".into(),
+            "/srv/staging/app.js".into(),
+            512,
+        );
+
+        assert_eq!(job.direction, TransferDirection::RemoteToRemote);
+        assert_eq!(job.profile_id, destination_profile);
+        assert_eq!(job.source_profile_id, Some(source_profile));
+        assert_eq!(job.source_session_id, Some(source_session));
+        assert_eq!(job.destination_session_id, Some(destination_session));
+        assert_eq!(job.bytes_total, Some(512));
+    }
+
+    #[test]
     fn clear_filter_removes_matching_jobs_only() {
         let mut queue = TransferQueue::default();
         let completed = {

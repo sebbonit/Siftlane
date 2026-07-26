@@ -29,6 +29,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowRightLeft,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -78,6 +79,7 @@ import {
 import { SearchDialog } from "./components/SearchDialog";
 import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
+import { RemoteTransferDialog } from "./components/RemoteTransferDialog";
 import { SyncReviewDialog } from "./components/SyncReviewDialog";
 import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
@@ -101,6 +103,7 @@ import type {
   AppError,
   AuthRef,
   ConnectionProfile,
+  ConflictPolicy,
   Favorite,
   FileEntry,
   HostKeyChallenge,
@@ -154,6 +157,7 @@ export default function App() {
   const [comparisonEnabled, setComparisonEnabled] = useState(false);
   const [syncMode, setSyncMode] = useState<SyncMode>("two_way");
   const [syncReviewOpen, setSyncReviewOpen] = useState(false);
+  const [remoteTransferOpen, setRemoteTransferOpen] = useState(false);
   const [symlinkPolicy, setSymlinkPolicy] = useState<SymlinkPolicy>("skip");
   const [preserveMetadata, setPreserveMetadata] = useState(true);
   const [syncWarning, setSyncWarning] = useState<Record<PaneSide, string | null>>({
@@ -397,6 +401,15 @@ export default function App() {
     }
     if (relevant.some((job) => job.direction === "download")) {
       void loadPane("local", activeTab.localPath);
+    }
+    if (
+      relevant.some(
+        (job) =>
+          job.direction === "remote_to_remote" &&
+          (!job.destination_session_id || job.destination_session_id === activeTab.id),
+      )
+    ) {
+      void loadPane("remote", activeTab.remotePath);
     }
   }, [transfers, activeTab?.id, activeTab?.localPath, activeTab?.remotePath]);
 
@@ -668,6 +681,31 @@ export default function App() {
     } catch (reason) {
       setError(errorMessage(reason));
     }
+  }
+
+  async function queueRemoteTransfers(
+    destination: SessionTab,
+    routes: Array<{ sourcePath: string; destinationPath: string }>,
+    conflictPolicy: ConflictPolicy,
+  ) {
+    if (!activeTab) return;
+    const queued: TransferJob[] = [];
+    for (const route of routes) {
+      queued.push(
+        await api.enqueueRemoteTransfer({
+          sourceSessionId: activeTab.id,
+          destinationSessionId: destination.id,
+          sourcePath: route.sourcePath,
+          destinationPath: route.destinationPath,
+          conflictPolicy,
+        }),
+      );
+    }
+    const currentTransfers = useAppStore.getState().transfers;
+    setTransfers([
+      ...queued,
+      ...currentTransfers.filter((item) => !queued.some((job) => job.id === item.id)),
+    ]);
   }
 
   function handleDropTransfer(entry: FileEntry, sourceSide: PaneSide, destinationBase: string) {
@@ -1419,6 +1457,17 @@ export default function App() {
               >
                 Delete
               </button>
+              <button
+                disabled={
+                  selectedRemote.every((entry) => entry.kind !== "file") ||
+                  !tabs.some((tab) => tab.id !== activeTab.id && tab.connected)
+                }
+                onClick={() => setRemoteTransferOpen(true)}
+                title="Copy selected remote files to another open session"
+              >
+                <ArrowRightLeft size={14} />
+                Copy to session…
+              </button>
               {comparisonEnabled && (
                 <span>{comparedEntries.filter((item) => item.status !== "same").length} differences</span>
               )}
@@ -1523,6 +1572,15 @@ export default function App() {
               </div>
             )}
             <TransferPanel />
+            {remoteTransferOpen && (
+              <RemoteTransferDialog
+                source={activeTab}
+                destinations={tabs.filter((tab) => tab.id !== activeTab.id && tab.connected)}
+                entries={selectedRemote.filter((entry) => entry.kind === "file")}
+                onClose={() => setRemoteTransferOpen(false)}
+                onConfirm={queueRemoteTransfers}
+              />
+            )}
           </>
         ) : (
           <Welcome profiles={profiles} onConnect={handleProfileClick} onNew={() => setConnectionDialog("new")} />

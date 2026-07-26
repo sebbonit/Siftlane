@@ -51,4 +51,31 @@ describe("TransferPanel conflicts", () => {
 
     expect(resolve).toHaveBeenCalledWith("conflict-1", "rename", true);
   });
+
+  it("shows both endpoints for a remote-to-remote transfer", () => {
+    useAppStore.setState({
+      transfers: [
+        {
+          ...conflict,
+          id: "remote-copy",
+          direction: "remote_to_remote",
+          state: "running",
+          source_endpoint: "Production (prod.example.com:22)",
+          destination_endpoint: "Staging (staging.example.com:22)",
+          source_path: "/var/www/report.txt",
+          destination_path: "/srv/staging/report.txt",
+        },
+      ],
+      transferPanelOpen: true,
+    });
+
+    render(<TransferPanel />);
+
+    expect(screen.getByText("Remote to remote")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Production (prod.example.com:22):/var/www/report.txt → Staging (staging.example.com:22):/srv/staging/report.txt",
+      ),
+    ).toBeInTheDocument();
+  });
 });

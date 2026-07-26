@@ -782,6 +782,22 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .sync-toolbar button.active { color: var(--teal); border-color: var(--teal); background: var(--teal-soft); }
 .sync-toolbar > span { margin-left: auto; color: var(--muted); }
 .sync-toolbar select { border: 0; background: transparent; font-size: 9px; }
+
+.remote-transfer-dialog { width: min(700px, 94vw); }
+.remote-transfer-dialog form { display: grid; gap: 14px; padding: 18px 20px 20px; }
+.remote-transfer-dialog form > label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.remote-transfer-dialog form > label input,
+.remote-transfer-dialog form > label select,
+.remote-route select { min-height: 34px; border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; background: var(--surface); color: var(--text); }
+.remote-route { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); }
+.remote-route > div { min-width: 0; display: grid; gap: 4px; }
+.remote-route span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.remote-route strong { font-size: 14px; }
+.remote-route small { color: var(--muted); }
+.remote-transfer-files { max-height: 150px; overflow: auto; display: grid; gap: 7px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); }
+.remote-transfer-files > div { display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); align-items: center; gap: 7px; }
+.remote-transfer-files code { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-stream-note { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--teal); font-size: 10px; }
 .editor-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 7vh 6vw; background: rgba(20, 27, 25, .48); backdrop-filter: blur(3px); animation: backdrop-in var(--dur) var(--ease-out) both; }
 .loading-toast {
   position: fixed;
