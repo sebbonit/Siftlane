@@ -164,9 +164,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Synchronize build version metadata
-        env:
-          SIFTLANE_VERSION: ${{ needs.resolve-version.outputs.version }}
-        run: node scripts/version.mjs set "$SIFTLANE_VERSION"
+        run: node scripts/version.mjs set "${{ needs.resolve-version.outputs.version }}"
 
       - name: Validate build version metadata
         run: pnpm version:check
