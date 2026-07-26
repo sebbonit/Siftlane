@@ -107,9 +107,11 @@ pub async fn connect_profile(
     let profile = state.storage.get_profile(profile_id)?;
     let preferences = state.storage.load_preferences()?;
     match profile.protocol {
-        Protocol::Sftp => connect_sftp(&app, state.inner(), profile, credential, preferences).await,
+        Protocol::Sftp => {
+            connect_sftp(&app, state.inner(), profile, credential, preferences, true).await
+        }
         Protocol::Ftp | Protocol::Ftps => {
-            connect_ftp(&app, state.inner(), profile, credential, preferences).await
+            connect_ftp(&app, state.inner(), profile, credential, preferences, true).await
         }
     }
 }
@@ -120,9 +122,19 @@ async fn connect_sftp(
     profile: ConnectionProfile,
     credential: Option<String>,
     preferences: Preferences,
+    resume_transfers: bool,
 ) -> Result<ConnectResult, AppError> {
     let (auth, supplied_secret) = resolve_sftp_auth(state, &profile, credential)?;
-    connect_sftp_with_auth(app, state, profile, auth, supplied_secret, preferences).await
+    connect_sftp_with_auth(
+        app,
+        state,
+        profile,
+        auth,
+        supplied_secret,
+        preferences,
+        resume_transfers,
+    )
+    .await
 }
 
 async fn connect_sftp_with_auth(
@@ -132,6 +144,7 @@ async fn connect_sftp_with_auth(
     auth: SftpAuth,
     supplied_secret: Option<(SecretKind, String)>,
     preferences: Preferences,
+    resume_transfers: bool,
 ) -> Result<ConnectResult, AppError> {
     let known_keys = state.storage.host_keys(&profile.host, profile.port)?;
     let verifier = Arc::new(StoredKeyVerifier::new(known_keys));
@@ -155,7 +168,9 @@ async fn connect_sftp_with_auth(
                     client: Arc::new(client),
                 },
             );
-            resume_profile_transfers(app, state, profile.id).await?;
+            if resume_transfers {
+                resume_profile_transfers(app, state, profile.id).await?;
+            }
             Ok(ConnectResult::Connected { session_id })
         }
         Err(connect_error) => {
@@ -195,6 +210,7 @@ async fn connect_ftp(
     profile: ConnectionProfile,
     credential: Option<String>,
     preferences: Preferences,
+    resume_transfers: bool,
 ) -> Result<ConnectResult, AppError> {
     let (password, supplied_secret) = resolve_ftp_password(state, &profile, credential)?;
     let security = if profile.protocol == Protocol::Ftps {
@@ -220,8 +236,95 @@ async fn connect_ftp(
             client: Arc::new(client),
         },
     );
-    resume_profile_transfers(app, state, profile.id).await?;
+    if resume_transfers {
+        resume_profile_transfers(app, state, profile.id).await?;
+    }
     Ok(ConnectResult::Connected { session_id })
+}
+
+pub(crate) async fn reconnect_profile_for_transfer(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: Uuid,
+) -> Result<(), AppError> {
+    let _guard = state.reconnect_guard.lock().await;
+    let recently_reconnected = state
+        .last_reconnect
+        .lock()
+        .await
+        .get(&profile_id)
+        .is_some_and(|instant| instant.elapsed() < std::time::Duration::from_secs(5));
+    if recently_reconnected
+        && state
+            .sessions
+            .read()
+            .await
+            .values()
+            .any(|session| session.profile_id == profile_id)
+    {
+        return Ok(());
+    }
+
+    let stale_sessions: Vec<_> = {
+        let sessions = state.sessions.read().await;
+        sessions
+            .iter()
+            .filter(|(_, session)| session.profile_id == profile_id)
+            .map(|(id, session)| (*id, session.client.clone()))
+            .collect()
+    };
+
+    let profile = state.storage.get_profile(profile_id)?;
+    let preferences = state.storage.load_preferences()?;
+    let result = match profile.protocol {
+        Protocol::Sftp => connect_sftp(app, state, profile, None, preferences, false).await?,
+        Protocol::Ftp | Protocol::Ftps => {
+            connect_ftp(app, state, profile, None, preferences, false).await?
+        }
+    };
+    match result {
+        ConnectResult::Connected { session_id } => {
+            if !stale_sessions.is_empty() {
+                let replacement = {
+                    let mut sessions = state.sessions.write().await;
+                    let replacement = sessions
+                        .remove(&session_id)
+                        .ok_or_else(|| {
+                            AppError::new(
+                                ErrorCode::Internal,
+                                "The reconnected session was not registered",
+                            )
+                        })?
+                        .client;
+                    for (stale_id, _) in &stale_sessions {
+                        if let Some(session) = sessions.get_mut(stale_id) {
+                            session.client = replacement.clone();
+                        }
+                    }
+                    replacement
+                };
+                for (_, stale_client) in stale_sessions {
+                    if !Arc::ptr_eq(&stale_client, &replacement) {
+                        let _ = stale_client.disconnect().await;
+                    }
+                }
+            }
+            state
+                .last_reconnect
+                .lock()
+                .await
+                .insert(profile_id, std::time::Instant::now());
+            Ok(())
+        }
+        ConnectResult::NeedsCredential { .. } => Err(AppError::new(
+            ErrorCode::AuthenticationFailed,
+            "Reconnect this profile to continue the transfer",
+        )),
+        ConnectResult::NeedsHostTrust { .. } => Err(AppError::new(
+            ErrorCode::HostKeyChanged,
+            "The server host key requires review before reconnecting",
+        )),
+    }
 }
 
 async fn resume_profile_transfers(
@@ -286,6 +389,7 @@ pub async fn trust_host_key(
         pending.auth,
         pending.supplied_secret,
         pending.preferences,
+        true,
     )
     .await
     .map(Some)
@@ -1217,7 +1321,21 @@ pub fn save_preferences(
             "Transfer concurrency must be at least one",
         ));
     }
-    state.storage.save_preferences(&preferences)
+    if preferences.global_parallel_transfers > 12
+        || preferences.per_host_parallel_transfers > 12
+        || preferences.automatic_retry_limit > 10
+    {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Transfer concurrency cannot exceed 12 and retries cannot exceed 10",
+        ));
+    }
+    state.storage.save_preferences(&preferences)?;
+    state.transfer_scheduler.update_limits(
+        preferences.global_parallel_transfers,
+        preferences.per_host_parallel_transfers,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1376,6 +1494,7 @@ pub async fn enqueue_directory_transfer(
     };
 
     let policy = draft.conflict_policy.unwrap_or(ConflictPolicy::Ask);
+    let batch_id = Uuid::new_v4();
     let mut jobs = Vec::with_capacity(plan.files.len());
     {
         let mut queue = state.transfers.lock().await;
@@ -1387,6 +1506,7 @@ pub async fn enqueue_directory_transfer(
                 file.destination_path,
                 None,
             );
+            job.batch_id = Some(batch_id);
             job.conflict_policy = policy;
             queue.enqueue(job.clone());
             state.storage.save_transfer(&job)?;
@@ -1496,29 +1616,60 @@ pub async fn resolve_transfer_conflict(
     state: State<'_, AppState>,
     transfer_id: Uuid,
     policy: ConflictPolicy,
-) -> Result<TransferJob, AppError> {
-    if matches!(policy, ConflictPolicy::Ask | ConflictPolicy::Rename) {
+    apply_to_batch: Option<bool>,
+) -> Result<Vec<TransferJob>, AppError> {
+    if policy == ConflictPolicy::Ask {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
-            "Resolve the conflict with skip or overwrite",
+            "Choose skip, overwrite, or keep both",
         ));
     }
-    {
+    let (updated, spawn_ids) = {
         let mut queue = state.transfers.lock().await;
-        queue.update_conflict_policy(transfer_id, policy)?;
-        queue.transition(transfer_id, TransferState::Queued)?;
-        state
-            .storage
-            .save_transfer(queue.get(transfer_id).expect("transfer exists"))?;
+        let current = queue
+            .get(transfer_id)
+            .cloned()
+            .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Transfer not found"))?;
+        if current.state != TransferState::WaitingForConflict {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "The transfer is not waiting for a conflict decision",
+            ));
+        }
+        let apply_to_batch = apply_to_batch.unwrap_or(false);
+        let target_ids: Vec<_> = queue
+            .list()
+            .into_iter()
+            .filter(|job| {
+                job.id == transfer_id
+                    || (apply_to_batch
+                        && current.batch_id.is_some()
+                        && job.batch_id == current.batch_id
+                        && !job.state.is_terminal())
+            })
+            .map(|job| job.id)
+            .collect();
+        let mut updated = Vec::with_capacity(target_ids.len());
+        let mut spawn_ids = Vec::new();
+        for id in target_ids {
+            queue.update_conflict_policy(id, policy)?;
+            if queue
+                .get(id)
+                .is_some_and(|job| job.state == TransferState::WaitingForConflict)
+            {
+                queue.transition(id, TransferState::Queued)?;
+                spawn_ids.push(id);
+            }
+            let job = queue.get(id).cloned().expect("transfer exists");
+            state.storage.save_transfer(&job)?;
+            updated.push(job);
+        }
+        (updated, spawn_ids)
+    };
+    for id in spawn_ids {
+        crate::transfers::spawn(app.clone(), state.inner().clone(), id);
     }
-    crate::transfers::spawn(app, state.inner().clone(), transfer_id);
-    state
-        .transfers
-        .lock()
-        .await
-        .get(transfer_id)
-        .cloned()
-        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Transfer not found"))
+    Ok(updated)
 }
 
 async fn session_client(

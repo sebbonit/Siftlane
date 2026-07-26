@@ -904,6 +904,7 @@ export default function App() {
               global_parallel_transfers: 3,
               per_host_parallel_transfers: 2,
               expand_transfers_on_new: true,
+              automatic_retry_limit: 3,
               connect_timeout_seconds: 15,
               response_timeout_seconds: 30,
               keepalive_seconds: 30,

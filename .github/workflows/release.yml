@@ -163,6 +163,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Synchronize build version metadata
+        env:
+          SIFTLANE_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: node scripts/version.mjs set "$SIFTLANE_VERSION"
+
+      - name: Validate build version metadata
+        run: pnpm version:check
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -200,6 +208,43 @@ jobs:
             printf '%s\n' "$NOTES"
             echo "SIFTLANE_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Configure Apple signing and notarization
+        if: matrix.platform == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          values=(
+            "$APPLE_CERTIFICATE_SECRET"
+            "$APPLE_CERTIFICATE_PASSWORD_SECRET"
+            "$APPLE_ID_SECRET"
+            "$APPLE_PASSWORD_SECRET"
+            "$APPLE_TEAM_ID_SECRET"
+          )
+          configured=0
+          for value in "${values[@]}"; do
+            if [ -n "$value" ]; then configured=$((configured + 1)); fi
+          done
+          if [ "$configured" -ne 0 ] && [ "$configured" -ne 5 ]; then
+            echo "::error::Apple signing is partially configured. Set all five documented secrets."
+            exit 1
+          fi
+          if [ "$configured" -eq 0 ]; then
+            echo "::warning::Publishing an unsigned, unnotarized macOS build."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE_SECRET"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD_SECRET"
+            echo "APPLE_ID=$APPLE_ID_SECRET"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD_SECRET"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET"
+          } >> "$GITHUB_ENV"
 
       - name: Build and publish bundles
         uses: tauri-apps/tauri-action@v0

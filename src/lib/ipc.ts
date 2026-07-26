@@ -378,6 +378,7 @@ function mockTransfer(
   const total = 3_300_000;
   return {
     id: crypto.randomUUID(),
+    batch_id: null,
     profile_id: "demo-production",
     direction,
     source_path: `/Users/alex/Projects/my-website/${name}`,
@@ -388,6 +389,7 @@ function mockTransfer(
     state,
     conflict_policy: "ask",
     retry_count: 0,
+    verification: state === "completed" ? "size_verified" : "pending",
     speed_bytes_per_second: state === "running" ? 1_240_000 : null,
     error: null,
     created_at: new Date().toISOString(),
@@ -620,7 +622,31 @@ export const api = {
   }) {
     if (desktop) return call<TransferJob>("enqueue_transfer", { draft });
     const name = draft.sourcePath.split(/[\\/]/).pop() ?? "transfer";
-    const job = mockTransfer(name, 0, draft.direction, "queued");
+    const destinationEntries = demoList(
+      draft.direction === "upload" ? remoteDemoTree : localDemoTree,
+      demoParent(draft.destinationPath, draft.direction === "upload"),
+    );
+    const hasConflict = destinationEntries.some(
+      (entry) => entry.path === draft.destinationPath,
+    );
+    const job = mockTransfer(
+      name,
+      0,
+      draft.direction,
+      hasConflict && (draft.conflictPolicy ?? "ask") === "ask"
+        ? "waiting_for_conflict"
+        : "queued",
+    );
+    job.profile_id = draft.profileId;
+    job.source_path = draft.sourcePath;
+    job.destination_path = draft.destinationPath;
+    job.partial_path = `${draft.destinationPath}.siftlane-part-${job.id}`;
+    job.conflict_policy = draft.conflictPolicy ?? "ask";
+    const sourceEntry = demoList(
+      draft.direction === "upload" ? localDemoTree : remoteDemoTree,
+      demoParent(draft.sourcePath, draft.direction === "download"),
+    ).find((entry) => entry.path === draft.sourcePath);
+    job.bytes_total = sourceEntry?.size ?? job.bytes_total;
     browserTransfers = [job, ...browserTransfers];
     return job;
   },
@@ -645,10 +671,12 @@ export const api = {
         retryable: false,
       } satisfies AppError;
     }
+    const batchId = crypto.randomUUID();
     const jobs = files.map((file) => {
       const relative =
         draft.mode === "include_root" ? `${rootName}/${file.name}` : file.name;
       const job = mockTransfer(relative, 0, draft.direction, "queued");
+      job.batch_id = batchId;
       job.source_path =
         draft.direction === "upload"
           ? `${draft.sourcePath.replace(/\/+$/, "")}/${file.name}`
@@ -665,8 +693,35 @@ export const api = {
       ? call<TransferJob>("control_transfer", { transferId, action })
       : Promise.resolve(browserTransfers.find((job) => job.id === transferId)!);
   },
-  resolveConflict(transferId: UUID, policy: "skip" | "overwrite") {
-    return call<TransferJob>("resolve_transfer_conflict", { transferId, policy });
+  async resolveConflict(
+    transferId: UUID,
+    policy: Exclude<ConflictPolicy, "ask">,
+    applyToBatch = false,
+  ) {
+    if (desktop) {
+      return call<TransferJob[]>("resolve_transfer_conflict", {
+        transferId,
+        policy,
+        applyToBatch,
+      });
+    }
+    const current = browserTransfers.find((job) => job.id === transferId);
+    if (!current) return [];
+    const updated = browserTransfers
+      .filter(
+        (job) =>
+          job.id === transferId ||
+          (applyToBatch && !!current.batch_id && job.batch_id === current.batch_id),
+      )
+      .map((job) => ({
+        ...job,
+        conflict_policy: policy,
+        state: job.state === "waiting_for_conflict" ? ("queued" as const) : job.state,
+      }));
+    browserTransfers = browserTransfers.map(
+      (job) => updated.find((item) => item.id === job.id) ?? job,
+    );
+    return updated;
   },
   async getPreferences() {
     if (desktop) return call<Preferences>("get_preferences");
@@ -677,6 +732,7 @@ export const api = {
       global_parallel_transfers: 3,
       per_host_parallel_transfers: 2,
       expand_transfers_on_new: true,
+      automatic_retry_limit: 3,
       connect_timeout_seconds: 15,
       response_timeout_seconds: 30,
       keepalive_seconds: 30,

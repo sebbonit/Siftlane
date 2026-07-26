@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -9,10 +10,11 @@ use siftlane_core::{
 };
 use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey, SftpAuth};
 use tauri::Manager;
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::{
+    scheduler::TransferScheduler,
     secrets::{SecretKind, SecretStore},
     storage::{Storage, StoredHostKey},
 };
@@ -24,7 +26,9 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<Uuid, SessionRecord>>>,
     pub pending_host_keys: Arc<Mutex<HashMap<Uuid, PendingHostKey>>>,
     pub transfers: Arc<Mutex<TransferQueue>>,
-    pub transfer_slots: Arc<Semaphore>,
+    pub transfer_scheduler: Arc<TransferScheduler>,
+    pub reconnect_guard: Arc<Mutex<()>>,
+    pub last_reconnect: Arc<Mutex<HashMap<Uuid, Instant>>>,
     pub searches: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
 }
 
@@ -63,9 +67,12 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             pending_host_keys: Arc::new(Mutex::new(HashMap::new())),
             transfers: Arc::new(Mutex::new(transfers)),
-            transfer_slots: Arc::new(Semaphore::new(
-                preferences.global_parallel_transfers.max(1) as usize
+            transfer_scheduler: Arc::new(TransferScheduler::new(
+                preferences.global_parallel_transfers,
+                preferences.per_host_parallel_transfers,
             )),
+            reconnect_guard: Arc::new(Mutex::new(())),
+            last_reconnect: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
         })
     }
