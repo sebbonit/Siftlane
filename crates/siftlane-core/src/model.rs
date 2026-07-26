@@ -42,6 +42,14 @@ pub struct ConnectionProfile {
     pub favorite: bool,
     #[serde(default)]
     pub ssh_options: SshOptions,
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub notes: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -60,6 +68,10 @@ impl ConnectionProfile {
             initial_remote_path: "/".into(),
             favorite: false,
             ssh_options: SshOptions::default(),
+            folder: None,
+            tags: Vec::new(),
+            color: None,
+            notes: String::new(),
             created_at: now,
             updated_at: now,
         }

@@ -3,6 +3,7 @@ import appIcon from "../../../src-tauri/icons/128x128.png";
 import { useAppVersion } from "../../hooks/useAppVersion";
 import type { ConnectionProfile, Preferences } from "../../types";
 import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
+import { ConfigurationPanel } from "./ConfigurationPanel";
 import type { SettingsCategoryId } from "./categories";
 import { SettingsList, SettingsRow } from "./SettingsRow";
 import { TrustedHostsPanel } from "./TrustedHostsPanel";
@@ -12,17 +13,24 @@ export function SettingsPanel({
   draft,
   onChange,
   profiles = [],
+  onConfigurationImported,
 }: {
   category: SettingsCategoryId;
   draft: Preferences;
   onChange: (next: Preferences) => void;
   profiles?: ConnectionProfile[];
+  onConfigurationImported: () => Promise<void>;
 }) {
   if (category === "general") {
     return <GeneralPanel draft={draft} onChange={onChange} />;
   }
   if (category === "transfers") {
     return <TransfersPanel draft={draft} onChange={onChange} profiles={profiles} />;
+  }
+  if (category === "profiles") {
+    return (
+      <ConfigurationPanel profiles={profiles} onImported={onConfigurationImported} />
+    );
   }
   if (category === "connection") {
     return <ConnectionPanel draft={draft} onChange={onChange} />;

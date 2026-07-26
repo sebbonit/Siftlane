@@ -1,6 +1,20 @@
-import { Cable, HardDriveDownload, Info, Palette, ShieldCheck, type LucideIcon } from "lucide-react";
+import {
+  Cable,
+  DatabaseBackup,
+  HardDriveDownload,
+  Info,
+  Palette,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 
-export type SettingsCategoryId = "general" | "transfers" | "connection" | "trusted_hosts" | "about";
+export type SettingsCategoryId =
+  | "general"
+  | "profiles"
+  | "transfers"
+  | "connection"
+  | "trusted_hosts"
+  | "about";
 
 export interface SettingsCategory {
   id: SettingsCategoryId;
@@ -10,6 +24,12 @@ export interface SettingsCategory {
 }
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
+  {
+    id: "profiles",
+    label: "Profiles & data",
+    description: "Organization, export, and import",
+    icon: DatabaseBackup,
+  },
   {
     id: "general",
     label: "General",

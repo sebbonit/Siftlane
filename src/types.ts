@@ -17,6 +17,10 @@ export interface ConnectionProfile {
   initial_remote_path: string;
   favorite: boolean;
   ssh_options: SshOptions;
+  folder: string | null;
+  tags: string[];
+  color: string | null;
+  notes: string;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +51,21 @@ export const DEFAULT_SSH_OPTIONS: SshOptions = {
   agent_forwarding: "deny",
   algorithms: { key_exchange: [], host_keys: [], ciphers: [], macs: [] },
 };
+
+export interface ConfigurationSummary {
+  version: number;
+  profiles: number;
+  bookmarks: number;
+  saved_actions: number;
+  secrets_included: boolean;
+}
+
+export interface ConfigurationImportSummary {
+  profiles: number;
+  bookmarks: number;
+  saved_actions: number;
+  secrets_imported: number;
+}
 
 export type EntryKind = "file" | "directory" | "symlink" | "other";
 

@@ -51,11 +51,13 @@ export function SettingsView({
   onBack,
   onChange,
   profiles = [],
+  onConfigurationImported,
 }: {
   value: Preferences;
   onBack: () => void;
   onChange: (value: Preferences) => void;
   profiles?: ConnectionProfile[];
+  onConfigurationImported: () => Promise<void>;
 }) {
   const [category, setCategory] = useState<SettingsCategoryId>("general");
   const [draft, setDraft] = useState(value);
@@ -98,7 +100,13 @@ export function SettingsView({
           </button>
         </header>
         <section className="settings-content" aria-label="Settings">
-          <SettingsPanel category={category} draft={draft} onChange={commit} profiles={profiles} />
+          <SettingsPanel
+            category={category}
+            draft={draft}
+            onChange={commit}
+            profiles={profiles}
+            onConfigurationImported={onConfigurationImported}
+          />
         </section>
       </main>
     </div>

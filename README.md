@@ -16,6 +16,10 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Single-hop ProxyJump through saved SFTP bastion profiles, plus SOCKS5 and HTTP CONNECT routing
 - Deny-by-default SSH agent forwarding and ordered key-exchange, host-key, cipher, and MAC policies
 - OpenSSH `known_hosts` import and auditable trusted-key management with first/last-seen timestamps
+- Searchable connection profiles with folders, tags, colors, notes, and credentials kept only in
+  the OS keyring
+- Versioned JSON export/import for profiles, bookmarks, and saved actions; secrets are excluded by
+  default and available only through an explicit encrypted export
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
 - Native Finder/Explorer file drops onto the remote pane, including folder targets and recursive
@@ -142,6 +146,28 @@ certificate-authority markers are reported as skipped. Removing trust requires a
 confirmation before the record is deleted.
 
 ![Trusted SSH host-key management](docs/images/trusted-host-management.png)
+
+## Profile organization and portable configuration
+
+Connection profiles can be grouped into folders, identified with a color, labeled with reusable
+tags, and annotated with private operator notes. Search matches the profile name, host, username,
+folder, tags, and notes without changing the saved organization.
+
+![Profile folders, tags, colors, notes, and search](docs/images/profile-organization.png)
+
+**Settings → Profiles & data** exports profiles, bookmarks, and saved actions as
+`app.siftlane.configuration` JSON. The document carries a schema version so future Siftlane
+releases can migrate it deliberately; imports are previewed and validated before records are
+merged by stable ID.
+
+![Portable configuration export and import](docs/images/portable-configuration.png)
+
+Plain exports never read the OS keyring and contain no passwords or private-key passphrases.
+Choosing **Export encrypted…** is a separate action that requests a new passphrase, reads only the
+saved credentials selected by profile authentication, and protects the secret payload with
+Argon2id and AES-256-GCM. Siftlane does not store or recover the export passphrase.
+
+![Explicit encrypted secret export](docs/images/encrypted-configuration-export.png)
 
 ## Project structure
 

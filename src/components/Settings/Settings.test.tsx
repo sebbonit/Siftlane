@@ -77,4 +77,28 @@ describe("Settings", () => {
     expect(screen.getByLabelText(/global parallel transfers/i)).toHaveValue(3);
     expect(screen.getByRole("button", { name: /restore defaults/i })).toBeDisabled();
   });
+
+  it("offers plain and explicitly encrypted configuration export", async () => {
+    render(<App />);
+    await screen.findByText("Move files without the noise.");
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Profiles & data" }));
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: /Profiles & data/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/credentials are excluded/i)).toBeInTheDocument();
+    expect(screen.getByText(/Argon2id and AES-256-GCM/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Export JSON" }));
+    expect(await screen.findByText(/without secrets/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Export encrypted/i }));
+    const dialog = screen.getByRole("dialog", { name: "Encrypted secret export" });
+    expect(dialog).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Export passphrase"), "long test passphrase");
+    await userEvent.type(screen.getByLabelText("Confirm passphrase"), "long test passphrase");
+    await userEvent.click(screen.getByRole("button", { name: "Encrypt & export" }));
+    expect(await screen.findByText(/encrypted secret payload/i)).toBeInTheDocument();
+  });
 });
