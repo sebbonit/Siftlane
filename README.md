@@ -6,7 +6,10 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 
 ![Siftlane dual-pane SFTP client](docs/images/siftlane-app.png)
 
-> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and evaluation. Implicit FTPS remains a roadmap item.
+> **Project status:** early alpha. SFTP, FTP, and explicit FTPS are implemented for development and
+> evaluation. Native file drops, external editing, profile portability, enterprise SSH routing,
+> and streamed remote-to-remote file copies are available. Implicit FTPS and server-side
+> remote-to-remote copy remain roadmap items.
 
 ## Features
 
@@ -35,8 +38,8 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Recursive local and remote filename search from the session header
 - Upload/download queue with progress, pause, cancel, bounded automatic retry, conflict prompts,
   Keep Both, partial files, restart recovery, integrity verification, and recursive directory transfers
-- Remote-to-remote file copies between two open sessions, streamed through the client with bounded
-  memory, explicit routing, resumable partials, integrity verification, and atomic destination commit
+- Remote-to-remote regular-file copies between two open sessions, streamed through the client with
+  bounded memory, explicit routing, resumable partials, integrity verification, and atomic commits
 - Queue-wide pause/resume, transfer priorities, drag ordering, per-job and overall ETA, remaining
   bytes, and a detail drawer with timestamps, retry history, partial paths, and errors
 - Global and per-profile upload/download rate limits, reusable time schedules, and temporary
