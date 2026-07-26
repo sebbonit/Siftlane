@@ -15,15 +15,82 @@ The interface is designed around a quiet dual-pane workflow with no advertising 
 - Unknown and changed host-key confirmation with SHA-256 fingerprints
 - Connection profiles in SQLite; passwords/passphrases only in the OS keyring
 - Local/remote dual-pane browser with remote-focused mode
+- Paired-directory comparison by name, size, and modification time, with visual local-only,
+  remote-only, newer, and size-mismatch markers
+- Reviewed upload-mirror, download-mirror, and newest-wins two-way synchronization
+- Per-profile synchronized browsing roots with a visible warning when the paired path is missing
+- Cmd/Ctrl multi-select, Shift range selection, Select All, keyboard navigation, aggregate sizes,
+  and batch transfer, delete, permission, and packaging operations
 - Recursive local and remote filename search from the session header
 - Upload/download queue with progress, pause, cancel, bounded automatic retry, conflict prompts,
   Keep Both, partial files, restart recovery, integrity verification, and recursive directory transfers
+- Queue-wide pause/resume, transfer priorities, drag ordering, per-job and overall ETA, remaining
+  bytes, and a detail drawer with timestamps, retry history, partial paths, and errors
+- Global and per-profile upload/download rate limits, reusable time schedules, and temporary
+  one-hour overrides backed by shared token buckets
+- Explicit symbolic-link policies (skip with warning, copy link, or dereference) and optional
+  permission/modification-time preservation where the destination supports it
+- Restored tabs, paths, layout, and active session on launch, with an opt-out and support for
+  opening the same profile in multiple tabs
 - Remote create, rename, delete, and POSIX permission operations
 - Explicit sudo editing for protected local Unix files and SFTP files
 - Persistent preferences, window state, transfer history, and recent connections
 - Native macOS, Windows, and Linux packaging configuration
 - Signed in-app updates from GitHub Releases (Tauri updater; no Apple Developer account required)
 - Browser demo mode for fast UI work without a running Tauri backend
+
+## Synchronization and queue workflows
+
+Comparison mode evaluates the two currently open directories. It matches entries by name and then
+compares type, size, and modification time. Differences are marked in both panes without changing
+either filesystem.
+
+![Directory comparison and professional transfer queue](docs/images/directory-comparison.png)
+
+Choosing **Synchronize…** always opens a review checklist. Every proposed transfer or deletion is
+shown before execution, and individual actions can be excluded. The available modes are:
+
+- **Two-way:** local-only and remote-only entries are copied across; the newer version wins when
+  both sides differ.
+- **Upload mirror:** local is authoritative; remote-only entries become reviewed deletions.
+- **Download mirror:** remote is authoritative; local-only entries become reviewed deletions.
+
+![Synchronization review checklist](docs/images/sync-review.png)
+
+Turn on **Synchronized browsing** to store the current local and remote directories as the root pair
+for that profile. Navigating below either root follows the same relative path in the other pane. If
+the paired directory is absent, Siftlane leaves that pane in place and displays the missing path.
+
+File panes support Cmd/Ctrl-click, Shift-click, Cmd/Ctrl+A, arrow/Home/End navigation, and Enter to
+open the focused item. Batch controls use the focused pane, while the footer reports the selection
+count and aggregate known size.
+
+![Multi-selection, batch controls, and queue overview](docs/images/multi-selection-queue.png)
+
+Transfer rows expose priority and drag ordering alongside per-job ETA. **Pause all** and **Resume
+all** act across the queue, while the detail drawer shows persisted diagnostic information.
+
+![Transfer queue detail drawer](docs/images/transfer-queue-details.png)
+
+## Transfer policies and bandwidth
+
+The transfer toolbar offers three symbolic-link policies:
+
+- **Skip with warning:** omit links and report how many were skipped.
+- **Copy link:** preserve the link itself when supported. SFTP and local Unix destinations support
+  link creation; unsupported protocols return an explicit error.
+- **Dereference:** transfer the linked file or local directory contents. Remote links that cannot be
+  resolved safely are rejected instead of being silently followed.
+
+With **Preserve metadata** enabled, downloads restore modification times and POSIX permissions when
+reported by the server. Uploads restore POSIX permissions when the remote protocol advertises
+`chmod` support.
+
+Transfer settings accept shared global limits and profile-specific upload/download limits in KB/s.
+Reusable local-time schedules can override the global rate—for example, an overnight unlimited
+window—and a configured global rate can be activated temporarily for one hour.
+
+![Bandwidth limits and reusable schedules](docs/images/bandwidth-settings.png)
 
 ## Project structure
 

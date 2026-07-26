@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use siftlane_core::{AppError, EntryKind, ErrorCode, RemoteFilesystem};
+use siftlane_core::{AppError, EntryKind, ErrorCode, RemoteFilesystem, SymlinkPolicy};
 
 pub const MAX_TRANSFER_FILES: usize = 5_000;
 pub const MAX_TRANSFER_DEPTH: usize = 64;
@@ -22,16 +22,23 @@ pub struct PlannedFile {
     pub destination_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedSymlink {
+    pub target: String,
+    pub destination_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TransferPlan {
     /// Absolute destination directory paths, sorted shallowest-first.
     pub directories: Vec<String>,
     pub files: Vec<PlannedFile>,
+    pub symlinks: Vec<PlannedSymlink>,
 }
 
 impl TransferPlan {
     pub fn is_empty(&self) -> bool {
-        self.directories.is_empty() && self.files.is_empty()
+        self.directories.is_empty() && self.files.is_empty() && self.symlinks.is_empty()
     }
 }
 
@@ -40,6 +47,7 @@ pub fn plan_local_directory(
     destination_base: &str,
     destination_is_remote: bool,
     mode: TransferPlanMode,
+    symlink_policy: SymlinkPolicy,
 ) -> Result<TransferPlan, AppError> {
     if !source.is_dir() {
         return Err(AppError::new(
@@ -55,6 +63,7 @@ pub fn plan_local_directory(
 
     let mut relative_dirs = BTreeSet::new();
     let mut relative_files: Vec<(String, String)> = Vec::new();
+    let mut relative_symlinks: Vec<(String, String)> = Vec::new();
     let mut stack = vec![(source.to_path_buf(), 0usize)];
 
     while let Some((current, depth)) = stack.pop() {
@@ -74,12 +83,36 @@ pub fn plan_local_directory(
                     .with_detail(source.to_string())
             })?;
             let path = item.path();
-            let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
+            let mut metadata = std::fs::symlink_metadata(&path).map_err(|source| {
                 AppError::new(ErrorCode::Io, "Could not read local entry metadata")
                     .with_detail(source.to_string())
             })?;
             if metadata.file_type().is_symlink() {
-                continue;
+                match symlink_policy {
+                    SymlinkPolicy::Skip => continue,
+                    SymlinkPolicy::CopyLink => {
+                        let relative = relative_from(source, &path)?;
+                        let planned_relative = with_prefix(&prefix, &relative);
+                        let target = std::fs::read_link(&path)
+                            .map_err(|source| {
+                                AppError::new(ErrorCode::Io, "Could not read symbolic link")
+                                    .with_detail(source.to_string())
+                            })?
+                            .to_string_lossy()
+                            .into_owned();
+                        relative_symlinks.push((target, planned_relative));
+                        continue;
+                    }
+                    SymlinkPolicy::Dereference => {
+                        metadata = std::fs::metadata(&path).map_err(|source| {
+                            AppError::new(
+                                ErrorCode::Io,
+                                "Could not dereference local symbolic link",
+                            )
+                            .with_detail(source.to_string())
+                        })?;
+                    }
+                }
             }
             let relative = relative_from(source, &path)?;
             let planned_relative = with_prefix(&prefix, &relative);
@@ -109,6 +142,7 @@ pub fn plan_local_directory(
         destination_is_remote,
         relative_dirs,
         relative_files,
+        relative_symlinks,
         &prefix,
         mode,
     )
@@ -120,6 +154,7 @@ pub async fn plan_remote_directory(
     destination_base: &str,
     destination_is_remote: bool,
     mode: TransferPlanMode,
+    symlink_policy: SymlinkPolicy,
 ) -> Result<TransferPlan, AppError> {
     let source = source.trim_end_matches('/');
     let source = if source.is_empty() { "/" } else { source };
@@ -144,6 +179,7 @@ pub async fn plan_remote_directory(
 
     let mut relative_dirs = BTreeSet::new();
     let mut relative_files: Vec<(String, String)> = Vec::new();
+    let mut relative_symlinks: Vec<(String, String)> = Vec::new();
     let mut stack = vec![(source.to_string(), 0usize)];
 
     while let Some((current, depth)) = stack.pop() {
@@ -156,7 +192,31 @@ pub async fn plan_remote_directory(
         let entries = client.list_directory(&current).await?;
         for entry in entries {
             match entry.kind {
-                EntryKind::Symlink | EntryKind::Other => continue,
+                EntryKind::Other => continue,
+                EntryKind::Symlink => match symlink_policy {
+                    SymlinkPolicy::Skip => continue,
+                    SymlinkPolicy::CopyLink => {
+                        let relative = remote_relative(source, &entry.path)?;
+                        let planned_relative = with_prefix(&prefix, &relative);
+                        let target = entry.symlink_target.ok_or_else(|| {
+                            AppError::new(
+                                ErrorCode::Unsupported,
+                                "The server did not report the symbolic link target",
+                            )
+                        })?;
+                        relative_symlinks.push((target, planned_relative));
+                        continue;
+                    }
+                    SymlinkPolicy::Dereference => {
+                        return Err(AppError::new(
+                            ErrorCode::InvalidInput,
+                            format!(
+                                "The remote protocol cannot safely dereference symbolic link {}",
+                                entry.path
+                            ),
+                        ));
+                    }
+                },
                 EntryKind::Directory => {
                     let relative = remote_relative(source, &entry.path)?;
                     let planned_relative = with_prefix(&prefix, &relative);
@@ -187,6 +247,7 @@ pub async fn plan_remote_directory(
         destination_is_remote,
         relative_dirs,
         relative_files,
+        relative_symlinks,
         &prefix,
         mode,
     )
@@ -197,6 +258,7 @@ fn build_plan(
     destination_is_remote: bool,
     relative_dirs: BTreeSet<String>,
     relative_files: Vec<(String, String)>,
+    relative_symlinks: Vec<(String, String)>,
     prefix: &str,
     mode: TransferPlanMode,
 ) -> Result<TransferPlan, AppError> {
@@ -236,6 +298,15 @@ fn build_plan(
             );
         }
     }
+    for (_, relative) in &relative_symlinks {
+        if let Some(parent) = parent_relative(relative) {
+            directories.insert(join_destination(
+                destination_base,
+                &parent,
+                destination_is_remote,
+            ));
+        }
+    }
 
     let mut directories: Vec<String> = directories.into_iter().collect();
     directories.sort_by_key(|path| path.matches('/').count() + path.matches('\\').count());
@@ -253,8 +324,19 @@ fn build_plan(
             })
         })
         .collect::<Result<Vec<_>, AppError>>()?;
+    let symlinks = relative_symlinks
+        .into_iter()
+        .map(|(target, relative)| PlannedSymlink {
+            target,
+            destination_path: join_destination(destination_base, &relative, destination_is_remote),
+        })
+        .collect();
 
-    let plan = TransferPlan { directories, files };
+    let plan = TransferPlan {
+        directories,
+        files,
+        symlinks,
+    };
     if plan.is_empty() {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
@@ -450,8 +532,14 @@ mod tests {
         fs::write(source.join("readme.txt"), b"hi").expect("write");
         fs::write(source.join("src/main.rs"), b"fn main() {}").expect("write");
 
-        let plan = plan_local_directory(&source, utf8(&dest), false, TransferPlanMode::IncludeRoot)
-            .expect("plan");
+        let plan = plan_local_directory(
+            &source,
+            utf8(&dest),
+            false,
+            TransferPlanMode::IncludeRoot,
+            SymlinkPolicy::Skip,
+        )
+        .expect("plan");
 
         assert!(
             plan.directories
@@ -482,9 +570,14 @@ mod tests {
         fs::create_dir_all(source.join("src")).expect("mkdir");
         fs::write(source.join("src/main.rs"), b"fn main() {}").expect("write");
 
-        let plan =
-            plan_local_directory(&source, utf8(&dest), false, TransferPlanMode::ContentsOnly)
-                .expect("plan");
+        let plan = plan_local_directory(
+            &source,
+            utf8(&dest),
+            false,
+            TransferPlanMode::ContentsOnly,
+            SymlinkPolicy::Skip,
+        )
+        .expect("plan");
 
         assert!(
             !plan
@@ -515,6 +608,7 @@ mod tests {
             utf8(&root.path().join("out")),
             false,
             TransferPlanMode::ContentsOnly,
+            SymlinkPolicy::Skip,
         )
         .expect("plan");
 
@@ -536,6 +630,7 @@ mod tests {
             utf8(&root.path().join("out")),
             false,
             TransferPlanMode::ContentsOnly,
+            SymlinkPolicy::Skip,
         )
         .expect_err("cap");
         assert_eq!(error.code, ErrorCode::InvalidInput);

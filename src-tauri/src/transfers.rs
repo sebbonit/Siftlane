@@ -4,10 +4,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{Datelike, Local, Timelike};
 use sha2::{Digest, Sha256};
 use siftlane_core::{
-    AppError, ConflictPolicy, ErrorCode, RemoteFilesystem, TransferDirection, TransferId,
-    TransferProgress, TransferState, TransferVerification,
+    AppError, ConflictPolicy, ErrorCode, Preferences, RemoteFilesystem, TransferDirection,
+    TransferId, TransferProgress, TransferState, TransferVerification,
 };
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -116,6 +117,7 @@ async fn prepare_retry(
         .min(30);
     queue.transition(id, TransferState::Interrupted).ok()?;
     queue.increment_retry(id).ok()?;
+    queue.record_retry(id, error.message.clone()).ok()?;
     queue
         .set_error(
             id,
@@ -170,6 +172,7 @@ async fn upload(
         if count == 0 {
             break;
         }
+        throttle(state, &job, count).await;
         remote
             .write_chunk(&job.partial_path, offset, &buffer[..count])
             .await?;
@@ -179,6 +182,7 @@ async fn upload(
     remote.sync_file(&job.partial_path).await?;
     verify_upload(state, remote.as_ref(), id, source_metadata.len()).await?;
     commit_remote(state, remote.as_ref(), id).await?;
+    preserve_upload_metadata(state, remote.as_ref(), id).await?;
     complete(app, state, id).await
 }
 
@@ -233,6 +237,7 @@ async fn download(
     while offset < total {
         ensure_running(state, id).await?;
         let remaining = (total - offset).min(CHUNK_SIZE as u64) as u32;
+        throttle(state, &job, remaining as usize).await;
         let bytes = remote
             .read_chunk(&job.source_path, offset, remaining)
             .await?;
@@ -254,7 +259,143 @@ async fn download(
     drop(destination);
     verify_download(state, remote.as_ref(), id, total).await?;
     commit_local(state, id).await?;
+    preserve_download_metadata(state, &source, id).await?;
     complete(app, state, id).await
+}
+
+async fn throttle(state: &AppState, job: &siftlane_core::TransferJob, bytes: usize) {
+    let Ok(preferences) = state.storage.load_preferences() else {
+        return;
+    };
+    let (global, profile) = bandwidth_limits(&preferences, job);
+    state
+        .bandwidth_limiter
+        .acquire(
+            match job.direction {
+                TransferDirection::Upload => "upload",
+                TransferDirection::Download => "download",
+            },
+            job.profile_id,
+            bytes,
+            global,
+            profile,
+        )
+        .await;
+}
+
+fn bandwidth_limits(
+    preferences: &Preferences,
+    job: &siftlane_core::TransferJob,
+) -> (Option<u64>, Option<u64>) {
+    let now = chrono::Utc::now();
+    let temporary = preferences
+        .temporary_bandwidth_limit
+        .as_ref()
+        .filter(|limit| limit.expires_at > now);
+    let scheduled = active_schedule(preferences);
+    let global = if let Some(limit) = temporary {
+        match job.direction {
+            TransferDirection::Upload => limit.upload_bps,
+            TransferDirection::Download => limit.download_bps,
+        }
+    } else if let Some(schedule) = scheduled {
+        match job.direction {
+            TransferDirection::Upload => schedule.upload_bps,
+            TransferDirection::Download => schedule.download_bps,
+        }
+    } else {
+        match job.direction {
+            TransferDirection::Upload => preferences.global_upload_limit_bps,
+            TransferDirection::Download => preferences.global_download_limit_bps,
+        }
+    };
+    let profile = preferences
+        .profile_bandwidth_limits
+        .get(&job.profile_id.to_string())
+        .and_then(|limit| match job.direction {
+            TransferDirection::Upload => limit.upload_bps,
+            TransferDirection::Download => limit.download_bps,
+        });
+    (global, profile)
+}
+
+fn active_schedule(preferences: &Preferences) -> Option<&siftlane_core::BandwidthSchedule> {
+    let now = Local::now();
+    let day = now.weekday().num_days_from_monday() as u8;
+    let minute = now.hour() * 60 + now.minute();
+    preferences.bandwidth_schedules.iter().find(|schedule| {
+        if !schedule.enabled || (!schedule.days.is_empty() && !schedule.days.contains(&day)) {
+            return false;
+        }
+        let parse = |value: &str| {
+            let (hour, minute) = value.split_once(':')?;
+            Some(hour.parse::<u32>().ok()? * 60 + minute.parse::<u32>().ok()?)
+        };
+        let (Some(start), Some(end)) = (parse(&schedule.start_time), parse(&schedule.end_time))
+        else {
+            return false;
+        };
+        if start <= end {
+            minute >= start && minute < end
+        } else {
+            minute >= start || minute < end
+        }
+    })
+}
+
+async fn preserve_upload_metadata(
+    state: &AppState,
+    remote: &dyn RemoteFilesystem,
+    id: TransferId,
+) -> Result<(), AppError> {
+    let job = job_snapshot(state, id).await?;
+    if !job.preserve_permissions || !remote.capabilities().chmod {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = tokio::fs::metadata(&job.source_path)
+            .await
+            .map_err(local_io_error)?;
+        remote
+            .set_permissions(&job.destination_path, metadata.permissions().mode())
+            .await?;
+    }
+    Ok(())
+}
+
+async fn preserve_download_metadata(
+    state: &AppState,
+    source: &siftlane_core::FileEntry,
+    id: TransferId,
+) -> Result<(), AppError> {
+    let job = job_snapshot(state, id).await?;
+    #[cfg(unix)]
+    if job.preserve_permissions
+        && let Some(mode) = source.permissions
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&job.destination_path, std::fs::Permissions::from_mode(mode))
+            .await
+            .map_err(local_io_error)?;
+    }
+    if job.preserve_modified_time
+        && let Some(modified) = source.modified_at
+    {
+        let path = job.destination_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new().write(true).open(path)?;
+            file.set_times(std::fs::FileTimes::new().set_modified(modified.into()))
+        })
+        .await
+        .map_err(|error| {
+            AppError::new(ErrorCode::Internal, "Metadata preservation task failed")
+                .with_detail(error.to_string())
+        })?
+        .map_err(local_io_error)?;
+    }
+    Ok(())
 }
 
 async fn verify_upload(

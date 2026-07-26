@@ -260,6 +260,30 @@ pub enum TransferVerification {
     Sha256Verified,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferPriority {
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SymlinkPolicy {
+    #[default]
+    Skip,
+    CopyLink,
+    Dereference,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RetryRecord {
+    pub at: DateTime<Utc>,
+    pub error: String,
+}
+
 impl TransferState {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
@@ -285,6 +309,16 @@ pub struct TransferJob {
     pub verification: TransferVerification,
     pub speed_bytes_per_second: Option<u64>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub priority: TransferPriority,
+    #[serde(default)]
+    pub preserve_modified_time: bool,
+    #[serde(default)]
+    pub preserve_permissions: bool,
+    #[serde(default)]
+    pub symlink_policy: SymlinkPolicy,
+    #[serde(default)]
+    pub retry_history: Vec<RetryRecord>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -316,6 +350,11 @@ impl TransferJob {
             verification: TransferVerification::Pending,
             speed_bytes_per_second: None,
             error: None,
+            priority: TransferPriority::Normal,
+            preserve_modified_time: false,
+            preserve_permissions: false,
+            symlink_policy: SymlinkPolicy::Skip,
+            retry_history: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -342,6 +381,42 @@ fn default_automatic_retry_limit() -> u8 {
     3
 }
 
+fn default_restore_sessions() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProfileBandwidthLimit {
+    pub upload_bps: Option<u64>,
+    pub download_bps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BandwidthSchedule {
+    pub id: Uuid,
+    pub label: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub upload_bps: Option<u64>,
+    pub download_bps: Option<u64>,
+    pub days: Vec<u8>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TemporaryBandwidthLimit {
+    pub upload_bps: Option<u64>,
+    pub download_bps: Option<u64>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SyncRootPair {
+    pub local_root: String,
+    pub remote_root: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Preferences {
     pub theme: Theme,
@@ -359,6 +434,20 @@ pub struct Preferences {
     /// Per-connection collapsed bookmark tile order (profile id → favorite ids).
     #[serde(default)]
     pub bookmark_order: std::collections::BTreeMap<String, Vec<String>>,
+    #[serde(default = "default_restore_sessions")]
+    pub restore_sessions: bool,
+    #[serde(default)]
+    pub global_upload_limit_bps: Option<u64>,
+    #[serde(default)]
+    pub global_download_limit_bps: Option<u64>,
+    #[serde(default)]
+    pub profile_bandwidth_limits: std::collections::BTreeMap<String, ProfileBandwidthLimit>,
+    #[serde(default)]
+    pub bandwidth_schedules: Vec<BandwidthSchedule>,
+    #[serde(default)]
+    pub temporary_bandwidth_limit: Option<TemporaryBandwidthLimit>,
+    #[serde(default)]
+    pub sync_roots: std::collections::BTreeMap<String, SyncRootPair>,
 }
 
 impl Default for Preferences {
@@ -375,6 +464,13 @@ impl Default for Preferences {
             response_timeout_seconds: 30,
             keepalive_seconds: 30,
             bookmark_order: std::collections::BTreeMap::new(),
+            restore_sessions: true,
+            global_upload_limit_bps: None,
+            global_download_limit_bps: None,
+            profile_bandwidth_limits: std::collections::BTreeMap::new(),
+            bandwidth_schedules: Vec::new(),
+            temporary_bandwidth_limit: None,
+            sync_roots: std::collections::BTreeMap::new(),
         }
     }
 }

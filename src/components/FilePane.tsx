@@ -1,4 +1,10 @@
-import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   ArrowLeft,
   Bookmark,
@@ -17,7 +23,7 @@ import { sortEntries, type SortDir, type SortKey } from "../lib/fileSort";
 import type { PaneSide } from "../lib/filePaneDnD";
 import { parentPath } from "../lib/paths";
 import { useFilePaneDnD, type PaneDropHandler } from "../hooks/useFilePaneDnD";
-import type { FileEntry } from "../types";
+import type { ComparisonStatus, FileEntry } from "../types";
 import { FilePaneContextMenu } from "./FilePaneContextMenu";
 import { FilePaneRows } from "./FilePaneRows";
 
@@ -40,7 +46,7 @@ export function FilePane({
   loading,
   showHidden,
   onFocus,
-  onSelect,
+  onSelectionChange,
   onNavigate,
   onBrowse,
   onRefresh,
@@ -60,17 +66,19 @@ export function FilePane({
   onPaneDrop,
   bookmarked = false,
   onToggleBookmark,
+  comparisonByName,
+  warning,
 }: {
   title: string;
   subtitle?: string;
   side: PaneSide;
   path: string;
   entries: FileEntry[];
-  selected: FileEntry | null;
+  selected: FileEntry[];
   loading: boolean;
   showHidden: boolean;
   onFocus?: () => void;
-  onSelect: (entry: FileEntry) => void;
+  onSelectionChange: (entries: FileEntry[]) => void;
   onNavigate: (path: string) => void;
   onBrowse?: () => void;
   onRefresh: () => void;
@@ -90,6 +98,8 @@ export function FilePane({
   onPaneDrop?: PaneDropHandler;
   bookmarked?: boolean;
   onToggleBookmark?: () => void;
+  comparisonByName?: Record<string, ComparisonStatus>;
+  warning?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -99,8 +109,9 @@ export function FilePane({
     y: number;
     entry: FileEntry | null;
   } | null>(null);
+  const anchorPath = useRef<string | null>(null);
 
-  const dnd = useFilePaneDnD(side, onSelect, onPaneDrop);
+  const dnd = useFilePaneDnD(side, (entry) => onSelectionChange([entry]), onPaneDrop);
 
   const visible = useMemo(() => {
     const filtered = entries.filter(
@@ -123,6 +134,62 @@ export function FilePane({
     }
     setSortKey(key);
     setSortDir(key === "name" ? "asc" : "desc");
+  }
+
+  function selectEntry(entry: FileEntry, event: ReactMouseEvent) {
+    const index = visible.findIndex((item) => item.path === entry.path);
+    const anchorIndex = visible.findIndex((item) => item.path === anchorPath.current);
+    if (event.shiftKey && anchorIndex >= 0) {
+      const start = Math.min(anchorIndex, index);
+      const end = Math.max(anchorIndex, index);
+      onSelectionChange(visible.slice(start, end + 1));
+    } else if (event.metaKey || event.ctrlKey) {
+      onSelectionChange(
+        selected.some((item) => item.path === entry.path)
+          ? selected.filter((item) => item.path !== entry.path)
+          : [...selected, entry],
+      );
+      anchorPath.current = entry.path;
+    } else {
+      onSelectionChange([entry]);
+      anchorPath.current = entry.path;
+    }
+  }
+
+  function handleKeys(event: KeyboardEvent<HTMLDivElement>) {
+    const isMod = event.metaKey || event.ctrlKey;
+    if (isMod && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      onSelectionChange(visible);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End", "Enter"].includes(event.key)) return;
+    event.preventDefault();
+    const current = selected.at(-1);
+    if (event.key === "Enter" && current) {
+      current.kind === "directory" ? onNavigate(current.path) : onOpenFile(current);
+      return;
+    }
+    const currentIndex = visible.findIndex((entry) => entry.path === current?.path);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? visible.length - 1
+          : Math.max(
+              0,
+              Math.min(visible.length - 1, currentIndex + (event.key === "ArrowDown" ? 1 : -1)),
+            );
+    const next = visible[nextIndex];
+    if (!next) return;
+    if (event.shiftKey) {
+      const paths = new Set(selected.map((entry) => entry.path));
+      paths.add(next.path);
+      onSelectionChange(visible.filter((entry) => paths.has(entry.path)));
+    } else {
+      onSelectionChange([next]);
+      anchorPath.current = next.path;
+    }
   }
 
   return (
@@ -215,6 +282,7 @@ export function FilePane({
         </label>
       </div>
       <div className="file-table" role="table">
+        {warning && <div className="pane-warning">{warning}</div>}
         <div className="file-header" role="row">
           {SORT_COLUMNS.map((column) => (
             <button
@@ -237,15 +305,16 @@ export function FilePane({
             </button>
           ))}
         </div>
-        <div className="file-rows">
+        <div className="file-rows" tabIndex={0} onKeyDown={handleKeys}>
           <FilePaneRows
             loading={loading}
             entriesEmpty={entries.length === 0}
             visible={visible}
-            selected={selected}
+            selectedPaths={new Set(selected.map((entry) => entry.path))}
+            comparisonByName={comparisonByName}
             dragOverFolderPath={dnd.dragOverFolderPath}
             draggingPath={dnd.draggingPath}
-            onSelect={onSelect}
+            onSelect={selectEntry}
             onNavigate={onNavigate}
             onOpenFile={onOpenFile}
             onContextMenu={openContextMenu}
@@ -254,8 +323,15 @@ export function FilePane({
         </div>
       </div>
       <footer className="pane-footer">
-        <span>{visible.length} items</span>
-        <span>{formatBytes(visible.reduce((sum, item) => sum + (item.size ?? 0), 0))}</span>
+        <span>{selected.length > 0 ? `${selected.length} selected` : `${visible.length} items`}</span>
+        <span>
+          {formatBytes(
+            (selected.length > 0 ? selected : visible).reduce(
+              (sum, item) => sum + (item.size ?? 0),
+              0,
+            ),
+          )}
+        </span>
       </footer>
       {contextMenu && (
         <FilePaneContextMenu

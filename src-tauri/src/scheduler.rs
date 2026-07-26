@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use tokio::sync::Notify;
@@ -26,6 +27,69 @@ pub struct TransferScheduler {
     changed: Notify,
 }
 
+#[derive(Debug, Default)]
+pub struct BandwidthLimiter {
+    buckets: Mutex<HashMap<String, BandwidthBucket>>,
+}
+
+#[derive(Debug)]
+struct BandwidthBucket {
+    tokens: f64,
+    updated: Instant,
+    limit: u64,
+}
+
+impl BandwidthLimiter {
+    pub async fn acquire(
+        &self,
+        direction: &str,
+        profile_id: Uuid,
+        bytes: usize,
+        global_limit: Option<u64>,
+        profile_limit: Option<u64>,
+    ) {
+        let wait = {
+            let mut buckets = self
+                .buckets
+                .lock()
+                .expect("bandwidth limiter lock poisoned");
+            [
+                (format!("global:{direction}"), global_limit),
+                (format!("profile:{profile_id}:{direction}"), profile_limit),
+            ]
+            .into_iter()
+            .filter_map(|(key, limit)| {
+                let limit = limit.filter(|value| *value > 0)?;
+                let bucket = buckets.entry(key).or_insert_with(|| BandwidthBucket {
+                    tokens: limit as f64,
+                    updated: Instant::now(),
+                    limit,
+                });
+                if bucket.limit != limit {
+                    bucket.limit = limit;
+                    bucket.tokens = bucket.tokens.min(limit as f64);
+                }
+                let now = Instant::now();
+                bucket.tokens = (bucket.tokens
+                    + now.duration_since(bucket.updated).as_secs_f64() * limit as f64)
+                    .min(limit as f64);
+                bucket.updated = now;
+                bucket.tokens -= bytes as f64;
+                Some(if bucket.tokens < 0.0 {
+                    Duration::from_secs_f64(-bucket.tokens / limit as f64)
+                } else {
+                    Duration::ZERO
+                })
+            })
+            .max()
+            .unwrap_or_default()
+        };
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+    }
+}
+
 impl TransferScheduler {
     pub fn new(global: u8, per_endpoint: u8) -> Self {
         Self {
@@ -48,6 +112,21 @@ impl TransferScheduler {
             global: global.max(1) as usize,
             per_endpoint: per_endpoint.max(1) as usize,
         };
+        drop(state);
+        self.changed.notify_waiters();
+    }
+
+    pub fn set_waiting_order(&self, ordered_ids: &[Uuid]) {
+        let mut state = self.state.lock().expect("transfer scheduler lock poisoned");
+        let rank: HashMap<_, _> = ordered_ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect();
+        state
+            .waiting
+            .make_contiguous()
+            .sort_by_key(|(id, _)| rank.get(id).copied().unwrap_or(usize::MAX));
         drop(state);
         self.changed.notify_waiters();
     }

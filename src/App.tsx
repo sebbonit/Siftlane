@@ -67,9 +67,15 @@ import {
 import { SearchDialog } from "./components/SearchDialog";
 import { SettingsView } from "./components/Settings";
 import { TransferPanel } from "./components/TransferPanel";
+import { SyncReviewDialog } from "./components/SyncReviewDialog";
 import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
 import { isImageFile } from "./lib/media";
+import {
+  compareDirectories,
+  planSynchronization,
+  type SyncAction,
+} from "./lib/directoryComparison";
 import { bookmarksForConnection, findBookmarkForPath } from "./lib/bookmarks";
 import {
   bookmarkIds,
@@ -94,6 +100,9 @@ import type {
   UUID,
   EditableFile,
   SearchMatch,
+  SymlinkPolicy,
+  SyncMode,
+  TransferJob,
 } from "./types";
 import appIcon from "../src-tauri/icons/128x128.png";
 
@@ -126,8 +135,17 @@ export default function App() {
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [localEntries, setLocalEntries] = useState<FileEntry[]>([]);
   const [remoteEntries, setRemoteEntries] = useState<FileEntry[]>([]);
-  const [selectedLocal, setSelectedLocal] = useState<FileEntry | null>(null);
-  const [selectedRemote, setSelectedRemote] = useState<FileEntry | null>(null);
+  const [selectedLocal, setSelectedLocal] = useState<FileEntry[]>([]);
+  const [selectedRemote, setSelectedRemote] = useState<FileEntry[]>([]);
+  const [comparisonEnabled, setComparisonEnabled] = useState(false);
+  const [syncMode, setSyncMode] = useState<SyncMode>("two_way");
+  const [syncReviewOpen, setSyncReviewOpen] = useState(false);
+  const [symlinkPolicy, setSymlinkPolicy] = useState<SymlinkPolicy>("skip");
+  const [preserveMetadata, setPreserveMetadata] = useState(true);
+  const [syncWarning, setSyncWarning] = useState<Record<PaneSide, string | null>>({
+    local: null,
+    remote: null,
+  });
   const [connectionDialog, setConnectionDialog] = useState<ConnectionProfile | "new" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [preferences, setPreferences] = useState<Preferences | null>(null);
@@ -202,11 +220,38 @@ export default function App() {
         setPreferences({
           ...nextPreferences,
           bookmark_order: nextPreferences.bookmark_order ?? {},
+          profile_bandwidth_limits: nextPreferences.profile_bandwidth_limits ?? {},
+          bandwidth_schedules: nextPreferences.bandwidth_schedules ?? [],
+          sync_roots: nextPreferences.sync_roots ?? {},
         });
         setSavedActions(nextActions);
         setFavorites(nextFavorites);
         applyTheme(nextPreferences.theme);
-        if (!desktop && nextProfiles[0]) await connect(nextProfiles[0]);
+        const restoredTabs = useAppStore.getState().tabs;
+        const restoredActiveTabId = useAppStore.getState().activeTabId;
+        let reconnectedActiveTabId: UUID | null = null;
+        if (nextPreferences.restore_sessions && restoredTabs.length > 0) {
+          for (const restoredTab of restoredTabs) {
+            useAppStore.getState().closeTab(restoredTab.id);
+            const profile = nextProfiles.find((item) => item.id === restoredTab.profileId);
+            if (profile) {
+              await connect(profile, undefined, {
+                localPath: restoredTab.localPath,
+                remotePath: restoredTab.remotePath,
+                layout: restoredTab.layout,
+              });
+              if (restoredTab.id === restoredActiveTabId) {
+                reconnectedActiveTabId = useAppStore.getState().activeTabId;
+              }
+            }
+          }
+          if (reconnectedActiveTabId) setActiveTab(reconnectedActiveTabId);
+        } else {
+          for (const restoredTab of restoredTabs) {
+            useAppStore.getState().closeTab(restoredTab.id);
+          }
+          if (!desktop && nextProfiles[0]) await connect(nextProfiles[0]);
+        }
       })
       .catch((reason) => setError(errorMessage(reason)));
     let stop: (() => void) | undefined;
@@ -268,7 +313,7 @@ export default function App() {
   async function connect(
     profile: ConnectionProfile,
     credential?: string,
-    paths?: { localPath?: string; remotePath?: string },
+    paths?: { localPath?: string; remotePath?: string; layout?: SessionTab["layout"] },
   ) {
     setConnectingId(profile.id);
     setError(null);
@@ -291,7 +336,7 @@ export default function App() {
         protocol: profile.protocol,
         localPath,
         remotePath: paths?.remotePath ?? profile.initial_remote_path,
-        layout: preferences?.default_layout ?? "dual_pane",
+        layout: paths?.layout ?? preferences?.default_layout ?? "dual_pane",
         connected: true,
       };
       addTab(tab);
@@ -329,10 +374,10 @@ export default function App() {
         : null;
       if (side === "local") {
         setLocalEntries(normalized);
-        setSelectedLocal(selected);
+        setSelectedLocal(selected ? [selected] : []);
       } else {
         setRemoteEntries(normalized);
-        setSelectedRemote(selected);
+        setSelectedRemote(selected ? [selected] : []);
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -346,6 +391,41 @@ export default function App() {
     if (!tabId) return;
     updateTab(tabId, side === "local" ? { localPath: path } : { remotePath: path });
     await loadPane(side, path, tabId, selectPath);
+    const tab = useAppStore.getState().tabs.find((item) => item.id === tabId);
+    const roots = tab ? preferences?.sync_roots?.[tab.profileId] : null;
+    const sourceRoot = roots && (side === "local" ? roots.local_root : roots.remote_root);
+    const normalizedRoot = sourceRoot?.replace(/[\\/]+$/, "") ?? "";
+    const withinRoot =
+      path === normalizedRoot ||
+      path.startsWith(`${normalizedRoot}${side === "remote" ? "/" : path.includes("\\") ? "\\" : "/"}`);
+    if (!tab || !roots?.enabled || !normalizedRoot || !withinRoot) return;
+    const otherSide: PaneSide = side === "local" ? "remote" : "local";
+    const targetRoot = side === "local" ? roots.remote_root : roots.local_root;
+    const relative = path
+      .slice(normalizedRoot.length)
+      .replace(/^[\\/]+/, "");
+    const target = relative ? joinPath(targetRoot, relative, otherSide === "remote") : targetRoot;
+    try {
+      const entries =
+        otherSide === "local" ? await api.listLocal(target) : await api.listRemote(tabId, target);
+      updateTab(tabId, otherSide === "local" ? { localPath: target } : { remotePath: target });
+      const normalized = entries.map((entry) =>
+        entry.kind === "directory" ? { ...entry, size: null } : entry,
+      );
+      if (otherSide === "local") {
+        setLocalEntries(normalized);
+        setSelectedLocal([]);
+      } else {
+        setRemoteEntries(normalized);
+        setSelectedRemote([]);
+      }
+      setSyncWarning((value) => ({ ...value, [otherSide]: null }));
+    } catch {
+      setSyncWarning((value) => ({
+        ...value,
+        [otherSide]: `Synchronized path does not exist: ${target}`,
+      }));
+    }
   }
 
   async function openSearchMatch(side: PaneSide, match: SearchMatch) {
@@ -388,9 +468,22 @@ export default function App() {
     destinationOverride?: string,
   ) {
     if (!activeTab || !activeProfile) return;
-    const selected = entry ?? (direction === "upload" ? selectedLocal : selectedRemote);
-    if (!selected || (selected.kind !== "file" && selected.kind !== "directory")) {
-      setError("Select a file or folder to transfer");
+    const selected = entry ? [entry] : direction === "upload" ? selectedLocal : selectedRemote;
+    const transferable = selected.filter(
+      (item) =>
+        item.kind === "file" ||
+        item.kind === "directory" ||
+        (item.kind === "symlink" && symlinkPolicy !== "skip"),
+    );
+    const skippedSymlinks = selected.filter(
+      (item) => item.kind === "symlink" && symlinkPolicy === "skip",
+    ).length;
+    if (transferable.length === 0) {
+      setError(
+        skippedSymlinks > 0
+          ? `Skipped ${skippedSymlinks} symbolic link${skippedSymlinks === 1 ? "" : "s"} by policy`
+          : "Select a file or folder to transfer",
+      );
       return;
     }
     setError(null);
@@ -398,26 +491,40 @@ export default function App() {
       const destinationBase =
         destinationOverride ??
         (direction === "upload" ? activeTab.remotePath : activeTab.localPath);
-      if (selected.kind === "directory") {
-        const jobs = await api.enqueueDirectoryTransfer({
-          profileId: activeProfile.id,
-          direction,
-          sourcePath: selected.path,
-          destinationPath: destinationBase,
-          conflictPolicy: "ask",
-          mode: "include_root",
-        });
-        setTransfers([...jobs, ...transfers.filter((item) => !jobs.some((job) => job.id === item.id))]);
-        return;
+      const queued: TransferJob[] = [];
+      for (const selectedEntry of transferable) {
+        if (selectedEntry.kind === "directory") {
+          queued.push(...await api.enqueueDirectoryTransfer({
+            profileId: activeProfile.id,
+            direction,
+            sourcePath: selectedEntry.path,
+            destinationPath: destinationBase,
+            conflictPolicy: "ask",
+            mode: "include_root",
+            symlinkPolicy,
+            preserveModifiedTime: preserveMetadata,
+            preservePermissions: preserveMetadata,
+          }));
+        } else {
+          queued.push(await api.enqueueTransfer({
+            profileId: activeProfile.id,
+            direction,
+            sourcePath: selectedEntry.path,
+            destinationPath: joinPath(destinationBase, selectedEntry.name, direction === "upload"),
+            conflictPolicy: "ask",
+            symlinkPolicy,
+            preserveModifiedTime: preserveMetadata,
+            preservePermissions: preserveMetadata,
+          }));
+        }
       }
-      const job = await api.enqueueTransfer({
-        profileId: activeProfile.id,
-        direction,
-        sourcePath: selected.path,
-        destinationPath: joinPath(destinationBase, selected.name, direction === "upload"),
-        conflictPolicy: "ask",
-      });
-      setTransfers([job, ...transfers.filter((item) => item.id !== job.id)]);
+      setTransfers([
+        ...queued,
+        ...transfers.filter((item) => !queued.some((job) => job.id === item.id)),
+      ]);
+      if (skippedSymlinks > 0) {
+        setError(`Skipped ${skippedSymlinks} symbolic link${skippedSymlinks === 1 ? "" : "s"} by policy`);
+      }
     } catch (reason) {
       setError(errorMessage(reason));
     }
@@ -439,11 +546,11 @@ export default function App() {
     try {
       if (side === "local") {
         await api.renameLocalEntry(entry.path, destinationPath);
-        setSelectedLocal(null);
+        setSelectedLocal([]);
         await loadPane("local", activeTab.localPath);
       } else {
         await api.renameRemoteEntry(activeTab.id, entry.path, destinationPath);
-        setSelectedRemote(null);
+        setSelectedRemote([]);
         await loadPane("remote", activeTab.remotePath);
       }
     } catch (reason) {
@@ -575,35 +682,43 @@ export default function App() {
 
   async function removeSelected(side: PaneSide, privileged = false, entry?: FileEntry) {
     if (!activeTab) return;
-    const selected = entry ?? (side === "local" ? selectedLocal : selectedRemote);
-    if (!selected) return;
-    const directory = selected.kind === "directory";
+    const selected = entry ? [entry] : side === "local" ? selectedLocal : selectedRemote;
+    if (selected.length === 0) return;
     setError(null);
     try {
-      if (!(await api.confirmDelete(selected.name, directory))) return;
-      const remove = (password?: string) => {
-        if (privileged) {
+      const label =
+        selected.length === 1 && selected[0]
+          ? selected[0].name
+          : `${selected.length} selected items`;
+      if (!(await api.confirmDelete(label, selected.some((item) => item.kind === "directory")))) {
+        return;
+      }
+      for (const item of selected) {
+        const directory = item.kind === "directory";
+        const remove = (password?: string) => {
+          if (privileged) {
+            return side === "local"
+              ? api.deleteLocalEntryPrivileged(item.path, directory, password)
+              : api.deleteRemoteEntryPrivileged(activeTab.id, item.path, directory, password);
+          }
           return side === "local"
-            ? api.deleteLocalEntryPrivileged(selected.path, directory, password)
-            : api.deleteRemoteEntryPrivileged(activeTab.id, selected.path, directory, password);
+            ? api.deleteLocalEntry(item.path, directory)
+            : api.deleteRemoteEntry(activeTab.id, item.path, directory);
+        };
+        try {
+          await remove();
+        } catch (reason) {
+          if (!privileged || (reason as AppError)?.code !== "authentication_failed") throw reason;
+          const password = await requestSudoPassword(item.path);
+          if (password == null) return;
+          await remove(password);
         }
-        return side === "local"
-          ? api.deleteLocalEntry(selected.path, directory)
-          : api.deleteRemoteEntry(activeTab.id, selected.path, directory);
-      };
-      try {
-        await remove();
-      } catch (reason) {
-        if (!privileged || (reason as AppError)?.code !== "authentication_failed") throw reason;
-        const password = await requestSudoPassword(selected.path);
-        if (password == null) return;
-        await remove(password);
       }
       if (side === "local") {
-        setSelectedLocal(null);
+        setSelectedLocal([]);
         await loadPane("local", activeTab.localPath);
       } else {
-        setSelectedRemote(null);
+        setSelectedRemote([]);
         await loadPane("remote", activeTab.remotePath);
       }
     } catch (reason) {
@@ -703,11 +818,6 @@ export default function App() {
   }
 
   async function handleProfileClick(profile: ConnectionProfile) {
-    const existing = tabs.find((tab) => tab.profileId === profile.id);
-    if (existing) {
-      setActiveTab(existing.id);
-      return;
-    }
     await connect(profile);
   }
 
@@ -825,11 +935,10 @@ export default function App() {
         setError("The connection for this bookmark was removed");
         return;
       }
-      let tabId = useAppStore.getState().activeTabId;
       const existing = useAppStore.getState().tabs.find((tab) => tab.profileId === profile.id);
       if (existing) {
         setActiveTab(existing.id);
-        tabId = existing.id;
+        await navigate(bookmark.side, bookmark.path, existing.id);
       } else {
         await connect(
           profile,
@@ -838,10 +947,7 @@ export default function App() {
             ? { localPath: bookmark.path }
             : { remotePath: bookmark.path },
         );
-        return;
       }
-      if (!tabId) return;
-      await navigate(bookmark.side, bookmark.path, tabId);
     } catch (reason) {
       setError(errorMessage(reason));
     }
@@ -856,6 +962,90 @@ export default function App() {
     }
   }
 
+  async function batchPermissions() {
+    if (!activeTab) return;
+    const selected = focusedPane === "local" ? selectedLocal : selectedRemote;
+    if (selected.length === 0) return;
+    const value = window.prompt("Permissions (octal)", "755");
+    if (!value || !/^[0-7]{3,4}$/.test(value)) return;
+    const permissions = Number.parseInt(value, 8);
+    try {
+      for (const entry of selected) {
+        if (focusedPane === "local") {
+          await api.setLocalPermissions(entry.path, permissions);
+        } else {
+          await api.setRemotePermissions(activeTab.id, entry.path, permissions);
+        }
+      }
+      await loadPane(
+        focusedPane,
+        focusedPane === "local" ? activeTab.localPath : activeTab.remotePath,
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function batchPackage() {
+    if (!activeTab) return;
+    const selected = (focusedPane === "local" ? selectedLocal : selectedRemote).filter(
+      (entry) => entry.kind === "directory",
+    );
+    if (selected.length === 0) {
+      setError("Select one or more folders to package");
+      return;
+    }
+    try {
+      for (const entry of selected) {
+        if (focusedPane === "local") {
+          await api.packageLocalDirectory(entry.path, "zip");
+        } else {
+          await api.packageRemoteDirectory(activeTab.id, entry.path, "zip");
+        }
+      }
+      await loadPane(
+        focusedPane,
+        focusedPane === "local" ? activeTab.localPath : activeTab.remotePath,
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  const comparedEntries = compareDirectories(localEntries, remoteEntries);
+  const comparisonByName = Object.fromEntries(
+    comparedEntries.map((item) => [item.name, item.status]),
+  );
+  const syncActions: SyncAction[] = planSynchronization(comparedEntries, syncMode);
+
+  async function executeSynchronization(actions: SyncAction[]) {
+    if (!activeTab) return;
+    setSyncReviewOpen(false);
+    setError(null);
+    try {
+      for (const action of actions) {
+        if (action.kind === "upload" || action.kind === "download") {
+          await addTransfer(action.kind, action.entry);
+        } else if (action.kind === "delete_local") {
+          await api.deleteLocalEntry(action.entry.path, action.entry.kind === "directory");
+        } else {
+          await api.deleteRemoteEntry(
+            activeTab.id,
+            action.entry.path,
+            action.entry.kind === "directory",
+          );
+        }
+      }
+      setTransfers(await api.listTransfers());
+      await Promise.all([
+        loadPane("local", activeTab.localPath),
+        loadPane("remote", activeTab.remotePath),
+      ]);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }
+
   return (
     <>
       <AppUpdater />
@@ -863,6 +1053,7 @@ export default function App() {
       {settingsOpen && preferences ? (
       <SettingsView
         value={preferences}
+        profiles={profiles}
         onBack={() => setSettingsOpen(false)}
         onChange={(next) => {
           setPreferences(next);
@@ -909,6 +1100,13 @@ export default function App() {
               response_timeout_seconds: 30,
               keepalive_seconds: 30,
               bookmark_order: {},
+              restore_sessions: true,
+              global_upload_limit_bps: null,
+              global_download_limit_bps: null,
+              profile_bandwidth_limits: {},
+              bandwidth_schedules: [],
+              temporary_bandwidth_limit: null,
+              sync_roots: {},
             };
             const next = {
               ...base,
@@ -960,6 +1158,78 @@ export default function App() {
                 }, 780);
               }}
             />
+            <div className="sync-toolbar">
+              <button
+                className={comparisonEnabled ? "active" : ""}
+                onClick={() => setComparisonEnabled((value) => !value)}
+              >
+                {comparisonEnabled ? "Comparison on" : "Compare directories"}
+              </button>
+              <button onClick={() => setSyncReviewOpen(true)}>Synchronize…</button>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!!activeProfile && !!preferences?.sync_roots?.[activeProfile.id]?.enabled}
+                  onChange={(event) => {
+                    if (!activeProfile || !activeTab || !preferences) return;
+                    const next = {
+                      ...preferences,
+                      sync_roots: {
+                        ...preferences.sync_roots,
+                        [activeProfile.id]: {
+                          local_root: activeTab.localPath,
+                          remote_root: activeTab.remotePath,
+                          enabled: event.target.checked,
+                        },
+                      },
+                    };
+                    setPreferences(next);
+                    void api.savePreferences(next);
+                  }}
+                />
+                Synchronized browsing
+              </label>
+              <label>
+                Symlinks
+                <select
+                  value={symlinkPolicy}
+                  onChange={(event) => setSymlinkPolicy(event.target.value as SymlinkPolicy)}
+                >
+                  <option value="skip">Skip with warning</option>
+                  <option value="copy_link">Copy link</option>
+                  <option value="dereference">Dereference</option>
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={preserveMetadata}
+                  onChange={(event) => setPreserveMetadata(event.target.checked)}
+                />
+                Preserve metadata
+              </label>
+              <button
+                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                onClick={() => void batchPermissions()}
+              >
+                Permissions…
+              </button>
+              <button
+                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                onClick={() => void batchPackage()}
+              >
+                Package
+              </button>
+              <button
+                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                onClick={() => void removeSelected(focusedPane)}
+              >
+                Delete
+              </button>
+              {comparisonEnabled && (
+                <span>{comparedEntries.filter((item) => item.status !== "same").length} differences</span>
+              )}
+            </div>
             <section
               className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : "dual-pane"}${layoutMorphing ? " is-morphing" : ""}`}
             >
@@ -977,7 +1247,9 @@ export default function App() {
                   loading={loadingPane === "local"}
                   showHidden={paneHidden.local ?? preferences?.show_hidden_files ?? true}
                   onFocus={() => setFocusedPane("local")}
-                  onSelect={setSelectedLocal}
+                  onSelectionChange={setSelectedLocal}
+                  comparisonByName={comparisonEnabled ? comparisonByName : undefined}
+                  warning={syncWarning.local}
                   onNavigate={(path) => navigate("local", path)}
                   onBrowse={() => void browseFolder("local")}
                   onRefresh={() => loadPane("local", activeTab.localPath)}
@@ -1001,10 +1273,10 @@ export default function App() {
                 inert={activeTab.layout === "remote_focused" ? true : undefined}
               >
                 <div className="transfer-controls" aria-label="Transfer selected item">
-                  <button title="Upload selected" onClick={() => void addTransfer("upload")} disabled={!selectedLocal}>
+                  <button title="Upload selected" onClick={() => void addTransfer("upload")} disabled={selectedLocal.length === 0}>
                     <ArrowRight size={17} />
                   </button>
-                  <button title="Download selected" onClick={() => void addTransfer("download")} disabled={!selectedRemote}>
+                  <button title="Download selected" onClick={() => void addTransfer("download")} disabled={selectedRemote.length === 0}>
                     <ArrowLeft size={17} />
                   </button>
                 </div>
@@ -1020,7 +1292,9 @@ export default function App() {
                   loading={loadingPane === "remote"}
                   showHidden={paneHidden.remote ?? preferences?.show_hidden_files ?? true}
                   onFocus={() => setFocusedPane("remote")}
-                  onSelect={setSelectedRemote}
+                  onSelectionChange={setSelectedRemote}
+                  comparisonByName={comparisonEnabled ? comparisonByName : undefined}
+                  warning={syncWarning.remote}
                   onNavigate={(path) => navigate("remote", path)}
                   onBrowse={() => void browseFolder("remote")}
                   onRefresh={() => loadPane("remote", activeTab.remotePath)}
@@ -1137,6 +1411,15 @@ export default function App() {
           label={remoteCommandResults.label}
           results={remoteCommandResults.results}
           onClose={() => setRemoteCommandResults(null)}
+        />
+      )}
+      {syncReviewOpen && (
+        <SyncReviewDialog
+          mode={syncMode}
+          actions={syncActions}
+          onModeChange={setSyncMode}
+          onClose={() => setSyncReviewOpen(false)}
+          onConfirm={(actions) => void executeSynchronization(actions)}
         />
       )}
       {connectionDialog && (

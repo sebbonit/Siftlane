@@ -625,6 +625,13 @@ button:disabled { cursor: default; opacity: .38; }
 .file-row:nth-child(n+9) { animation-delay: .09s; }
 .file-row:hover { background: var(--surface-soft); color: var(--text); }
 .file-row.selected { background: var(--teal-soft); color: var(--text); box-shadow: inset 3px 0 0 var(--teal); }
+.file-row.comparison-local_only { box-shadow: inset 3px 0 0 var(--green); }
+.file-row.comparison-remote_only { box-shadow: inset 3px 0 0 var(--issue); }
+.file-row.comparison-local_newer,
+.file-row.comparison-remote_newer { box-shadow: inset 3px 0 0 var(--orange); }
+.file-row.comparison-size_mismatch { box-shadow: inset 3px 0 0 var(--red); }
+.comparison-badge { margin-left: auto; padding: 1px 5px; border-radius: 8px; color: var(--orange); background: var(--orange-soft); font-size: 8px; font-style: normal; white-space: nowrap; }
+.pane-warning { padding: 7px 10px; color: var(--orange); background: var(--orange-soft); border-bottom: 1px solid var(--border); font-size: 9px; }
 .file-row.selected:active { transform: scale(.995); }
 .file-row.is-draggable { cursor: grab; }
 .file-row.is-draggable:active { cursor: grabbing; }
@@ -720,6 +727,11 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .permissions { font-family: var(--font-mono); color: var(--faint); }
 .pane-message { height: 120px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--faint); font-size: 10px; animation: fade-up var(--dur) var(--ease-out) both; }
 .pane-footer { min-height: 29px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 9px; }
+.sync-toolbar { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--surface-soft); overflow-x: auto; }
+.sync-toolbar button, .sync-toolbar label { min-height: 25px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); }
+.sync-toolbar button.active { color: var(--teal); border-color: var(--teal); background: var(--teal-soft); }
+.sync-toolbar > span { margin-left: auto; color: var(--muted); }
+.sync-toolbar select { border: 0; background: transparent; font-size: 9px; }
 .editor-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 7vh 6vw; background: rgba(20, 27, 25, .48); backdrop-filter: blur(3px); animation: backdrop-in var(--dur) var(--ease-out) both; }
 .loading-toast {
   position: fixed;
@@ -997,6 +1009,7 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .transfer-heading nav button { display: flex; align-items: center; gap: 5px; padding: 0 10px; color: var(--muted); border-bottom: 2px solid transparent; transition: color var(--dur-fast) var(--ease-soft), border-color var(--dur) var(--ease-spring); }
 .transfer-heading nav button.active { color: var(--teal); border-bottom-color: var(--teal); }
 .transfer-heading nav button.active span { background: var(--teal-soft); color: var(--teal); transform: scale(1.08); }
+.queue-summary { color: var(--muted); font-size: 9px; white-space: nowrap; }
 .transfer-clear { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .transfer-clear:hover:not(:disabled) { color: var(--text); background: var(--surface-soft); }
 .transfer-clear:disabled { opacity: .4; cursor: default; }
@@ -1010,6 +1023,7 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .transfer-name-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .transfer-name-text strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
 .transfer-name-text small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--faint); font-size: 9px; }
+.transfer-row select { max-width: 62px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-soft); font-size: 8px; }
 .progress-cell { display: grid !important; grid-template-columns: 1fr 30px; }
 .progress-track { height: 5px; border-radius: 4px; overflow: hidden; background: var(--border); }
 .progress-track i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), color-mix(in srgb, var(--teal-strong) 80%, white)); border-radius: inherit; transition: width .35s var(--ease-out); box-shadow: 0 0 8px color-mix(in srgb, var(--teal) 40%, transparent); }
@@ -1022,6 +1036,33 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .row-actions button { width: 23px; height: 23px; display: grid; place-items: center; color: var(--muted); border-radius: 5px; }
 .row-actions button:hover { color: var(--text); background: var(--surface-soft); transform: scale(1.08); }
 .empty-transfers { height: 80px; display: grid; place-items: center; color: var(--faint); animation: fade-up var(--dur) var(--ease-out) both; }
+.transfer-detail { position: fixed; z-index: 90; top: 30px; right: 0; bottom: 0; width: min(390px, 80vw); padding: 18px; border-left: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); overflow: auto; }
+.transfer-detail header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.transfer-detail dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; }
+.transfer-detail dt { color: var(--faint); }
+.transfer-detail dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 10px; }
+.transfer-detail li { margin: 6px 0; color: var(--muted); }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; padding: 20px; background: rgba(18, 25, 23, .48); backdrop-filter: blur(3px); }
+.sync-review { width: min(720px, 100%); max-height: calc(100vh - 60px); display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.sync-review > header, .sync-review > footer { display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+.sync-review > header { justify-content: space-between; }
+.sync-review > header div { display: flex; flex-direction: column; gap: 3px; }
+.sync-review > header small { color: var(--muted); }
+.sync-review > label { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; }
+.sync-review select { min-width: 250px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.sync-destructive-warning { display: flex; align-items: center; gap: 7px; padding: 9px 18px; color: var(--red); background: var(--red-soft); }
+.sync-checklist { min-height: 100px; overflow: auto; padding: 5px 18px 14px; }
+.sync-checklist label { display: grid; grid-template-columns: 16px 16px minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.sync-checklist label span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sync-checklist small { color: var(--muted); overflow-wrap: anywhere; }
+.sync-review > footer { justify-content: flex-end; border-top: 1px solid var(--border); border-bottom: 0; }
+.sync-review > footer > span { margin-right: auto; color: var(--muted); }
+.sync-review .primary-action { margin: 0; height: 34px; padding: 0 14px; }
+.profile-bandwidth { display: flex; align-items: center; gap: 4px; }
+.profile-bandwidth input { width: 70px !important; }
+.schedule-controls { display: flex; align-items: center; gap: 6px; }
+.schedule-controls input[type="time"] { width: 96px !important; }
 
 .welcome { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--teal-soft) 65%, transparent), transparent 34%); }
 .welcome > img { width: 78px; height: 78px; border-radius: 19px; box-shadow: 0 10px 30px rgba(14, 86, 79, .16); animation: welcome-logo .7s var(--ease-bounce) both; }

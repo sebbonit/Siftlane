@@ -9,6 +9,8 @@ import {
   Play,
   RefreshCw,
   Trash2,
+  GripVertical,
+  Info,
   X,
 } from "lucide-react";
 import { capitalize, formatBytes } from "../lib/format";
@@ -19,7 +21,7 @@ import {
   type TransferFilter,
 } from "../lib/transferFilters";
 import { useAppStore } from "../store";
-import type { TransferJob } from "../types";
+import type { TransferJob, TransferPriority } from "../types";
 import { TransferConflictDialog } from "./TransferConflictDialog";
 
 const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
@@ -45,6 +47,8 @@ function transferStatus(job: TransferJob): string {
 export function TransferPanel() {
   const { transfers, transferPanelOpen, toggleTransfers, setTransfers } = useAppStore();
   const [filter, setFilter] = useState<TransferFilter>("all");
+  const [detailJobId, setDetailJobId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const filtered = transfers.filter((job) => matchesTransferFilter(job, filter));
   const clearableCount = countTransferFilter(transfers, filter);
   const conflict = transfers.find((job) => job.state === "waiting_for_conflict") ?? null;
@@ -54,6 +58,15 @@ export function TransferPanel() {
       : transfers.filter(
           (job) => job.batch_id === conflict.batch_id && !["completed", "cancelled"].includes(job.state),
         ).length;
+  const remainingBytes = transfers.reduce(
+    (sum, job) => sum + Math.max(0, (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred),
+    0,
+  );
+  const aggregateSpeed = transfers.reduce(
+    (sum, job) => sum + (job.state === "running" ? job.speed_bytes_per_second ?? 0 : 0),
+    0,
+  );
+  const detailJob = transfers.find((job) => job.id === detailJobId) ?? null;
 
   async function act(job: TransferJob, action: "pause" | "resume" | "cancel" | "retry") {
     const updated = await api.controlTransfer(job.id, action);
@@ -64,6 +77,20 @@ export function TransferPanel() {
     if (clearableCount === 0) return;
     const remaining = await api.clearTransfers(filter);
     setTransfers(remaining);
+  }
+
+  async function controlAll(action: "pause" | "resume") {
+    setTransfers(await api.controlAllTransfers(action));
+  }
+
+  async function setPriority(job: TransferJob, priority: TransferPriority) {
+    setTransfers(await api.setTransferPriority(job.id, priority));
+  }
+
+  async function dropBefore(beforeId: string | null) {
+    if (!draggingId || draggingId === beforeId) return;
+    setTransfers(await api.reorderTransfer(draggingId, beforeId));
+    setDraggingId(null);
   }
 
   async function resolveConflict(
@@ -98,6 +125,15 @@ export function TransferPanel() {
             </button>
           ))}
         </nav>
+        <span className="queue-summary">
+          {formatBytes(remainingBytes)} left · ETA {formatEta(remainingBytes, aggregateSpeed)}
+        </span>
+        <button className="transfer-clear" onClick={() => void controlAll("pause")}>
+          <Pause size={13} /> Pause all
+        </button>
+        <button className="transfer-clear" onClick={() => void controlAll("resume")}>
+          <Play size={13} /> Resume all
+        </button>
         <button
           className="transfer-clear"
           title={`Clear ${filter} transfers`}
@@ -126,8 +162,16 @@ export function TransferPanel() {
             const route = transferRoute(job);
             const name = job.source_path.split(/[\\/]/).pop() || job.source_path;
             return (
-              <div className="transfer-row" key={job.id}>
+              <div
+                className="transfer-row"
+                key={job.id}
+                draggable={!job.state.includes("running")}
+                onDragStart={() => setDraggingId(job.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => void dropBefore(job.id)}
+              >
                 <span className="transfer-name" title={route}>
+                  <GripVertical size={13} />
                   <File size={15} />
                   <span className="transfer-name-text">
                     <strong>{name}</strong>
@@ -141,12 +185,25 @@ export function TransferPanel() {
                     <ArrowDownToLine size={14} />
                   )}
                   {capitalize(job.direction)}
+                  <select
+                    aria-label={`Priority for ${name}`}
+                    value={job.priority ?? "normal"}
+                    onChange={(event) => void setPriority(job, event.target.value as TransferPriority)}
+                  >
+                    <option value="high">High</option>
+                    <option value="normal">Normal</option>
+                    <option value="low">Low</option>
+                  </select>
                 </span>
                 <span className="progress-cell">
                   <span className="progress-track">
                     <i style={{ width: `${progress}%` }} />
                   </span>
                   <small>{Math.round(progress)}%</small>
+                  <small>{formatEta(
+                    Math.max(0, (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred),
+                    job.speed_bytes_per_second ?? 0,
+                  )}</small>
                 </span>
                 <span>
                   {job.speed_bytes_per_second
@@ -158,6 +215,9 @@ export function TransferPanel() {
                   {transferStatus(job)}
                 </span>
                 <span className="row-actions">
+                  <button title="Details" onClick={() => setDetailJobId(job.id)}>
+                    <Info size={14} />
+                  </button>
                   {job.state === "running" && (
                     <button title="Pause" onClick={() => void act(job, "pause")}>
                       <Pause size={14} />
@@ -198,6 +258,38 @@ export function TransferPanel() {
         onResolve={resolveConflict}
       />
     )}
+    {detailJob && (
+      <aside className="transfer-detail" aria-label="Transfer details">
+        <header>
+          <strong>Transfer details</strong>
+          <button aria-label="Close details" onClick={() => setDetailJobId(null)}><X size={15} /></button>
+        </header>
+        <dl>
+          <dt>Created</dt><dd>{new Date(detailJob.created_at).toLocaleString()}</dd>
+          <dt>Updated</dt><dd>{new Date(detailJob.updated_at).toLocaleString()}</dd>
+          <dt>Partial path</dt><dd>{detailJob.partial_path}</dd>
+          <dt>Priority</dt><dd>{capitalize(detailJob.priority ?? "normal")}</dd>
+          <dt>Retries</dt><dd>{detailJob.retry_count}</dd>
+          <dt>Error</dt><dd>{detailJob.error ?? "None"}</dd>
+        </dl>
+        {(detailJob.retry_history?.length ?? 0) > 0 && (
+          <ol>
+            {detailJob.retry_history?.map((retry) => (
+              <li key={`${retry.at}:${retry.error}`}>{new Date(retry.at).toLocaleString()} — {retry.error}</li>
+            ))}
+          </ol>
+        )}
+      </aside>
+    )}
     </>
   );
+}
+
+function formatEta(bytes: number, speed: number): string {
+  if (bytes <= 0) return "0s";
+  if (speed <= 0) return "—";
+  const seconds = Math.ceil(bytes / speed);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3_600)}h ${Math.floor((seconds % 3_600) / 60)}m`;
 }

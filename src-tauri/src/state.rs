@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::{
-    scheduler::TransferScheduler,
+    scheduler::{BandwidthLimiter, TransferScheduler},
     secrets::{SecretKind, SecretStore},
     storage::{Storage, StoredHostKey},
 };
@@ -27,6 +27,7 @@ pub struct AppState {
     pub pending_host_keys: Arc<Mutex<HashMap<Uuid, PendingHostKey>>>,
     pub transfers: Arc<Mutex<TransferQueue>>,
     pub transfer_scheduler: Arc<TransferScheduler>,
+    pub bandwidth_limiter: Arc<BandwidthLimiter>,
     pub reconnect_guard: Arc<Mutex<()>>,
     pub last_reconnect: Arc<Mutex<HashMap<Uuid, Instant>>>,
     pub searches: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
@@ -71,6 +72,7 @@ impl AppState {
                 preferences.global_parallel_transfers,
                 preferences.per_host_parallel_transfers,
             )),
+            bandwidth_limiter: Arc::new(BandwidthLimiter::default()),
             reconnect_guard: Arc::new(Mutex::new(())),
             last_reconnect: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
@@ -191,6 +193,9 @@ pub fn run() {
             crate::commands::enqueue_transfer,
             crate::commands::enqueue_directory_transfer,
             crate::commands::control_transfer,
+            crate::commands::control_all_transfers,
+            crate::commands::set_transfer_priority,
+            crate::commands::reorder_transfer,
             crate::commands::resolve_transfer_conflict,
             crate::commands::list_saved_actions,
             crate::commands::save_saved_action,
