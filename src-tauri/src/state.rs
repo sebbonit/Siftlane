@@ -7,6 +7,7 @@ use std::{
 use async_trait::async_trait;
 use siftlane_core::{
     AppError, ConnectionProfile, ErrorCode, Preferences, RemoteFilesystem, TransferQueue,
+    TrustedHostKey,
 };
 use siftlane_sftp::{HostKeyDecision, HostKeyVerifier, ObservedHostKey, SftpAuth};
 use tauri::Manager;
@@ -17,7 +18,7 @@ use crate::{
     external_edit::ExternalEditRecord,
     scheduler::{BandwidthLimiter, TransferScheduler},
     secrets::{SecretKind, SecretStore},
-    storage::{Storage, StoredHostKey},
+    storage::Storage,
 };
 
 #[derive(Clone)]
@@ -98,11 +99,11 @@ impl AppState {
 }
 
 pub struct StoredKeyVerifier {
-    keys: Vec<StoredHostKey>,
+    keys: Vec<TrustedHostKey>,
 }
 
 impl StoredKeyVerifier {
-    pub fn new(keys: Vec<StoredHostKey>) -> Self {
+    pub fn new(keys: Vec<TrustedHostKey>) -> Self {
         Self { keys }
     }
 }
@@ -110,14 +111,17 @@ impl StoredKeyVerifier {
 #[async_trait]
 impl HostKeyVerifier for StoredKeyVerifier {
     async fn classify(&self, observed: &ObservedHostKey) -> HostKeyDecision {
-        if self.keys.iter().any(|known| {
-            known.host == observed.host
-                && known.port == observed.port
-                && known.algorithm == observed.algorithm
-                && known.fingerprint == observed.fingerprint_sha256
+        let matching_host = self
+            .keys
+            .iter()
+            .filter(|known| known.host == observed.host && known.port == observed.port)
+            .collect::<Vec<_>>();
+        if matching_host.iter().any(|known| {
+            known.algorithm == observed.algorithm
+                && known.fingerprint_sha256 == observed.fingerprint_sha256
         }) {
             HostKeyDecision::Trusted
-        } else if self.keys.is_empty() {
+        } else if matching_host.is_empty() {
             HostKeyDecision::Unknown
         } else {
             HostKeyDecision::Changed
@@ -177,6 +181,9 @@ pub fn run() {
             crate::configuration::import_configuration,
             crate::commands::connect_profile,
             crate::commands::trust_host_key,
+            crate::commands::list_trusted_hosts,
+            crate::commands::remove_trusted_host,
+            crate::commands::import_known_hosts,
             crate::commands::disconnect_session,
             crate::commands::get_default_local_path,
             crate::commands::list_local_directory,

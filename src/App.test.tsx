@@ -21,6 +21,14 @@ describe("Siftlane shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Private key" }));
     expect(screen.getByRole("button", { name: /browse/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/choose an ssh private key/i)).toBeRequired();
+    expect(screen.getByLabelText(/proxyjump \/ bastion/i)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText(/network proxy/i), "socks5");
+    expect(screen.getByLabelText(/proxy host/i)).toBeRequired();
+    expect(screen.getByLabelText(/proxy port/i)).toHaveValue(1080);
+    expect(screen.getByLabelText(/allow ssh agent forwarding/i)).not.toBeChecked();
+    await userEvent.click(screen.getByText(/custom ssh algorithm policy/i));
+    expect(screen.getByLabelText(/key exchange/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/host keys/i)).toBeInTheDocument();
   });
 
   it("persists a starred connection in the favorites section", async () => {

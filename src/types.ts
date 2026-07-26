@@ -16,6 +16,7 @@ export interface ConnectionProfile {
   auth: AuthRef;
   initial_remote_path: string;
   favorite: boolean;
+  ssh_options: SshOptions;
   folder: string | null;
   tags: string[];
   color: string | null;
@@ -23,6 +24,33 @@ export interface ConnectionProfile {
   created_at: string;
   updated_at: string;
 }
+
+export interface SshOptions {
+  proxy_jump_profile_id: UUID | null;
+  proxy: SshProxy | null;
+  agent_forwarding: "deny" | "allow";
+  algorithms: SshAlgorithmPolicy;
+}
+
+export interface SshProxy {
+  kind: "socks5" | "http_connect";
+  host: string;
+  port: number;
+}
+
+export interface SshAlgorithmPolicy {
+  key_exchange: string[];
+  host_keys: string[];
+  ciphers: string[];
+  macs: string[];
+}
+
+export const DEFAULT_SSH_OPTIONS: SshOptions = {
+  proxy_jump_profile_id: null,
+  proxy: null,
+  agent_forwarding: "deny",
+  algorithms: { key_exchange: [], host_keys: [], ciphers: [], macs: [] },
+};
 
 export interface ConfigurationSummary {
   version: number;
@@ -94,6 +122,20 @@ export interface HostKeyChallenge {
   algorithm: string;
   fingerprint_sha256: string;
   changed: boolean;
+}
+
+export interface TrustedHostKey {
+  host: string;
+  port: number;
+  algorithm: string;
+  fingerprint_sha256: string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface KnownHostsImportSummary {
+  imported: number;
+  skipped: number;
 }
 
 export type ConnectResult =

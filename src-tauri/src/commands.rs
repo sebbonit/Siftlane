@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -15,12 +16,13 @@ use secrecy::SecretString;
 use serde::Deserialize;
 use siftlane_core::{
     AppError, ArchiveFormat, AuthRef, ConflictPolicy, ConnectResult, ConnectionProfile, EntryKind,
-    ErrorCode, Favorite, FavoriteSide, FileEntry, HostKeyChallenge, Preferences, Protocol,
-    RemoteCommandResult, RemoteFilesystem, SavedAction, SymlinkPolicy, TransferDirection,
-    TransferJob, TransferListFilter, TransferPriority, TransferState,
+    ErrorCode, Favorite, FavoriteSide, FileEntry, HostKeyChallenge, KnownHostsImportSummary,
+    Preferences, Protocol, RemoteCommandResult, RemoteFilesystem, SavedAction, SymlinkPolicy,
+    TransferDirection, TransferJob, TransferListFilter, TransferPriority, TransferState,
+    TrustedHostKey,
 };
 use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
-use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions};
+use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions, SftpProxyJump};
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(unix)]
 use tokio::{io::AsyncWriteExt, process::Command as TokioCommand};
@@ -29,7 +31,6 @@ use uuid::Uuid;
 use crate::{
     secrets::SecretKind,
     state::{AppState, PendingHostKey, SessionRecord, StoredKeyVerifier},
-    storage::StoredHostKey,
     transfer_plan::{TransferPlan, TransferPlanMode, plan_local_directory, plan_remote_directory},
 };
 
@@ -124,6 +125,28 @@ pub(crate) fn normalize_profile(
         }
         _ => {}
     }
+    if profile.protocol != Protocol::Sftp && profile.ssh_options != Default::default() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "SSH routing and algorithm settings are available only for SFTP profiles",
+        ));
+    }
+    if profile.ssh_options.proxy_jump_profile_id == Some(profile.id) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "A profile cannot use itself as a bastion",
+        ));
+    }
+    if let Some(proxy) = &mut profile.ssh_options.proxy {
+        proxy.host = proxy.host.trim().to_string();
+        if proxy.host.is_empty() || proxy.port == 0 {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "Proxy host and port are required",
+            ));
+        }
+    }
+    normalize_algorithm_policy(&mut profile.ssh_options.algorithms);
     profile.updated_at = Utc::now();
     Ok(profile)
 }
@@ -195,7 +218,38 @@ async fn connect_sftp_with_auth(
     preferences: Preferences,
     resume_transfers: bool,
 ) -> Result<ConnectResult, AppError> {
-    let known_keys = state.storage.host_keys(&profile.host, profile.port)?;
+    let mut known_keys = state.storage.host_keys(&profile.host, profile.port)?;
+    let proxy_jump = if let Some(profile_id) = profile.ssh_options.proxy_jump_profile_id {
+        let jump = state.storage.get_profile(profile_id)?;
+        if jump.protocol != Protocol::Sftp {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "The selected bastion must be an SFTP profile",
+            ));
+        }
+        if jump.ssh_options.proxy_jump_profile_id.is_some() {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "Nested ProxyJump profiles are not supported",
+            ));
+        }
+        known_keys.extend(state.storage.host_keys(&jump.host, jump.port)?);
+        let (auth, _) = resolve_sftp_auth(state, &jump, None).map_err(|error| {
+            AppError::new(
+                error.code,
+                "The bastion profile needs a saved credential before it can be used",
+            )
+            .with_detail(error.message)
+        })?;
+        Some(SftpProxyJump {
+            host: jump.host,
+            port: jump.port,
+            username: jump.username,
+            auth,
+        })
+    } else {
+        None
+    };
     let verifier = Arc::new(StoredKeyVerifier::new(known_keys));
     let options = SftpConnectOptions {
         host: profile.host.clone(),
@@ -205,9 +259,27 @@ async fn connect_sftp_with_auth(
         connect_timeout: std::time::Duration::from_secs(preferences.connect_timeout_seconds),
         response_timeout: std::time::Duration::from_secs(preferences.response_timeout_seconds),
         keepalive_interval: std::time::Duration::from_secs(preferences.keepalive_seconds),
+        proxy: profile.ssh_options.proxy.clone(),
+        proxy_jump,
+        agent_forwarding: matches!(
+            profile.ssh_options.agent_forwarding,
+            siftlane_core::AgentForwardingPolicy::Allow
+        ),
+        algorithms: profile.ssh_options.algorithms.clone(),
     };
     match SftpClient::connect(options, verifier).await {
         Ok(client) => {
+            let now = Utc::now();
+            for key in client.observed_host_keys() {
+                state.storage.touch_host_key(&TrustedHostKey {
+                    host: key.host.clone(),
+                    port: key.port,
+                    algorithm: key.algorithm.clone(),
+                    fingerprint_sha256: key.fingerprint_sha256.clone(),
+                    first_seen_at: now,
+                    last_seen_at: now,
+                })?;
+            }
             persist_supplied_secret(state, &profile, supplied_secret)?;
             let session_id = Uuid::new_v4();
             state.sessions.write().await.insert(
@@ -425,11 +497,14 @@ pub async fn trust_host_key(
     if !accept {
         return Ok(None);
     }
-    state.storage.trust_host_key(&StoredHostKey {
+    let now = Utc::now();
+    state.storage.trust_host_key(&TrustedHostKey {
         host: pending.key.host.clone(),
         port: pending.key.port,
         algorithm: pending.key.algorithm.clone(),
-        fingerprint: pending.key.fingerprint_sha256.clone(),
+        fingerprint_sha256: pending.key.fingerprint_sha256.clone(),
+        first_seen_at: now,
+        last_seen_at: now,
     })?;
     connect_sftp_with_auth(
         &app,
@@ -445,6 +520,66 @@ pub async fn trust_host_key(
 }
 
 #[tauri::command]
+pub fn list_trusted_hosts(state: State<'_, AppState>) -> Result<Vec<TrustedHostKey>, AppError> {
+    state.storage.list_host_keys()
+}
+
+#[tauri::command]
+pub fn remove_trusted_host(
+    state: State<'_, AppState>,
+    host: String,
+    port: u16,
+    algorithm: String,
+) -> Result<(), AppError> {
+    state
+        .storage
+        .remove_host_key(host.trim(), port, algorithm.trim())
+}
+
+#[tauri::command]
+pub fn import_known_hosts(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<KnownHostsImportSummary, AppError> {
+    let metadata = fs::metadata(&path).map_err(|source| {
+        AppError::new(ErrorCode::NotFound, "The known_hosts file was not found")
+            .with_detail(source.to_string())
+    })?;
+    if metadata.len() > 4 * 1024 * 1024 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "known_hosts imports are limited to 4 MB",
+        ));
+    }
+    let contents = fs::read_to_string(&path).map_err(|source| {
+        AppError::new(ErrorCode::Io, "Could not read the known_hosts file")
+            .with_detail(source.to_string())
+    })?;
+    let (keys, mut skipped) = parse_known_hosts(&contents);
+    let now = Utc::now();
+    for key in &keys {
+        state.storage.trust_host_key(&TrustedHostKey {
+            host: key.host.clone(),
+            port: key.port,
+            algorithm: key.algorithm.clone(),
+            fingerprint_sha256: key.fingerprint_sha256.clone(),
+            first_seen_at: now,
+            last_seen_at: now,
+        })?;
+    }
+    if keys.is_empty() && skipped == 0 && !contents.trim().is_empty() {
+        skipped = contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+    }
+    Ok(KnownHostsImportSummary {
+        imported: keys.len(),
+        skipped,
+    })
+}
+
+#[tauri::command]
 pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: Uuid,
@@ -456,6 +591,90 @@ pub async fn disconnect_session(
         .remove(&session_id)
         .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Session not found"))?;
     session.client.disconnect().await
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImportedHostKey {
+    host: String,
+    port: u16,
+    algorithm: String,
+    fingerprint_sha256: String,
+}
+
+fn parse_known_hosts(contents: &str) -> (Vec<ImportedHostKey>, usize) {
+    use russh::keys::ssh_key::{HashAlg, PublicKey};
+
+    let mut keys = Vec::new();
+    let mut skipped = 0;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 3 || fields[0].starts_with('@') {
+            skipped += 1;
+            continue;
+        }
+        let Ok(public_key) = PublicKey::from_openssh(&format!("{} {}", fields[1], fields[2]))
+        else {
+            skipped += 1;
+            continue;
+        };
+        let fingerprint = public_key.fingerprint(HashAlg::Sha256).to_string();
+        let algorithm = public_key.algorithm().to_string();
+        let mut imported_line = false;
+        for pattern in fields[0].split(',') {
+            let Some((host, port)) = parse_known_host_pattern(pattern) else {
+                continue;
+            };
+            keys.push(ImportedHostKey {
+                host,
+                port,
+                algorithm: algorithm.clone(),
+                fingerprint_sha256: fingerprint.clone(),
+            });
+            imported_line = true;
+        }
+        if !imported_line {
+            skipped += 1;
+        }
+    }
+    (keys, skipped)
+}
+
+fn parse_known_host_pattern(pattern: &str) -> Option<(String, u16)> {
+    if pattern.starts_with('|')
+        || pattern.starts_with('!')
+        || pattern.contains(['*', '?'])
+        || pattern.is_empty()
+    {
+        return None;
+    }
+    if let Some(rest) = pattern.strip_prefix('[')
+        && let Some((host, port)) = rest.rsplit_once("]:")
+    {
+        return port.parse().ok().map(|port| (host.to_string(), port));
+    }
+    Some((pattern.to_string(), 22))
+}
+
+fn normalize_algorithm_policy(policy: &mut siftlane_core::SshAlgorithmPolicy) {
+    for names in [
+        &mut policy.key_exchange,
+        &mut policy.host_keys,
+        &mut policy.ciphers,
+        &mut policy.macs,
+    ] {
+        let mut normalized = Vec::new();
+        for name in std::mem::take(names) {
+            let name = name.trim().to_string();
+            if !name.is_empty() && !normalized.contains(&name) {
+                normalized.push(name);
+            }
+        }
+        *names = normalized;
+    }
 }
 
 #[tauri::command]
@@ -2390,9 +2609,10 @@ fn local_permissions(_: &std::fs::Metadata) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_remote_path;
     #[cfg(unix)]
     use super::{ErrorCode, local_sudo_error};
+    use super::{normalize_algorithm_policy, normalize_remote_path, parse_known_host_pattern};
+    use siftlane_core::SshAlgorithmPolicy;
 
     #[test]
     fn remote_paths_are_absolute_and_normalized() {
@@ -2401,6 +2621,34 @@ mod tests {
             "/var/html"
         );
         assert_eq!(normalize_remote_path("").unwrap(), "/");
+    }
+
+    #[test]
+    fn known_host_patterns_require_concrete_hosts() {
+        assert_eq!(
+            parse_known_host_pattern("[bastion.example.com]:2222"),
+            Some(("bastion.example.com".into(), 2222))
+        );
+        assert_eq!(
+            parse_known_host_pattern("server.example.com"),
+            Some(("server.example.com".into(), 22))
+        );
+        assert_eq!(parse_known_host_pattern("|1|hashed|host"), None);
+        assert_eq!(parse_known_host_pattern("*.example.com"), None);
+    }
+
+    #[test]
+    fn algorithm_policy_is_trimmed_and_deduplicated() {
+        let mut policy = SshAlgorithmPolicy {
+            ciphers: vec![
+                " aes256-gcm@openssh.com ".into(),
+                "".into(),
+                "aes256-gcm@openssh.com".into(),
+            ],
+            ..Default::default()
+        };
+        normalize_algorithm_policy(&mut policy);
+        assert_eq!(policy.ciphers, vec!["aes256-gcm@openssh.com"]);
     }
 
     #[cfg(unix)]

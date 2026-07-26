@@ -4,6 +4,7 @@ import {
   HardDriveDownload,
   Info,
   Palette,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -12,6 +13,7 @@ export type SettingsCategoryId =
   | "profiles"
   | "transfers"
   | "connection"
+  | "trusted_hosts"
   | "about";
 
 export interface SettingsCategory {
@@ -45,6 +47,12 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     label: "Connection",
     description: "Timeouts and keepalive for remote sessions",
     icon: Cable,
+  },
+  {
+    id: "trusted_hosts",
+    label: "Trusted hosts",
+    description: "SSH fingerprints and known_hosts import",
+    icon: ShieldCheck,
   },
   {
     id: "about",

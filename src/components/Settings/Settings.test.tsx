@@ -29,6 +29,13 @@ describe("Settings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connection" }));
     expect(screen.getByLabelText(/connect timeout/i)).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole("button", { name: "Trusted hosts" }));
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Trusted host keys" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /import known_hosts/i })).toBeInTheDocument();
+    expect(screen.getByText(/keys appear here after first-use confirmation/i)).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole("button", { name: "About" }));
     expect(screen.getByText(/version 0\.2\.1/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back/i })).toBeInTheDocument();

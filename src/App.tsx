@@ -81,6 +81,7 @@ import { TransferPanel } from "./components/TransferPanel";
 import { SyncReviewDialog } from "./components/SyncReviewDialog";
 import { AppUpdater } from "./components/Updater";
 import { api, desktop } from "./lib/ipc";
+import { DEFAULT_SSH_OPTIONS } from "./types";
 import { isImageFile } from "./lib/media";
 import {
   compareDirectories,
@@ -1630,6 +1631,7 @@ export default function App() {
       {connectionDialog && (
         <ConnectionDialog
           existing={connectionDialog === "new" ? null : connectionDialog}
+          profiles={profiles}
           folders={[
             ...new Set(
               profiles
@@ -2170,12 +2172,14 @@ function NewEntryDialog({ directory, side, privileged, onClose, onSubmit }: {
   </Dialog>;
 }
 
-function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
+function ConnectionDialog({ existing, profiles, folders, onClose, onSubmit }: {
   existing: ConnectionProfile | null;
+  profiles: ConnectionProfile[];
   folders: string[];
   onClose: () => void;
   onSubmit: (profile: ConnectionProfile, credential: string) => Promise<void>;
 }) {
+  const existingSsh = existing?.ssh_options ?? DEFAULT_SSH_OPTIONS;
   const [label, setLabel] = useState(existing?.label ?? "");
   const [protocol, setProtocol] = useState<ConnectionProfile["protocol"]>(existing?.protocol ?? "sftp");
   const [host, setHost] = useState(existing?.host ?? "");
@@ -2191,6 +2195,17 @@ function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
   const [credential, setCredential] = useState("");
   const [remember, setRemember] = useState(existing?.auth.kind === "password" ? existing.auth.remember : true);
   const [showSecret, setShowSecret] = useState(false);
+  const [proxyJumpProfileId, setProxyJumpProfileId] = useState(existingSsh.proxy_jump_profile_id ?? "");
+  const [proxyKind, setProxyKind] = useState<"none" | "socks5" | "http_connect">(
+    existingSsh.proxy?.kind ?? "none",
+  );
+  const [proxyHost, setProxyHost] = useState(existingSsh.proxy?.host ?? "");
+  const [proxyPort, setProxyPort] = useState(existingSsh.proxy?.port ?? 1080);
+  const [agentForwarding, setAgentForwarding] = useState(existingSsh.agent_forwarding === "allow");
+  const [keyExchange, setKeyExchange] = useState(existingSsh.algorithms.key_exchange.join(", "));
+  const [hostKeyAlgorithms, setHostKeyAlgorithms] = useState(existingSsh.algorithms.host_keys.join(", "));
+  const [ciphers, setCiphers] = useState(existingSsh.algorithms.ciphers.join(", "));
+  const [macs, setMacs] = useState(existingSsh.algorithms.macs.join(", "));
   const [saving, setSaving] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   async function choosePrivateKey() {
@@ -2216,6 +2231,8 @@ function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
     setDialogError(null);
     const now = new Date().toISOString();
     const auth: AuthRef = authKind === "anonymous" ? { kind: "anonymous" } : authKind === "password" ? { kind: "password", remember } : authKind === "private_key" ? { kind: "private_key", path: keyPath, remember_passphrase: remember } : { kind: "agent" };
+    const algorithmList = (value: string) =>
+      value.split(",").map((item) => item.trim()).filter(Boolean);
     try {
       await onSubmit({
         id: existing?.id ?? crypto.randomUUID(),
@@ -2227,6 +2244,17 @@ function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
         auth,
         initial_remote_path: path,
         favorite: existing?.favorite ?? false,
+        ssh_options: protocol === "sftp" ? {
+          proxy_jump_profile_id: proxyJumpProfileId || null,
+          proxy: proxyKind === "none" ? null : { kind: proxyKind, host: proxyHost, port: proxyPort },
+          agent_forwarding: agentForwarding ? "allow" : "deny",
+          algorithms: {
+            key_exchange: algorithmList(keyExchange),
+            host_keys: algorithmList(hostKeyAlgorithms),
+            ciphers: algorithmList(ciphers),
+            macs: algorithmList(macs),
+          },
+        } : DEFAULT_SSH_OPTIONS,
         folder: folder.trim() || null,
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
         color,
@@ -2252,6 +2280,26 @@ function ConnectionDialog({ existing, folders, onClose, onSubmit }: {
         {authKind === "anonymous" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will sign in with the standard anonymous FTP account. No password is stored.</span></div>}
         {authKind === "agent" && <div className="agent-note"><KeyRound size={17} /><span>Siftlane will try identities from your running SSH agent. Private keys never enter the app.</span></div>}
       </fieldset>
+      {sshProtocol && <fieldset className="enterprise-ssh"><legend>Enterprise SSH</legend>
+        <div className="form-grid">
+          <label className="wide">ProxyJump / bastion<select value={proxyJumpProfileId} onChange={(event) => setProxyJumpProfileId(event.target.value)}><option value="">Direct connection</option>{profiles.filter((profile) => profile.protocol === "sftp" && profile.id !== existing?.id).map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.username}@{profile.host}:{profile.port}</option>)}</select></label>
+          <label>Network proxy<select value={proxyKind} onChange={(event) => { const next = event.target.value as typeof proxyKind; setProxyKind(next); if (proxyPort === 1080 || proxyPort === 8080) setProxyPort(next === "socks5" ? 1080 : 8080); }}><option value="none">No proxy</option><option value="socks5">SOCKS5</option><option value="http_connect">HTTP CONNECT</option></select></label>
+          {proxyKind !== "none" && <><label className="host">Proxy host<input value={proxyHost} onChange={(event) => setProxyHost(event.target.value)} placeholder="proxy.corp.example" required /></label><label>Proxy port<input type="number" min={1} max={65535} value={proxyPort} onChange={(event) => setProxyPort(Number(event.target.value))} required /></label></>}
+        </div>
+        <label className="checkbox enterprise-forwarding"><input type="checkbox" checked={agentForwarding} onChange={(event) => setAgentForwarding(event.target.checked)} /> Allow SSH agent forwarding for remote commands</label>
+        <p className="enterprise-note">Agent forwarding is denied by default. When enabled, forwarded channels are connected only to your running local SSH agent.</p>
+        <details className="ssh-algorithms">
+          <summary>Custom SSH algorithm policy</summary>
+          <p>Leave a list empty to use Siftlane’s safe defaults. Comma-separated values are applied in preference order.</p>
+          <div className="form-grid">
+            <label className="wide">Key exchange<input value={keyExchange} onChange={(event) => setKeyExchange(event.target.value)} placeholder="curve25519-sha256" /></label>
+            <label className="wide">Host keys<input value={hostKeyAlgorithms} onChange={(event) => setHostKeyAlgorithms(event.target.value)} placeholder="ssh-ed25519, rsa-sha2-512" /></label>
+            <label className="wide">Ciphers<input value={ciphers} onChange={(event) => setCiphers(event.target.value)} placeholder="chacha20-poly1305@openssh.com, aes256-gcm@openssh.com" /></label>
+            <label className="wide">MACs<input value={macs} onChange={(event) => setMacs(event.target.value)} placeholder="hmac-sha2-512-etm@openssh.com" /></label>
+          </div>
+        </details>
+        {proxyJumpProfileId && <p className="enterprise-route"><ShieldAlert size={14} />Traffic routes to the selected bastion first, then opens a bounded direct-tcpip channel to this host. A configured network proxy is used to reach the bastion.</p>}
+      </fieldset>}
       {dialogError && <p className="dialog-error"><CircleAlert size={14} />{dialogError}</p>}
       <div className="dialog-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button type="submit" className="primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={15} />}Save & Connect</button></div>
     </form>
