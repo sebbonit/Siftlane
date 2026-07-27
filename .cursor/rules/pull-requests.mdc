@@ -65,3 +65,11 @@ Never ship that. Never “fix it after create.” Get the body right on the firs
 - Never use `gh pr create --fill` without an explicit template `--body`.
 - Heavy CI still skips for own PRs — Validation must list the local CI gates from `AGENTS.md` that you actually ran.
 - Return the PR URL when done.
+
+## Never credit Cursor on PRs
+
+Do **not** leave “Made with Cursor” (or any Cursor / Copilot / tool promo footer) on a pull request body.
+
+After every `gh pr create` or `gh pr edit`, inspect with `gh pr view --json body -q .body`. If a footer like `Made with [Cursor](https://cursor.com)` is present, strip it immediately via `gh pr edit --body …` with the full cleaned template body, and confirm it is gone before finishing.
+
+Never add that footer yourself. PR bodies must contain only the filled repo template.

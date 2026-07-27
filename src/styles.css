@@ -813,20 +813,17 @@ body.is-file-pane-dragging .file-row.is-draggable {
   background: color-mix(in srgb, var(--surface) 70%, var(--surface-soft));
 }
 .sync-toolbar-item .info-tooltip-trigger {
-  width: 0;
+  /* Always reserve hit/layout space so the whole chip stays hoverable and does not jump. */
+  width: 18px;
   margin: 0;
   opacity: 0;
   overflow: hidden;
-  pointer-events: none;
-  transition: width var(--dur-fast) var(--ease-soft), opacity var(--dur-fast) var(--ease-soft), margin var(--dur-fast) var(--ease-soft);
+  transition: opacity var(--dur-fast) var(--ease-soft);
 }
 .sync-toolbar-item:hover .info-tooltip-trigger,
 .sync-toolbar-item:focus-within .info-tooltip-trigger,
 .sync-toolbar-item .info-tooltip-trigger[aria-expanded="true"] {
-  width: 18px;
-  margin-left: 0;
   opacity: 1;
-  pointer-events: auto;
 }
 .sync-toolbar > span { margin-left: auto; flex: 0 0 auto; color: var(--muted); white-space: nowrap; font-size: 11px; }
 .sync-toolbar select { border: 0; background: transparent; font-size: inherit; color: inherit; }
