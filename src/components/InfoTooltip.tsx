@@ -1,5 +1,6 @@
 import { CircleHelp } from "lucide-react";
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -7,6 +8,8 @@ import {
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+
+const CLOSE_DELAY_MS = 150;
 
 export function InfoTooltip({
   label,
@@ -17,34 +20,53 @@ export function InfoTooltip({
 }) {
   const tipId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [style, setStyle] = useState<CSSProperties>({ top: 0, left: 0 });
+
+  function clearCloseTimer() {
+    if (closeTimerRef.current != null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function show() {
+    clearCloseTimer();
+    setOpen(true);
+  }
+
+  function hideSoon() {
+    clearCloseTimer();
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setOpen(false);
+    }, CLOSE_DELAY_MS);
+  }
+
+  useEffect(() => () => clearCloseTimer(), []);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const tipWidth = 240;
     const margin = 8;
+    const gap = 8;
     const left = Math.min(
       Math.max(margin, rect.left + rect.width / 2 - tipWidth / 2),
       window.innerWidth - tipWidth - margin,
     );
-    const preferBelow = rect.bottom + 10;
-    const top =
-      preferBelow + 72 > window.innerHeight
-        ? Math.max(margin, rect.top - 10)
-        : preferBelow;
+    const tipHeight = tipRef.current?.offsetHeight ?? 72;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const placeBelow = spaceBelow >= tipHeight + gap || spaceBelow >= rect.top;
     setStyle({
-      top,
+      top: placeBelow ? rect.bottom + gap : Math.max(margin, rect.top - gap),
       left,
       width: tipWidth,
-      transform: preferBelow + 72 > window.innerHeight ? "translateY(-100%)" : undefined,
+      transform: placeBelow ? undefined : "translateY(-100%)",
     });
-  }, [open]);
-
-  function show() {
-    setOpen(true);
-  }
+  }, [open, children]);
 
   return (
     <>
@@ -55,12 +77,13 @@ export function InfoTooltip({
         aria-label={`About ${label}`}
         aria-describedby={open ? tipId : undefined}
         onMouseEnter={show}
-        onMouseLeave={() => setOpen(false)}
+        onMouseLeave={hideSoon}
         onFocus={show}
-        onBlur={() => setOpen(false)}
+        onBlur={hideSoon}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          clearCloseTimer();
           setOpen((value) => !value);
         }}
       >
@@ -68,7 +91,15 @@ export function InfoTooltip({
       </button>
       {open &&
         createPortal(
-          <div id={tipId} className="info-tooltip" role="tooltip" style={style}>
+          <div
+            ref={tipRef}
+            id={tipId}
+            className="info-tooltip"
+            role="tooltip"
+            style={style}
+            onMouseEnter={show}
+            onMouseLeave={hideSoon}
+          >
             {children}
           </div>,
           document.body,
