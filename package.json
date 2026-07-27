@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "screenshots:readme": "node scripts/capture-readme-screenshots.mjs",
     "version:check": "node scripts/version.mjs check",
     "tauri": "node scripts/run-tauri.mjs"
   },
@@ -52,6 +53,7 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
     "jsdom": "^26.1.0",
+    "playwright": "1.54.2",
     "typescript": "^5.9.2",
     "vite": "^7.1.4",
     "vitest": "^3.2.4"

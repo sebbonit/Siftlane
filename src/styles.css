@@ -796,17 +796,20 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .permissions { font-family: var(--font-mono); color: var(--faint); }
 .pane-message { height: 120px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--faint); font-size: 10px; animation: fade-up var(--dur) var(--ease-out) both; }
 .pane-footer { min-height: 29px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 9px; }
-.sync-toolbar { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--surface-soft); overflow-x: auto; }
+.sync-toolbar { min-height: 36px; display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--surface-soft); overflow-x: auto; }
 .sync-toolbar-item {
-  min-height: 25px;
+  flex: 0 0 auto;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 4px 0 9px;
+  gap: 4px;
+  padding: 0 6px 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--surface);
   color: var(--muted);
+  white-space: nowrap;
+  font-size: 11px;
 }
 .sync-toolbar-item.active {
   color: var(--teal);
@@ -815,7 +818,7 @@ body.is-file-pane-dragging .file-row.is-draggable {
 }
 .sync-toolbar-item > button:not(.info-tooltip-trigger),
 .sync-toolbar-item > label {
-  min-height: 25px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -824,9 +827,34 @@ body.is-file-pane-dragging .file-row.is-draggable {
   border-radius: 0;
   background: transparent;
   color: inherit;
+  white-space: nowrap;
+  font-size: inherit;
 }
-.sync-toolbar > span { margin-left: auto; color: var(--muted); }
-.sync-toolbar select { border: 0; background: transparent; font-size: 9px; color: inherit; }
+.sync-toolbar-item > button:not(.info-tooltip-trigger):disabled {
+  color: var(--faint);
+  cursor: default;
+}
+.sync-toolbar-item:has(> button:disabled) {
+  color: var(--faint);
+  background: color-mix(in srgb, var(--surface) 70%, var(--surface-soft));
+}
+.sync-toolbar-item .info-tooltip-trigger {
+  width: 0;
+  margin: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width var(--dur-fast) var(--ease-soft), opacity var(--dur-fast) var(--ease-soft), margin var(--dur-fast) var(--ease-soft);
+}
+.sync-toolbar-item:hover .info-tooltip-trigger,
+.sync-toolbar-item:focus-within .info-tooltip-trigger {
+  width: 18px;
+  margin-left: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+.sync-toolbar > span { margin-left: auto; flex: 0 0 auto; color: var(--muted); white-space: nowrap; font-size: 11px; }
+.sync-toolbar select { border: 0; background: transparent; font-size: inherit; color: inherit; }
 .info-tooltip-trigger {
   flex: 0 0 auto;
   display: inline-flex;
