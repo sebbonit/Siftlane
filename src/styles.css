@@ -821,7 +821,8 @@ body.is-file-pane-dragging .file-row.is-draggable {
   transition: width var(--dur-fast) var(--ease-soft), opacity var(--dur-fast) var(--ease-soft), margin var(--dur-fast) var(--ease-soft);
 }
 .sync-toolbar-item:hover .info-tooltip-trigger,
-.sync-toolbar-item:focus-within .info-tooltip-trigger {
+.sync-toolbar-item:focus-within .info-tooltip-trigger,
+.sync-toolbar-item .info-tooltip-trigger[aria-expanded="true"] {
   width: 18px;
   margin-left: 0;
   opacity: 1;

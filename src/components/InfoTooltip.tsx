@@ -75,6 +75,7 @@ export function InfoTooltip({
         type="button"
         className="info-tooltip-trigger"
         aria-label={`About ${label}`}
+        aria-expanded={open}
         aria-describedby={open ? tipId : undefined}
         onMouseEnter={show}
         onMouseLeave={hideSoon}
