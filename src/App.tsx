@@ -65,6 +65,7 @@ import { ExternalEditDialog } from "./components/ExternalEditDialog";
 import { FilePane, type PaneSide } from "./components/FilePane";
 import { FilePaneDragGhost } from "./components/FilePaneDragGhost";
 import { GoToPathDialog } from "./components/GoToPathDialog";
+import { InfoTooltip } from "./components/InfoTooltip";
 import { CollapsedShortcuts } from "./components/Sidebar/CollapsedShortcuts";
 import { ImagePreview } from "./components/ImagePreview";
 import { LoadingOverlay } from "./components/LoadingOverlay";
@@ -1390,84 +1391,149 @@ export default function App() {
               }}
             />
             <div className="sync-toolbar">
-              <button
-                className={comparisonEnabled ? "active" : ""}
-                onClick={() => setComparisonEnabled((value) => !value)}
-              >
-                {comparisonEnabled ? "Comparison on" : "Compare directories"}
-              </button>
-              <button onClick={() => setSyncReviewOpen(true)}>Synchronize…</button>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!activeProfile && !!preferences?.sync_roots?.[activeProfile.id]?.enabled}
-                  onChange={(event) => {
-                    if (!activeProfile || !activeTab || !preferences) return;
-                    const next = {
-                      ...preferences,
-                      sync_roots: {
-                        ...preferences.sync_roots,
-                        [activeProfile.id]: {
-                          local_root: activeTab.localPath,
-                          remote_root: activeTab.remotePath,
-                          enabled: event.target.checked,
-                        },
-                      },
-                    };
-                    setPreferences(next);
-                    void api.savePreferences(next);
-                  }}
-                />
-                Synchronized browsing
-              </label>
-              <label>
-                Symlinks
-                <select
-                  value={symlinkPolicy}
-                  onChange={(event) => setSymlinkPolicy(event.target.value as SymlinkPolicy)}
+              <div className={`sync-toolbar-item${comparisonEnabled ? " active" : ""}`}>
+                <button
+                  type="button"
+                  onClick={() => setComparisonEnabled((value) => !value)}
                 >
-                  <option value="skip">Skip with warning</option>
-                  <option value="copy_link">Copy link</option>
-                  <option value="dereference">Dereference</option>
-                </select>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={preserveMetadata}
-                  onChange={(event) => setPreserveMetadata(event.target.checked)}
-                />
-                Preserve metadata
-              </label>
-              <button
-                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                onClick={() => void batchPermissions()}
-              >
-                Permissions…
-              </button>
-              <button
-                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                onClick={() => void batchPackage()}
-              >
-                Package
-              </button>
-              <button
-                disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                onClick={() => void removeSelected(focusedPane)}
-              >
-                Delete
-              </button>
-              <button
-                disabled={
-                  selectedRemote.every((entry) => entry.kind !== "file") ||
-                  !tabs.some((tab) => tab.id !== activeTab.id && tab.connected)
-                }
-                onClick={() => setRemoteTransferOpen(true)}
-                title="Copy selected remote files to another open session"
-              >
-                <ArrowRightLeft size={14} />
-                Copy to session…
-              </button>
+                  {comparisonEnabled ? "Comparison on" : "Compare directories"}
+                </button>
+                <InfoTooltip label="Compare directories">
+                  Highlights differences between the open local and remote directories by
+                  matching names, then comparing type, size, and modification time. Nothing
+                  is changed until you synchronize.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <button type="button" onClick={() => setSyncReviewOpen(true)}>
+                  Synchronize…
+                </button>
+                <InfoTooltip label="Synchronize">
+                  Opens a review checklist of proposed uploads, downloads, and deletions.
+                  Choose two-way, upload mirror, or download mirror, then exclude any
+                  actions before running them.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={!!activeProfile && !!preferences?.sync_roots?.[activeProfile.id]?.enabled}
+                    onChange={(event) => {
+                      if (!activeProfile || !activeTab || !preferences) return;
+                      const next = {
+                        ...preferences,
+                        sync_roots: {
+                          ...preferences.sync_roots,
+                          [activeProfile.id]: {
+                            local_root: activeTab.localPath,
+                            remote_root: activeTab.remotePath,
+                            enabled: event.target.checked,
+                          },
+                        },
+                      };
+                      setPreferences(next);
+                      void api.savePreferences(next);
+                    }}
+                  />
+                  Synchronized browsing
+                </label>
+                <InfoTooltip label="Synchronized browsing">
+                  Saves the current local and remote folders as this profile's root pair.
+                  Navigating below either root follows the same relative path in the other
+                  pane when that path exists.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <label>
+                  Symlinks
+                  <select
+                    value={symlinkPolicy}
+                    onChange={(event) => setSymlinkPolicy(event.target.value as SymlinkPolicy)}
+                  >
+                    <option value="skip">Skip with warning</option>
+                    <option value="copy_link">Copy link</option>
+                    <option value="dereference">Dereference</option>
+                  </select>
+                </label>
+                <InfoTooltip label="Symlinks">
+                  Controls how symbolic links are transferred: skip them with a warning,
+                  copy the link itself when supported, or dereference and transfer the
+                  linked contents.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={preserveMetadata}
+                    onChange={(event) => setPreserveMetadata(event.target.checked)}
+                  />
+                  Preserve metadata
+                </label>
+                <InfoTooltip label="Preserve metadata">
+                  Restores modification times and POSIX permissions on download when the
+                  server reports them, and restores permissions on upload when the remote
+                  protocol supports chmod.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <button
+                  type="button"
+                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                  onClick={() => void batchPermissions()}
+                >
+                  Permissions…
+                </button>
+                <InfoTooltip label="Permissions">
+                  Sets an octal permission mode on every selected item in the focused pane
+                  (for example 755 or 644).
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <button
+                  type="button"
+                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                  onClick={() => void batchPackage()}
+                >
+                  Package
+                </button>
+                <InfoTooltip label="Package">
+                  Creates a zip archive of each selected folder in the focused pane, next to
+                  that folder.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <button
+                  type="button"
+                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                  onClick={() => void removeSelected(focusedPane)}
+                >
+                  Delete
+                </button>
+                <InfoTooltip label="Delete">
+                  Deletes the selected files and folders in the focused pane after
+                  confirmation. This cannot be undone.
+                </InfoTooltip>
+              </div>
+              <div className="sync-toolbar-item">
+                <button
+                  type="button"
+                  disabled={
+                    selectedRemote.every((entry) => entry.kind !== "file") ||
+                    !tabs.some((tab) => tab.id !== activeTab.id && tab.connected)
+                  }
+                  onClick={() => setRemoteTransferOpen(true)}
+                >
+                  <ArrowRightLeft size={14} />
+                  Copy to session…
+                </button>
+                <InfoTooltip label="Copy to session">
+                  Copies selected remote files to another open connected session. Review the
+                  source and destination routes and conflict handling before the transfer is
+                  queued.
+                </InfoTooltip>
+              </div>
               {comparisonEnabled && (
                 <span>{comparedEntries.filter((item) => item.status !== "same").length} differences</span>
               )}

@@ -778,10 +778,71 @@ body.is-file-pane-dragging .file-row.is-draggable {
 .pane-message { height: 120px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--faint); font-size: 10px; animation: fade-up var(--dur) var(--ease-out) both; }
 .pane-footer { min-height: 29px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: 9px; }
 .sync-toolbar { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--surface-soft); overflow-x: auto; }
-.sync-toolbar button, .sync-toolbar label { min-height: 25px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); }
-.sync-toolbar button.active { color: var(--teal); border-color: var(--teal); background: var(--teal-soft); }
+.sync-toolbar-item {
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.sync-toolbar-item.active {
+  color: var(--teal);
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+.sync-toolbar-item > button:not(.info-tooltip-trigger),
+.sync-toolbar-item > label {
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
 .sync-toolbar > span { margin-left: auto; color: var(--muted); }
-.sync-toolbar select { border: 0; background: transparent; font-size: 9px; }
+.sync-toolbar select { border: 0; background: transparent; font-size: 9px; color: inherit; }
+.info-tooltip-trigger {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faint);
+}
+.info-tooltip-trigger:hover,
+.info-tooltip-trigger:focus-visible {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 80%, transparent);
+  outline: none;
+}
+.info-tooltip {
+  position: fixed;
+  z-index: 90;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--sidebar));
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: -.01em;
+  pointer-events: none;
+  animation: collapsed-tip-in var(--dur) var(--ease-bounce) both;
+}
 
 .remote-transfer-dialog { width: min(700px, 94vw); }
 .remote-transfer-dialog form { display: grid; gap: 14px; padding: 18px 20px 20px; }
