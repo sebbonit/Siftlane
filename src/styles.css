@@ -479,8 +479,9 @@ button:disabled { cursor: default; opacity: .38; }
 .error-banner button { color: inherit; display: grid; place-items: center; }
 
 .browser-grid {
-  --layout-ease: cubic-bezier(.22, 1.15, .28, 1);
-  --layout-bounce: cubic-bezier(.34, 1.5, .54, 1);
+  --layout-dur: .56s;
+  --layout-ease: cubic-bezier(.32, .72, 0, 1);
+  --layout-exit: cubic-bezier(.4, 0, .7, .2);
   min-height: 250px;
   flex: 1 1 auto;
   display: grid;
@@ -489,9 +490,11 @@ button:disabled { cursor: default; opacity: .38; }
   padding: 10px;
   background: var(--bg);
   overflow: hidden;
-  perspective: 1600px;
+  position: relative;
   animation: fade-up var(--dur-slow) var(--ease-out) .05s both;
-  transition: grid-template-columns .72s var(--layout-ease), gap .55s var(--ease-out);
+  transition:
+    grid-template-columns var(--layout-dur) var(--layout-ease),
+    gap calc(var(--layout-dur) * .85) var(--layout-ease);
 }
 .browser-grid.remote-only {
   grid-template-columns: 0fr 0fr minmax(0, 1fr);
@@ -502,7 +505,6 @@ button:disabled { cursor: default; opacity: .38; }
   min-height: 0;
   display: flex;
   overflow: hidden;
-  transform-style: preserve-3d;
 }
 .browser-slot > * {
   flex: 1 1 auto;
@@ -512,81 +514,53 @@ button:disabled { cursor: default; opacity: .38; }
 .local-slot,
 .transfer-slot {
   opacity: 1;
-  filter: blur(0);
-  transform: translate3d(0, 0, 0) scale(1) rotateY(0deg);
+  transform: translate3d(0, 0, 0);
   transition:
-    opacity .42s var(--ease-out),
-    filter .48s var(--ease-out),
-    transform .72s var(--layout-ease);
+    opacity calc(var(--layout-dur) * .75) var(--layout-ease),
+    transform var(--layout-dur) var(--layout-ease);
 }
-.local-slot { transform-origin: left center; }
+.local-slot { transition-delay: .04s; }
 .transfer-slot {
   align-items: center;
   justify-content: center;
-  transform-origin: center;
-  transition-delay: .04s;
+  transition-delay: .08s;
 }
 .transfer-slot > .transfer-controls {
   flex: 0 0 auto;
   width: auto;
-  transition: transform .55s var(--layout-bounce), opacity .35s var(--ease-out);
+  transition:
+    opacity calc(var(--layout-dur) * .55) var(--layout-ease),
+    transform calc(var(--layout-dur) * .75) var(--layout-ease);
 }
 .browser-grid.remote-only .local-slot {
   opacity: 0;
-  filter: blur(8px);
-  transform: translate3d(-28%, 0, 0) scale(.82) rotateY(28deg);
+  transform: translate3d(-10px, 0, 0);
   pointer-events: none;
+  transition-timing-function: var(--layout-exit), var(--layout-exit);
+  transition-delay: 0s;
 }
 .browser-grid.remote-only .transfer-slot {
   opacity: 0;
-  filter: blur(6px);
-  transform: translate3d(-40%, 0, 0) scale(.55);
+  transform: translate3d(-6px, 0, 0);
   pointer-events: none;
+  transition-timing-function: var(--layout-exit), var(--layout-exit);
   transition-delay: 0s;
 }
 .browser-grid.remote-only .transfer-slot > .transfer-controls {
-  transform: scale(.7) rotate(-12deg);
   opacity: 0;
-}
-.remote-slot {
-  transform-origin: center;
-  transition: transform .72s var(--layout-ease);
+  transform: translate3d(0, 4px, 0);
 }
 .remote-slot > .file-pane {
   transition:
-    box-shadow .55s var(--ease-out),
+    box-shadow var(--layout-dur) var(--layout-ease),
     border-color var(--dur) var(--ease-soft),
-    transform .72s var(--layout-bounce),
-    border-radius .55s var(--ease-out);
+    border-radius var(--layout-dur) var(--layout-ease),
+    transform var(--dur) var(--ease-spring);
 }
 .browser-grid.remote-only .remote-slot > .file-pane {
-  box-shadow: 0 18px 48px rgba(31, 47, 42, .14);
-  border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(31, 47, 42, .1);
+  border-radius: 11px;
 }
-.browser-grid.is-morphing.remote-only .remote-slot > .file-pane {
-  animation: layout-remote-expand .78s var(--layout-bounce) both;
-}
-.browser-grid.is-morphing.dual-pane .local-slot {
-  animation: layout-local-enter .72s var(--layout-bounce) both;
-}
-.browser-grid.is-morphing.dual-pane .transfer-slot {
-  animation: layout-transfer-enter .62s var(--layout-bounce) .06s both;
-}
-.browser-grid.is-morphing.dual-pane .remote-slot > .file-pane {
-  animation: layout-remote-settle .7s var(--layout-ease) both;
-}
-.browser-grid.is-morphing::after {
-  content: "";
-  position: absolute;
-  inset: 10px;
-  border-radius: 14px;
-  pointer-events: none;
-  background: radial-gradient(ellipse at 70% 45%, color-mix(in srgb, var(--teal) 16%, transparent), transparent 55%);
-  animation: layout-glow .78s var(--ease-out) both;
-  z-index: 0;
-}
-.browser-grid { position: relative; }
-.browser-grid > .browser-slot { position: relative; z-index: 1; }
 .layout-toggle {
   position: relative;
   overflow: hidden;
@@ -596,26 +570,26 @@ button:disabled { cursor: default; opacity: .38; }
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--teal) 22%, transparent);
+  background: color-mix(in srgb, var(--teal) 18%, transparent);
   opacity: 0;
-  transform: scale(0.4);
+  transform: scale(.55);
   pointer-events: none;
 }
 .layout-toggle.is-remote::after {
-  animation: layout-toggle-pulse .55s var(--layout-bounce) both;
+  animation: layout-toggle-pulse .45s var(--ease-out) both;
 }
 .layout-toggle svg {
-  transition: transform .48s var(--ease-bounce);
+  transition: transform .4s var(--layout-ease);
   transform-origin: center;
 }
 .layout-toggle.is-remote svg {
-  transform: rotate(-180deg) scale(.92);
+  transform: rotate(-180deg);
 }
 .layout-toggle:active:not(:disabled) svg {
-  transform: scale(.82);
+  transform: scale(.88);
 }
 .layout-toggle.is-remote:active:not(:disabled) svg {
-  transform: rotate(-180deg) scale(.82);
+  transform: rotate(-180deg) scale(.88);
 }
 .file-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; transition: box-shadow var(--dur) var(--ease-out), border-color var(--dur) var(--ease-soft), transform var(--dur) var(--ease-spring); }
 .file-pane:focus-within { border-color: color-mix(in srgb, var(--teal) 40%, var(--border)); box-shadow: 0 8px 28px rgba(31, 47, 42, .08); }
@@ -1955,34 +1929,9 @@ body.is-file-pane-dragging .file-row.is-draggable {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 0%, transparent); }
 }
-@keyframes layout-remote-expand {
-  0% { transform: scale(.94); box-shadow: 0 4px 16px rgba(31, 47, 42, .06); border-radius: 9px; }
-  55% { transform: scale(1.025); box-shadow: 0 22px 56px rgba(31, 47, 42, .18); border-radius: 14px; }
-  100% { transform: scale(1); box-shadow: 0 18px 48px rgba(31, 47, 42, .14); border-radius: 12px; }
-}
-@keyframes layout-remote-settle {
-  0% { transform: scale(1.02); box-shadow: 0 16px 40px rgba(31, 47, 42, .12); }
-  100% { transform: scale(1); box-shadow: none; }
-}
-@keyframes layout-local-enter {
-  0% { opacity: 0; filter: blur(10px); transform: translate3d(-36%, 0, 0) scale(.78) rotateY(32deg); }
-  70% { opacity: 1; filter: blur(0); transform: translate3d(2%, 0, 0) scale(1.02) rotateY(-2deg); }
-  100% { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) scale(1) rotateY(0deg); }
-}
-@keyframes layout-transfer-enter {
-  0% { opacity: 0; filter: blur(8px); transform: translate3d(-50%, 0, 0) scale(.4) rotate(-18deg); }
-  70% { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) scale(1.12) rotate(4deg); }
-  100% { opacity: 1; filter: blur(0); transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
-}
-@keyframes layout-glow {
-  0% { opacity: 0; transform: scale(.92); }
-  40% { opacity: 1; }
-  100% { opacity: 0; transform: scale(1.04); }
-}
 @keyframes layout-toggle-pulse {
-  0% { opacity: 0; transform: scale(.35); }
-  45% { opacity: .9; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.35); }
+  0% { opacity: .55; transform: scale(.7); }
+  100% { opacity: 0; transform: scale(1.2); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

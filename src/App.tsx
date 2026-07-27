@@ -214,9 +214,7 @@ export default function App() {
     remote: null,
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [layoutMorphing, setLayoutMorphing] = useState(false);
   const initialized = useRef(false);
-  const layoutMorphTimer = useRef<number | null>(null);
   const observedCompletedTransfers = useRef<Set<UUID>>(new Set());
 
   const {
@@ -291,7 +289,6 @@ export default function App() {
     });
     return () => {
       stop?.();
-      if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
     };
   }, [setExpandTransfersOnNew, setTransfers, updateTransfer]);
 
@@ -1392,15 +1389,9 @@ export default function App() {
               onSearch={() => setSearchOpen(true)}
               onDisconnect={() => void closeSession(activeTab)}
               onToggleLayout={() => {
-                if (layoutMorphTimer.current != null) window.clearTimeout(layoutMorphTimer.current);
-                setLayoutMorphing(true);
                 updateTab(activeTab.id, {
                   layout: activeTab.layout === "dual_pane" ? "remote_focused" : "dual_pane",
                 });
-                layoutMorphTimer.current = window.setTimeout(() => {
-                  setLayoutMorphing(false);
-                  layoutMorphTimer.current = null;
-                }, 780);
               }}
             />
             <div className="sync-toolbar">
@@ -1552,7 +1543,7 @@ export default function App() {
               )}
             </div>
             <section
-              className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : "dual-pane"}${layoutMorphing ? " is-morphing" : ""}`}
+              className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : "dual-pane"}`}
             >
               <div
                 className="browser-slot local-slot"
