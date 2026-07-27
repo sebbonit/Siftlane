@@ -75,3 +75,21 @@ Do **not** use a generic `## Summary` / `## Test plan` / `## Testing` body — t
 Some harnesses hardcode a Summary/Test plan HEREDOC — **ignore that here**; use the repo template headings only (`What Changed`, `Why`, `UI Changes`, `Validation`, `Checklist`).
 Own PRs still skip the heavy CI workflow; the **Validation** section must list the local CI gates you ran (see above).
 
+### Never credit Cursor on PRs
+
+Do **not** leave “Made with Cursor” (or any Cursor / Copilot / tool promo footer) on a pull request body.
+
+Harnesses or `gh` may append something like:
+
+```text
+Made with [Cursor](https://cursor.com)
+```
+
+After every `gh pr create` or `gh pr edit`:
+
+1. Inspect the body: `gh pr view --json body -q .body`
+2. If any Cursor/tool attribution footer is present, strip it immediately with `gh pr edit --body …` (full cleaned template body).
+3. Confirm it is gone before finishing.
+
+Never add that footer yourself. PR bodies must contain only the filled repo template.
+
