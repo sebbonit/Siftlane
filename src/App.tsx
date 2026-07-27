@@ -174,6 +174,7 @@ export default function App() {
     challenge: HostKeyChallenge;
   } | null>(null);
   const [loadingPane, setLoadingPane] = useState<PaneSide | null>(null);
+  const [localGitBranch, setLocalGitBranch] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<UUID | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editorFile, setEditorFile] = useState<EditableFile | null>(null);
@@ -382,6 +383,7 @@ export default function App() {
     if (!activeTab) {
       setLocalEntries([]);
       setRemoteEntries([]);
+      setLocalGitBranch(null);
       return;
     }
     void loadPane("local", activeTab.localPath);
@@ -460,6 +462,14 @@ export default function App() {
     }
   }
 
+  async function refreshLocalGitBranch(path: string) {
+    try {
+      setLocalGitBranch(await api.getLocalGitBranch(path));
+    } catch {
+      setLocalGitBranch(null);
+    }
+  }
+
   async function loadPane(side: PaneSide, path: string, sessionId?: UUID, selectPath?: string) {
     const tabId = sessionId ?? useAppStore.getState().activeTabId;
     if (!tabId) return;
@@ -479,11 +489,13 @@ export default function App() {
       if (side === "local") {
         setLocalEntries(normalized);
         setSelectedLocal(selected ? [selected] : []);
+        void refreshLocalGitBranch(path);
       } else {
         setRemoteEntries(normalized);
         setSelectedRemote(selected ? [selected] : []);
       }
     } catch (reason) {
+      if (side === "local") setLocalGitBranch(null);
       setError(errorMessage(reason));
     } finally {
       setLoadingPane(null);
@@ -519,6 +531,7 @@ export default function App() {
       if (otherSide === "local") {
         setLocalEntries(normalized);
         setSelectedLocal([]);
+        void refreshLocalGitBranch(target);
       } else {
         setRemoteEntries(normalized);
         setSelectedRemote([]);
@@ -1550,6 +1563,7 @@ export default function App() {
                   title="Local"
                   side="local"
                   path={activeTab.localPath}
+                  gitBranch={localGitBranch}
                   entries={localEntries}
                   selected={selectedLocal}
                   loading={loadingPane === "local"}

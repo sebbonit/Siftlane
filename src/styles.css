@@ -628,6 +628,25 @@ button:disabled { cursor: default; opacity: .38; }
 .pane-title > div { display: flex; align-items: baseline; gap: 7px; }
 .pane-title strong { font-size: 12px; }
 .pane-title span { color: var(--faint); font-size: 10px; }
+.pane-title .git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal-soft) 85%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 22%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-title .git-branch svg { flex: 0 0 auto; }
 .pane-title button, .path-toolbar > button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 5px; color: var(--muted); }
 .pane-title button:hover, .path-toolbar > button:hover { background: var(--surface-soft); color: var(--text); transform: translateY(-1px); }
 .pane-title .pane-actions { align-items: center; gap: 2px; }
