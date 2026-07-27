@@ -186,6 +186,7 @@ pub fn run() {
             crate::commands::import_known_hosts,
             crate::commands::disconnect_session,
             crate::commands::get_default_local_path,
+            crate::commands::get_local_git_branch,
             crate::commands::list_local_directory,
             crate::commands::read_local_file,
             crate::commands::save_local_file,

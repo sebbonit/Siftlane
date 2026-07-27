@@ -701,6 +701,74 @@ pub fn get_default_local_path(app: AppHandle) -> Result<String, AppError> {
 }
 
 #[tauri::command]
+pub fn get_local_git_branch(path: String) -> Result<Option<String>, AppError> {
+    Ok(resolve_local_git_branch(Path::new(&path)))
+}
+
+fn resolve_local_git_branch(start: &Path) -> Option<String> {
+    let mut current = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+
+    loop {
+        let git_marker = current.join(".git");
+        if git_marker.exists() {
+            let git_dir = resolve_git_dir(&git_marker, &current)?;
+            return read_git_head_label(&git_dir);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn resolve_git_dir(git_marker: &Path, worktree: &Path) -> Option<PathBuf> {
+    if git_marker.is_dir() {
+        return Some(git_marker.to_path_buf());
+    }
+    if !git_marker.is_file() {
+        return None;
+    }
+    let contents = fs::read_to_string(git_marker).ok()?;
+    let gitdir = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))?
+        .trim();
+    if gitdir.is_empty() {
+        return None;
+    }
+    let path = Path::new(gitdir);
+    Some(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        worktree.join(path)
+    })
+}
+
+fn read_git_head_label(git_dir: &Path) -> Option<String> {
+    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    if let Some(branch) = head.strip_prefix("ref: refs/heads/") {
+        let branch = branch.trim();
+        return (!branch.is_empty()).then(|| branch.to_string());
+    }
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        let name = reference
+            .trim()
+            .rsplit('/')
+            .next()
+            .unwrap_or(reference.trim());
+        return (!name.is_empty()).then(|| name.to_string());
+    }
+    if head.len() >= 7 && head.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Some(head[..7].to_string());
+    }
+    None
+}
+
+#[tauri::command]
 pub fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
     let mut entries = Vec::new();
     for item in std::fs::read_dir(&path).map_err(local_io_error)? {
@@ -2716,8 +2784,13 @@ fn local_permissions(_: &std::fs::Metadata) -> Option<u32> {
 mod tests {
     #[cfg(unix)]
     use super::{ErrorCode, local_sudo_error};
-    use super::{normalize_algorithm_policy, normalize_remote_path, parse_known_host_pattern};
+    use super::{
+        normalize_algorithm_policy, normalize_remote_path, parse_known_host_pattern,
+        resolve_local_git_branch,
+    };
     use siftlane_core::SshAlgorithmPolicy;
+    use std::fs;
+    use std::path::Path;
 
     #[test]
     fn remote_paths_are_absolute_and_normalized() {
@@ -2766,6 +2839,45 @@ mod tests {
         assert_eq!(
             local_sudo_error(b"user is not allowed to run sudo").code,
             ErrorCode::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn local_git_branch_reads_checked_out_branch() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let nested = root.path().join("src").join("components");
+        fs::create_dir_all(root.path().join(".git").join("refs").join("heads")).expect("git dirs");
+        fs::create_dir_all(&nested).expect("nested");
+        fs::write(
+            root.path().join(".git").join("HEAD"),
+            "ref: refs/heads/feature/git-badge\n",
+        )
+        .expect("head");
+
+        assert_eq!(
+            resolve_local_git_branch(&nested).as_deref(),
+            Some("feature/git-badge")
+        );
+        assert_eq!(resolve_local_git_branch(Path::new("/tmp")).as_deref(), None);
+    }
+
+    #[test]
+    fn local_git_branch_supports_worktrees_and_detached_head() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let worktree = root.path().join("worktree");
+        let git_dir = root.path().join("main.git");
+        fs::create_dir_all(&worktree).expect("worktree");
+        fs::create_dir_all(&git_dir).expect("git dir");
+        fs::write(worktree.join(".git"), "gitdir: ../main.git\n").expect("git file");
+        fs::write(
+            git_dir.join("HEAD"),
+            "abcdef0123456789abcdef0123456789abcdef01\n",
+        )
+        .expect("detached head");
+
+        assert_eq!(
+            resolve_local_git_branch(&worktree).as_deref(),
+            Some("abcdef0")
         );
     }
 }

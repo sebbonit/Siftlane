@@ -14,6 +14,7 @@ import {
   EyeOff,
   Folder,
   FolderOpen,
+  GitBranch,
   RefreshCw,
   Search,
   X,
@@ -39,6 +40,7 @@ const SORT_COLUMNS: Array<{ key: SortKey; label: string; ariaLabel?: string }> =
 export function FilePane({
   title,
   subtitle,
+  gitBranch,
   side,
   path,
   entries,
@@ -75,6 +77,7 @@ export function FilePane({
 }: {
   title: string;
   subtitle?: string;
+  gitBranch?: string | null;
   side: PaneSide;
   path: string;
   entries: FileEntry[];
@@ -215,6 +218,12 @@ export function FilePane({
         <div>
           <strong>{title}</strong>
           {subtitle && <span>{subtitle}</span>}
+          {gitBranch && (
+            <span className="git-branch" title={`Git branch: ${gitBranch}`}>
+              <GitBranch size={11} aria-hidden="true" />
+              {gitBranch}
+            </span>
+          )}
         </div>
         <div className="pane-actions">
           <button

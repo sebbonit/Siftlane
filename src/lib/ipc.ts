@@ -726,6 +726,12 @@ export const api = {
         ? demoList(localDemoTree, path)
         : [];
   },
+  async getLocalGitBranch(path: string) {
+    if (desktop) return call<string | null>("get_local_git_branch", { path });
+    if (!demoMode) return null;
+    const normalized = path.replace(/\\/g, "/");
+    return normalized.includes("/Projects/my-website") ? "main" : null;
+  },
   async listRemote(sessionId: UUID, path: string) {
     return desktop
       ? call<FileEntry[]>("list_remote_directory", { sessionId, path })
