@@ -15,8 +15,28 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::state::AppState;
 
-const CHUNK_SIZE: usize = 256 * 1024;
+const CHUNK_SIZE: usize = 4 * 1024 * 1024;
+const MIN_THROTTLED_CHUNK_SIZE: usize = 1024;
+const THROTTLE_CHECKS_PER_SECOND: u64 = 4;
+const THROTTLE_STATE_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_SHA256_VERIFICATION_BYTES: u64 = 64 * 1024 * 1024;
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+const PROGRESS_PERSIST_INTERVAL: Duration = Duration::from_secs(1);
+
+struct ProgressCadence {
+    last_emit: Instant,
+    last_persist: Instant,
+}
+
+impl ProgressCadence {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            last_emit: now - PROGRESS_EMIT_INTERVAL,
+            last_persist: now - PROGRESS_PERSIST_INTERVAL,
+        }
+    }
+}
 
 pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
     tauri::async_runtime::spawn(async move {
@@ -87,10 +107,9 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
             queue.transition(id, TransferState::Running)?;
             queue.set_error(id, None)?;
         }
-        let updated = queue.get(id).cloned().expect("transfer exists");
-        state.storage.save_transfer(&updated)?;
-        updated
+        queue.get(id).cloned().expect("transfer exists")
     };
+    persist_transfer(&state, &job).await?;
     emit(&app, &progress_from_job(job.clone()));
 
     match job.direction {
@@ -145,30 +164,32 @@ async fn prepare_retry(
     if !error.retryable {
         return None;
     }
-    let limit = state.storage.load_preferences().ok()?.automatic_retry_limit;
-    let mut queue = state.transfers.lock().await;
-    let job = queue.get(id)?.clone();
-    if job.state != TransferState::Running || job.retry_count >= limit {
-        return None;
-    }
-    let attempt = job.retry_count.saturating_add(1);
-    let delay_seconds = 2_u64
-        .saturating_pow(u32::from(attempt.saturating_sub(1)))
-        .min(30);
-    queue.transition(id, TransferState::Interrupted).ok()?;
-    queue.increment_retry(id).ok()?;
-    queue.record_retry(id, error.message.clone()).ok()?;
-    queue
-        .set_error(
-            id,
-            Some(format!(
-                "{} Retrying in {delay_seconds}s ({attempt}/{limit}).",
-                error.message
-            )),
-        )
-        .ok()?;
-    let updated = queue.get(id)?.clone();
-    state.storage.save_transfer(&updated).ok()?;
+    let limit = state.preferences.read().await.automatic_retry_limit;
+    let (updated, delay_seconds) = {
+        let mut queue = state.transfers.lock().await;
+        let job = queue.get(id)?.clone();
+        if job.state != TransferState::Running || job.retry_count >= limit {
+            return None;
+        }
+        let attempt = job.retry_count.saturating_add(1);
+        let delay_seconds = 2_u64
+            .saturating_pow(u32::from(attempt.saturating_sub(1)))
+            .min(30);
+        queue.transition(id, TransferState::Interrupted).ok()?;
+        queue.increment_retry(id).ok()?;
+        queue.record_retry(id, error.message.clone()).ok()?;
+        queue
+            .set_error(
+                id,
+                Some(format!(
+                    "{} Retrying in {delay_seconds}s ({attempt}/{limit}).",
+                    error.message
+                )),
+            )
+            .ok()?;
+        (queue.get(id)?.clone(), delay_seconds)
+    };
+    persist_transfer(state, &updated).await.ok()?;
     emit(app, &progress_from_job(updated));
     Some(Duration::from_secs(delay_seconds))
 }
@@ -206,18 +227,24 @@ async fn upload(
     let mut offset = partial_size;
     let mut buffer = vec![0; CHUNK_SIZE];
     let started = Instant::now();
+    let mut cadence = ProgressCadence::new();
     while offset < source_metadata.len() {
         ensure_running(state, id).await?;
-        let count = source.read(&mut buffer).await.map_err(local_io_error)?;
+        let limits = transfer_limits(state, &job).await;
+        let request_size = transfer_chunk_size(limits).min(buffer.len());
+        let count = source
+            .read(&mut buffer[..request_size])
+            .await
+            .map_err(local_io_error)?;
         if count == 0 {
             break;
         }
-        throttle(state, &job, count).await;
+        throttle(state, &job, id, count, limits).await?;
         remote
             .write_chunk(&job.partial_path, offset, &buffer[..count])
             .await?;
         offset += count as u64;
-        record_progress(app, state, id, offset, started).await?;
+        record_progress(app, state, id, offset, partial_size, started, &mut cadence).await?;
     }
     remote.sync_file(&job.partial_path).await?;
     verify_upload(state, remote.as_ref(), id, source_metadata.len()).await?;
@@ -274,10 +301,13 @@ async fn download(
         .await
         .map_err(local_io_error)?;
     let started = Instant::now();
+    let starting_offset = offset;
+    let mut cadence = ProgressCadence::new();
     while offset < total {
         ensure_running(state, id).await?;
-        let remaining = (total - offset).min(CHUNK_SIZE as u64) as u32;
-        throttle(state, &job, remaining as usize).await;
+        let limits = transfer_limits(state, &job).await;
+        let remaining = (total - offset).min(transfer_chunk_size(limits) as u64) as u32;
+        throttle(state, &job, id, remaining as usize, limits).await?;
         let bytes = remote
             .read_chunk(&job.source_path, offset, remaining)
             .await?;
@@ -292,7 +322,16 @@ async fn download(
             .await
             .map_err(local_io_error)?;
         offset += bytes.len() as u64;
-        record_progress(app, state, id, offset, started).await?;
+        record_progress(
+            app,
+            state,
+            id,
+            offset,
+            starting_offset,
+            started,
+            &mut cadence,
+        )
+        .await?;
     }
     destination.flush().await.map_err(local_io_error)?;
     destination.sync_all().await.map_err(local_io_error)?;
@@ -334,10 +373,13 @@ async fn remote_to_remote(
         .unwrap_or(0)
         .min(total);
     let started = Instant::now();
+    let starting_offset = offset;
+    let mut cadence = ProgressCadence::new();
     while offset < total {
         ensure_running(state, id).await?;
-        let requested = (total - offset).min(CHUNK_SIZE as u64) as u32;
-        throttle(state, &job, requested as usize).await;
+        let limits = transfer_limits(state, &job).await;
+        let requested = (total - offset).min(transfer_chunk_size(limits) as u64) as u32;
+        throttle(state, &job, id, requested as usize, limits).await?;
         let bytes = source
             .read_chunk(&job.source_path, offset, requested)
             .await?;
@@ -351,7 +393,16 @@ async fn remote_to_remote(
             .write_chunk(&job.partial_path, offset, &bytes)
             .await?;
         offset += bytes.len() as u64;
-        record_progress(app, state, id, offset, started).await?;
+        record_progress(
+            app,
+            state,
+            id,
+            offset,
+            starting_offset,
+            started,
+            &mut cadence,
+        )
+        .await?;
     }
     destination.sync_file(&job.partial_path).await?;
     let destination_size = destination
@@ -389,25 +440,51 @@ async fn remote_to_remote(
     complete(app, state, id).await
 }
 
-async fn throttle(state: &AppState, job: &siftlane_core::TransferJob, bytes: usize) {
-    let Ok(preferences) = state.storage.load_preferences() else {
-        return;
-    };
+async fn transfer_limits(
+    state: &AppState,
+    job: &siftlane_core::TransferJob,
+) -> (Option<u64>, Option<u64>) {
+    let preferences = state.preferences.read().await;
     let (global, profile) = bandwidth_limits(&preferences, job);
-    state
-        .bandwidth_limiter
-        .acquire(
-            match job.direction {
-                TransferDirection::Upload => "upload",
-                TransferDirection::Download => "download",
-                TransferDirection::RemoteToRemote => "remote",
-            },
-            job.profile_id,
-            bytes,
-            global,
-            profile,
-        )
-        .await;
+    (global, profile)
+}
+
+fn transfer_chunk_size((global, profile): (Option<u64>, Option<u64>)) -> usize {
+    let Some(limit) = strictest_limit(global, profile).filter(|limit| *limit > 0) else {
+        return CHUNK_SIZE;
+    };
+    usize::try_from(limit / THROTTLE_CHECKS_PER_SECOND)
+        .unwrap_or(CHUNK_SIZE)
+        .clamp(MIN_THROTTLED_CHUNK_SIZE, CHUNK_SIZE)
+}
+
+async fn throttle(
+    state: &AppState,
+    job: &siftlane_core::TransferJob,
+    id: TransferId,
+    bytes: usize,
+    (global, profile): (Option<u64>, Option<u64>),
+) -> Result<(), AppError> {
+    let acquisition = state.bandwidth_limiter.acquire(
+        match job.direction {
+            TransferDirection::Upload => "upload",
+            TransferDirection::Download => "download",
+            TransferDirection::RemoteToRemote => "remote",
+        },
+        job.profile_id,
+        bytes,
+        global,
+        profile,
+    );
+    tokio::pin!(acquisition);
+    loop {
+        tokio::select! {
+            () = &mut acquisition => return ensure_running(state, id).await,
+            () = tokio::time::sleep(THROTTLE_STATE_CHECK_INTERVAL) => {
+                ensure_running(state, id).await?;
+            }
+        }
+    }
 }
 
 fn bandwidth_limits(
@@ -460,6 +537,8 @@ fn bandwidth_limits(
 }
 
 fn strictest_limit(first: Option<u64>, second: Option<u64>) -> Option<u64> {
+    let first = first.filter(|limit| *limit > 0);
+    let second = second.filter(|limit| *limit > 0);
     match (first, second) {
         (Some(first), Some(second)) => Some(first.min(second)),
         (Some(limit), None) | (None, Some(limit)) => Some(limit),
@@ -844,11 +923,12 @@ async fn ensure_running(state: &AppState, id: TransferId) -> Result<(), AppError
 }
 
 async fn set_total(state: &AppState, id: TransferId, total: u64) -> Result<(), AppError> {
-    let mut queue = state.transfers.lock().await;
-    queue.update_total(id, total)?;
-    state
-        .storage
-        .save_transfer(queue.get(id).expect("transfer exists"))
+    let job = {
+        let mut queue = state.transfers.lock().await;
+        queue.update_total(id, total)?;
+        queue.get(id).cloned().expect("transfer exists")
+    };
+    persist_transfer(state, &job).await
 }
 
 async fn record_progress(
@@ -856,26 +936,37 @@ async fn record_progress(
     state: &AppState,
     id: TransferId,
     bytes: u64,
+    starting_offset: u64,
     started: Instant,
+    cadence: &mut ProgressCadence,
 ) -> Result<(), AppError> {
-    let speed = if started.elapsed().as_secs_f64() > 0.0 {
-        Some((bytes as f64 / started.elapsed().as_secs_f64()) as u64)
-    } else {
-        None
+    let speed = average_speed(bytes, starting_offset, started.elapsed());
+    let now = Instant::now();
+    let should_emit = now.duration_since(cadence.last_emit) >= PROGRESS_EMIT_INTERVAL;
+    let should_persist = now.duration_since(cadence.last_persist) >= PROGRESS_PERSIST_INTERVAL;
+    let job = {
+        let mut queue = state.transfers.lock().await;
+        queue.update_progress(id, bytes, speed)?;
+        queue.get(id).cloned().expect("transfer exists")
     };
-    let mut queue = state.transfers.lock().await;
-    queue.update_progress(id, bytes, speed)?;
-    let job = queue.get(id).cloned().expect("transfer exists");
-    state.storage.save_transfer(&job)?;
-    emit(app, &progress_from_job(job));
+    if should_persist {
+        persist_transfer(state, &job).await?;
+        cadence.last_persist = now;
+    }
+    if should_emit {
+        emit(app, &progress_from_job(job));
+        cadence.last_emit = now;
+    }
     Ok(())
 }
 
 async fn transition(state: &AppState, id: TransferId, next: TransferState) -> Result<(), AppError> {
-    let mut queue = state.transfers.lock().await;
-    queue.transition(id, next)?;
-    let job = queue.get(id).expect("transfer exists");
-    state.storage.save_transfer(job)
+    let job = {
+        let mut queue = state.transfers.lock().await;
+        queue.transition(id, next)?;
+        queue.get(id).cloned().expect("transfer exists")
+    };
+    persist_transfer(state, &job).await
 }
 
 async fn complete(app: &AppHandle, state: &AppState, id: TransferId) -> Result<(), AppError> {
@@ -890,39 +981,63 @@ async fn fail(
     id: TransferId,
     error: AppError,
 ) -> Result<(), AppError> {
-    let mut queue = state.transfers.lock().await;
-    let current = queue.get(id).map(|job| job.state);
-    if current.is_none()
-        || matches!(
-            current,
-            Some(
-                TransferState::Paused
-                    | TransferState::Cancelled
-                    | TransferState::WaitingForConflict
+    let job = {
+        let mut queue = state.transfers.lock().await;
+        let current = queue.get(id).map(|job| job.state);
+        if current.is_none()
+            || matches!(
+                current,
+                Some(
+                    TransferState::Paused
+                        | TransferState::Cancelled
+                        | TransferState::WaitingForConflict
+                )
             )
-        )
-    {
-        return Ok(());
-    }
-    queue.set_error(id, Some(error.message.clone()))?;
-    if matches!(
-        current,
-        Some(TransferState::Running | TransferState::Interrupted)
-    ) {
-        let next = if matches!(
-            error.code,
-            ErrorCode::ConnectionClosed | ErrorCode::AuthenticationFailed
+        {
+            return Ok(());
+        }
+        queue.set_error(id, Some(error.message.clone()))?;
+        if matches!(
+            current,
+            Some(TransferState::Running | TransferState::Interrupted)
         ) {
-            TransferState::WaitingForAuthentication
-        } else {
-            TransferState::Failed
-        };
-        queue.transition(id, next)?;
-    }
-    let job = queue.get(id).cloned().expect("transfer exists");
-    state.storage.save_transfer(&job)?;
+            let next = if matches!(
+                error.code,
+                ErrorCode::ConnectionClosed | ErrorCode::AuthenticationFailed
+            ) {
+                TransferState::WaitingForAuthentication
+            } else {
+                TransferState::Failed
+            };
+            queue.transition(id, next)?;
+        }
+        queue.get(id).cloned().expect("transfer exists")
+    };
+    persist_transfer(state, &job).await?;
     emit(app, &progress_from_job(job));
     Ok(())
+}
+
+fn average_speed(bytes: u64, starting_offset: u64, elapsed: Duration) -> Option<u64> {
+    let seconds = elapsed.as_secs_f64();
+    (seconds > 0.0).then(|| ((bytes.saturating_sub(starting_offset)) as f64 / seconds) as u64)
+}
+
+async fn persist_transfer(
+    state: &AppState,
+    job: &siftlane_core::TransferJob,
+) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    let job = job.clone();
+    tokio::task::spawn_blocking(move || storage.save_transfer(&job))
+        .await
+        .map_err(|error| {
+            AppError::new(
+                ErrorCode::Internal,
+                "The transfer persistence task could not finish",
+            )
+            .with_detail(error.to_string())
+        })?
 }
 
 async fn job_snapshot(
@@ -973,12 +1088,34 @@ fn progress_from_job(job: siftlane_core::TransferJob) -> TransferProgress {
 
 #[cfg(test)]
 mod tests {
-    use super::strictest_limit;
+    use std::time::Duration;
+
+    use super::{CHUNK_SIZE, average_speed, strictest_limit, transfer_chunk_size};
 
     #[test]
     fn remote_stream_uses_the_strictest_configured_rate() {
         assert_eq!(strictest_limit(Some(4_000), Some(2_000)), Some(2_000));
         assert_eq!(strictest_limit(Some(4_000), None), Some(4_000));
+        assert_eq!(strictest_limit(Some(0), Some(4_000)), Some(4_000));
         assert_eq!(strictest_limit(None, None), None);
+    }
+
+    #[test]
+    fn throttled_chunks_keep_control_checks_responsive() {
+        assert_eq!(transfer_chunk_size((None, None)), CHUNK_SIZE);
+        assert_eq!(transfer_chunk_size((Some(64 * 1024), None)), 16 * 1024);
+        assert_eq!(
+            transfer_chunk_size((Some(1024 * 1024), Some(32 * 1024))),
+            8 * 1024
+        );
+        assert_eq!(transfer_chunk_size((Some(1024), None)), 1024);
+    }
+
+    #[test]
+    fn resumed_speed_only_counts_bytes_moved_in_this_run() {
+        assert_eq!(
+            average_speed(12 * 1024, 10 * 1024, Duration::from_secs(2)),
+            Some(1024)
+        );
     }
 }

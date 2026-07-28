@@ -6,7 +6,7 @@ import {
   open as openDialog,
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   AppError,
   ArchiveFormat,
@@ -584,6 +584,14 @@ export const api = {
   async revealInFileManager(path: string) {
     if (!desktop) return;
     await revealItemInDir(path);
+  },
+  async openExternalUrl(url: string) {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      throw new Error("Only HTTPS links can be opened");
+    }
+    if (desktop) await openUrl(parsed.toString());
+    else window.open(parsed.toString(), "_blank", "noopener,noreferrer");
   },
   async inspectLocalPath(path: string) {
     if (desktop) return call<FileEntry>("inspect_local_path", { path });

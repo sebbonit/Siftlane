@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Components } from "react-markdown";
 import { classifyGithubHref, githubLinkDisplayLabel } from "../../lib/githubReleaseNotes";
+import { SafeExternalLink } from "../SafeExternalLink";
 
 function childText(children: ReactNode): string | null {
   if (typeof children === "string" || typeof children === "number") return String(children);
@@ -20,9 +21,9 @@ export const markdownLinkComponents: Pick<Components, "a"> = {
     const className = meta ? `md-ref md-ref-${meta.kind}` : undefined;
 
     return (
-      <a href={url || undefined} className={className} title={url || undefined}>
+      <SafeExternalLink href={url || undefined} className={className} title={url || undefined}>
         {short ?? children}
-      </a>
+      </SafeExternalLink>
     );
   },
 };

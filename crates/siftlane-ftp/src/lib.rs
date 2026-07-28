@@ -141,10 +141,11 @@ impl RemoteFilesystem for FtpClient {
                     FtpSession::ExplicitTls(stream) => list_legacy(stream, path).await,
                 }?,
             };
-            entries.sort_by(|left: &FileEntry, right: &FileEntry| {
-                (right.kind == EntryKind::Directory)
-                    .cmp(&(left.kind == EntryKind::Directory))
-                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            entries.sort_by_cached_key(|entry: &FileEntry| {
+                (
+                    entry.kind != EntryKind::Directory,
+                    entry.name.to_lowercase(),
+                )
             });
             Ok(entries)
         })

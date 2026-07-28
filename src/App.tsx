@@ -1,30 +1,14 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
-import prettier from "prettier/standalone";
-import * as babelPlugin from "prettier/plugins/babel";
-import * as cssPlugin from "prettier/plugins/postcss";
-import * as estreePlugin from "prettier/plugins/estree";
-import * as htmlPlugin from "prettier/plugins/html";
-import * as markdownPlugin from "prettier/plugins/markdown";
-import * as typescriptPlugin from "prettier/plugins/typescript";
-import { EditorState, type Extension } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
-import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
-import { EditorView, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft,
@@ -37,7 +21,6 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  FileEdit,
   FileKey2,
   Folder,
   FolderClock,
@@ -69,7 +52,6 @@ import { InfoTooltip } from "./components/InfoTooltip";
 import { CollapsedShortcuts } from "./components/Sidebar/CollapsedShortcuts";
 import { ImagePreview } from "./components/ImagePreview";
 import { LoadingOverlay } from "./components/LoadingOverlay";
-import { MarkdownPreview } from "./components/MarkdownPreview";
 import {
   RemoteCommandsResultDialog,
   SavedActionDialog,
@@ -128,26 +110,7 @@ type EntryCreation = { side: PaneSide; directory: boolean; privileged: boolean }
 type SudoPrompt = { path: string; resolve: (password: string | null) => void };
 type InfoTarget = { entry: FileEntry; side: PaneSide };
 
-const editorTheme = EditorView.theme({
-  "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
-  ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "11px", lineHeight: "1.65" },
-  ".cm-content": { padding: "14px 0 18px", caretColor: "var(--teal)" },
-  ".cm-line": { padding: "0 18px" },
-  ".cm-gutters": { color: "var(--faint)", backgroundColor: "var(--surface-soft)", borderRight: "1px solid var(--border)" },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--teal-soft) 45%, transparent)" },
-  ".cm-activeLineGutter": { backgroundColor: "var(--teal-soft)", color: "var(--teal)" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--teal) 30%, transparent)" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--teal)" },
-});
-
-const editorHighlight = HighlightStyle.define([
-  { tag: tags.keyword, color: "#087d7b" },
-  { tag: [tags.string, tags.special(tags.string)], color: "#b26a2d" },
-  { tag: [tags.number, tags.bool, tags.null], color: "#8d55a6" },
-  { tag: [tags.comment, tags.docComment], color: "#7c8782", fontStyle: "italic" },
-  { tag: [tags.tagName, tags.typeName, tags.className], color: "#156c98" },
-  { tag: [tags.propertyName, tags.attributeName], color: "#926225" },
-]);
+const TextEditor = lazy(() => import("./components/TextEditor"));
 
 export default function App() {
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -217,18 +180,16 @@ export default function App() {
   const initialized = useRef(false);
   const observedCompletedTransfers = useRef<Set<UUID>>(new Set());
 
-  const {
-    tabs,
-    activeTabId,
-    transfers,
-    addTab,
-    closeTab,
-    setActiveTab,
-    updateTab,
-    setTransfers,
-    updateTransfer,
-    setExpandTransfersOnNew,
-  } = useAppStore();
+  const tabs = useAppStore((state) => state.tabs);
+  const activeTabId = useAppStore((state) => state.activeTabId);
+  const transferCompletionVersion = useAppStore((state) => state.transferCompletionVersion);
+  const addTab = useAppStore((state) => state.addTab);
+  const closeTab = useAppStore((state) => state.closeTab);
+  const setActiveTab = useAppStore((state) => state.setActiveTab);
+  const updateTab = useAppStore((state) => state.updateTab);
+  const setTransfers = useAppStore((state) => state.setTransfers);
+  const updateTransfer = useAppStore((state) => state.updateTransfer);
+  const setExpandTransfersOnNew = useAppStore((state) => state.setExpandTransfersOnNew);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const activeProfile = profiles.find((profile) => profile.id === activeTab?.profileId) ?? null;
 
@@ -260,7 +221,11 @@ export default function App() {
         const restoredActiveTabId = useAppStore.getState().activeTabId;
         let reconnectedActiveTabId: UUID | null = null;
         if (nextPreferences.restore_sessions && restoredTabs.length > 0) {
-          for (const restoredTab of restoredTabs) {
+          const restoreOrder = [...restoredTabs].sort(
+            (left, right) =>
+              Number(right.id === restoredActiveTabId) - Number(left.id === restoredActiveTabId),
+          );
+          for (const restoredTab of restoreOrder) {
             useAppStore.getState().closeTab(restoredTab.id);
             const profile = nextProfiles.find((item) => item.id === restoredTab.profileId);
             if (profile) {
@@ -388,6 +353,7 @@ export default function App() {
   }, [activeTab?.id]);
 
   useEffect(() => {
+    const transfers = useAppStore.getState().transfers;
     const newlyCompleted = transfers.filter(
       (job) => job.state === "completed" && !observedCompletedTransfers.current.has(job.id),
     );
@@ -411,7 +377,12 @@ export default function App() {
     ) {
       void loadPane("remote", activeTab.remotePath);
     }
-  }, [transfers, activeTab?.id, activeTab?.localPath, activeTab?.remotePath]);
+  }, [
+    transferCompletionVersion,
+    activeTab?.id,
+    activeTab?.localPath,
+    activeTab?.remotePath,
+  ]);
 
   async function connect(
     profile: ConnectionProfile,
@@ -687,7 +658,9 @@ export default function App() {
       }
       setTransfers([
         ...queued,
-        ...transfers.filter((item) => !queued.some((job) => job.id === item.id)),
+        ...useAppStore
+          .getState()
+          .transfers.filter((item) => !queued.some((job) => job.id === item.id)),
       ]);
     } catch (reason) {
       setError(errorMessage(reason));
@@ -774,9 +747,10 @@ export default function App() {
         navigate,
       });
       if (result.transfers?.length) {
+        const currentTransfers = useAppStore.getState().transfers;
         setTransfers([
           ...result.transfers,
-          ...transfers.filter((item) => !result.transfers!.some((job) => job.id === item.id)),
+          ...currentTransfers.filter((item) => !result.transfers!.some((job) => job.id === item.id)),
         ]);
       }
       if (result.refreshLocal && activeTab) {
@@ -1243,11 +1217,18 @@ export default function App() {
     }
   }
 
-  const comparedEntries = compareDirectories(localEntries, remoteEntries);
-  const comparisonByName = Object.fromEntries(
-    comparedEntries.map((item) => [item.name, item.status]),
+  const comparedEntries = useMemo(
+    () => compareDirectories(localEntries, remoteEntries),
+    [localEntries, remoteEntries],
   );
-  const syncActions: SyncAction[] = planSynchronization(comparedEntries, syncMode);
+  const comparisonByName = useMemo(
+    () => Object.fromEntries(comparedEntries.map((item) => [item.name, item.status])),
+    [comparedEntries],
+  );
+  const syncActions: SyncAction[] = useMemo(
+    () => planSynchronization(comparedEntries, syncMode),
+    [comparedEntries, syncMode],
+  );
 
   async function executeSynchronization(actions: SyncAction[]) {
     if (!activeTab) return;
@@ -1810,7 +1791,11 @@ export default function App() {
           }}
         />
       )}
-      {editorOpen && editorFile && <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />}
+      {editorOpen && editorFile && (
+        <Suspense fallback={<LoadingOverlay label={`Opening ${editorFile.name}…`} />}>
+          <TextEditor file={editorFile} saving={editorSaving} onClose={() => setEditorOpen(false)} onSave={saveEditor} />
+        </Suspense>
+      )}
       {externalEditChange && (
         <ExternalEditDialog
           change={externalEditChange}
@@ -2124,149 +2109,6 @@ function SudoPasswordDialog({ prompt, onClose, onSubmit }: { prompt: SudoPrompt;
       <div className="dialog-actions"><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!password} onClick={() => onSubmit(password)}>Authenticate</button></div>
     </section>
   </div>;
-}
-
-function TextEditor({ file, saving, onClose, onSave }: { file: EditableFile; saving: boolean; onClose: () => void; onSave: (content: string) => Promise<void> }) {
-  const isMarkdown = file.language === "Markdown";
-  const [content, setContent] = useState(file.content);
-  const [viewMode, setViewMode] = useState<"preview" | "source">(isMarkdown ? "preview" : "source");
-  const [discardPrompt, setDiscardPrompt] = useState(false);
-  const [formatting, setFormatting] = useState(false);
-  const [formatError, setFormatError] = useState<string | null>(null);
-  const editorView = useRef<EditorView | null>(null);
-  const dirty = content !== file.content;
-  const showingSource = !isMarkdown || viewMode === "source";
-  function close() {
-    if (dirty) setDiscardPrompt(true);
-    else onClose();
-  }
-  const canFormat = ["HTML", "CSS", "JavaScript", "JSON", "Markdown", "Rust"].includes(file.language);
-  async function formatContent() {
-    setFormatting(true);
-    setFormatError(null);
-    try {
-      const formatted = file.language === "Rust" ? await api.formatRust(content) : await prettier.format(content, prettierOptions(file.language));
-      setContent(formatted);
-    } catch (reason) {
-      setFormatError(errorMessage(reason));
-    } finally { setFormatting(false); }
-  }
-  return <div className="editor-overlay" role="dialog" aria-modal="true" aria-label={`Edit ${file.name}`}>
-    <section className="editor-dialog">
-      <header className="editor-header"><div className="editor-file-title"><span className="editor-file-icon">{file.privileged ? <LockKeyhole size={16} /> : <FileEdit size={16} />}</span><div><strong>{file.name}</strong><small>{file.path}</small></div></div><div className="editor-meta"><span>{file.language}</span>{file.privileged && <span>sudo</span>}<span>{dirty ? "Unsaved changes" : "Saved"}</span><button aria-label="Close editor" onClick={close}><X size={17} /></button></div></header>
-      <div className="editor-toolbar">
-        {isMarkdown ? (
-          <div className="editor-view-mode" role="group" aria-label="Markdown view">
-            <button type="button" className={viewMode === "preview" ? "active" : ""} onClick={() => setViewMode("preview")}>Preview</button>
-            <button type="button" className={viewMode === "source" ? "active" : ""} onClick={() => setViewMode("source")}>Source</button>
-          </div>
-        ) : (
-          <span>Text editor</span>
-        )}
-        <div className="editor-toolbar-actions">
-          {showingSource && <button className="editor-search-button" title="Find and replace (⌘F)" onClick={() => editorView.current && openSearchPanel(editorView.current)}><Search size={12} />Find</button>}
-          {canFormat && showingSource && <button className="format-button" title="Format document (Shift+Alt+F)" disabled={formatting} onClick={() => void formatContent()}>{formatting && <LoaderCircle className="spin" size={12} />}Format</button>}
-        </div>
-      </div>
-      {formatError && <div className="format-error"><CircleAlert size={14} /><span>{formatError}</span><button aria-label="Dismiss formatting error" onClick={() => setFormatError(null)}><X size={14} /></button></div>}
-      {showingSource ? (
-        <CodeEditor value={content} language={file.language} onChange={setContent} onFormat={canFormat ? formatContent : undefined} onViewReady={(view) => { editorView.current = view; }} />
-      ) : (
-        <MarkdownPreview content={content} />
-      )}
-      <footer className="editor-footer"><span>{content.split("\n").length} lines · {new TextEncoder().encode(content).length} bytes</span><div className="dialog-actions"><button className="secondary" onClick={close}>Cancel</button><button className="primary" disabled={!dirty || saving} onClick={() => void onSave(content)}>{saving ? <LoaderCircle className="spin" size={15} /> : <FileEdit size={15} />}Save file</button></div></footer>
-      {discardPrompt && <div className="discard-overlay"><section className="discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-title"><div className="discard-icon"><CircleAlert size={20} /></div><div><h2 id="discard-title">Discard unsaved changes?</h2><p>Your changes to <strong>{file.name}</strong> have not been saved.</p></div><div className="dialog-actions"><button className="secondary" onClick={() => setDiscardPrompt(false)}>Keep editing</button><button className="danger-button" onClick={onClose}>Discard changes</button></div></section></div>}
-    </section>
-  </div>;
-}
-
-function prettierOptions(language: string) {
-  const common = { tabWidth: 2, printWidth: 100, singleQuote: true } as const;
-  if (language === "HTML") return { ...common, parser: "html" as const, plugins: [htmlPlugin] };
-  if (language === "CSS") return { ...common, parser: "css" as const, plugins: [cssPlugin] };
-  if (language === "Markdown") return { ...common, parser: "markdown" as const, plugins: [markdownPlugin] };
-  if (language === "TypeScript") return { ...common, parser: "typescript" as const, plugins: [typescriptPlugin, estreePlugin] };
-  return { ...common, parser: "babel" as const, plugins: [babelPlugin, estreePlugin] };
-}
-
-function CodeEditor({ value, language, onChange, onFormat, onViewReady }: { value: string; language: string; onChange: (value: string) => void; onFormat?: () => Promise<void>; onViewReady: (view: EditorView | null) => void }) {
-  const host = useRef<HTMLDivElement>(null);
-  const view = useRef<EditorView | null>(null);
-  const changeHandler = useRef(onChange);
-  const formatHandler = useRef(onFormat);
-  const readyHandler = useRef(onViewReady);
-  changeHandler.current = onChange;
-  formatHandler.current = onFormat;
-  readyHandler.current = onViewReady;
-
-  useEffect(() => {
-    if (!host.current) return;
-    const editor = new EditorView({
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          lineNumbers(),
-          highlightActiveLineGutter(),
-          history(),
-          foldGutter(),
-          drawSelection(),
-          dropCursor(),
-          indentOnInput(),
-          bracketMatching(),
-          highlightActiveLine(),
-          highlightSelectionMatches(),
-          syntaxHighlighting(editorHighlight),
-          getLanguageExtension(language),
-          editorTheme,
-          keymap.of([
-            ...defaultKeymap,
-            ...historyKeymap,
-            ...searchKeymap,
-            indentWithTab,
-            {
-              key: "Shift-Alt-f",
-              run: () => {
-                if (!formatHandler.current) return false;
-                void formatHandler.current();
-                return true;
-              },
-            },
-          ]),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) changeHandler.current(update.state.doc.toString());
-          }),
-        ],
-      }),
-      parent: host.current,
-    });
-    view.current = editor;
-    readyHandler.current(editor);
-    editor.focus();
-    return () => {
-      editor.destroy();
-      view.current = null;
-      readyHandler.current(null);
-    };
-  }, [language]);
-
-  useEffect(() => {
-    const editor = view.current;
-    if (!editor || editor.state.doc.toString() === value) return;
-    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
-  }, [value]);
-
-  return <div className="editor-code-wrap" ref={host} aria-label="File contents" />;
-}
-
-function getLanguageExtension(language: string): Extension {
-  if (language === "HTML") return html();
-  if (language === "CSS") return css();
-  if (language === "JavaScript") return javascript({ jsx: true });
-  if (language === "TypeScript") return javascript({ jsx: true, typescript: true });
-  if (language === "JSON") return json();
-  if (language === "Markdown") return markdown();
-  if (language === "Rust") return rust();
-  return [];
 }
 
 function NewEntryDialog({ directory, side, privileged, onClose, onSubmit }: {

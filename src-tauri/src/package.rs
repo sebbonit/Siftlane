@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Write},
+    io,
     path::{Path, PathBuf},
 };
 
@@ -57,8 +57,6 @@ fn package_zip(source: &Path, archive: &Path) -> Result<(), AppError> {
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let mut count = 0usize;
-    let mut buffer = Vec::new();
-
     for entry in WalkDir::new(source).into_iter().filter_map(Result::ok) {
         let path = entry.path();
         let relative = path.strip_prefix(source).map_err(|_| {
@@ -95,11 +93,8 @@ fn package_zip(source: &Path, archive: &Path) -> Result<(), AppError> {
         }
         zip.start_file(&name_in_archive, options)
             .map_err(package_zip_error)?;
-        buffer.clear();
-        File::open(path)
-            .and_then(|mut input| input.read_to_end(&mut buffer))
-            .map_err(package_io_error)?;
-        zip.write_all(&buffer).map_err(package_io_error)?;
+        let mut input = File::open(path).map_err(package_io_error)?;
+        io::copy(&mut input, &mut zip).map_err(package_io_error)?;
     }
 
     zip.finish().map_err(package_zip_error)?;

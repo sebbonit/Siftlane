@@ -1,5 +1,6 @@
 import { formatGithubReleaseNotes, parseGithubChangeItems } from "../../lib/githubReleaseNotes";
 import { MarkdownPreview } from "../MarkdownPreview/MarkdownPreview";
+import { SafeExternalLink } from "../SafeExternalLink";
 
 export function UpdateReleaseNotes({ body }: { body: string | null | undefined }) {
   const raw = body ?? "";
@@ -12,13 +13,21 @@ export function UpdateReleaseNotes({ body }: { body: string | null | undefined }
           <li key={`${item.prNumber}-${item.title}`}>
             <span>{item.title}</span>
             {" by "}
-            <a className="md-ref md-ref-mention" href={item.authorUrl} title={item.authorUrl}>
+            <SafeExternalLink
+              className="md-ref md-ref-mention"
+              href={item.authorUrl}
+              title={item.authorUrl}
+            >
               @{item.author}
-            </a>
+            </SafeExternalLink>
             {" in "}
-            <a className="md-ref md-ref-pr" href={item.prUrl} title={item.prUrl}>
+            <SafeExternalLink
+              className="md-ref md-ref-pr"
+              href={item.prUrl}
+              title={item.prUrl}
+            >
               #{item.prNumber}
-            </a>
+            </SafeExternalLink>
           </li>
         ))}
       </ul>

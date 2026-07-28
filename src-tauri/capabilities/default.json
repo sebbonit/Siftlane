@@ -13,6 +13,10 @@
     "dialog:allow-ask",
     "dialog:allow-message",
     "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }]
+    },
     "opener:allow-reveal-item-in-dir",
     "process:allow-restart",
     "updater:default",

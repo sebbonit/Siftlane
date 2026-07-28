@@ -14,10 +14,12 @@ export interface SyncAction {
 }
 
 export function compareDirectories(local: FileEntry[], remote: FileEntry[]): ComparedEntry[] {
-  const names = new Set([...local.map((entry) => entry.name), ...remote.map((entry) => entry.name)]);
+  const localByName = new Map(local.map((entry) => [entry.name, entry]));
+  const remoteByName = new Map(remote.map((entry) => [entry.name, entry]));
+  const names = new Set([...localByName.keys(), ...remoteByName.keys()]);
   return [...names].sort().map((name) => {
-    const localEntry = local.find((entry) => entry.name === name) ?? null;
-    const remoteEntry = remote.find((entry) => entry.name === name) ?? null;
+    const localEntry = localByName.get(name) ?? null;
+    const remoteEntry = remoteByName.get(name) ?? null;
     return { name, local: localEntry, remote: remoteEntry, status: comparisonStatus(localEntry, remoteEntry) };
   });
 }

@@ -25,6 +25,7 @@ interface AppStore {
   tabs: SessionTab[];
   activeTabId: UUID | null;
   transfers: TransferJob[];
+  transferCompletionVersion: number;
   transferPanelOpen: boolean;
   expandTransfersOnNew: boolean;
   addTab: (tab: SessionTab) => void;
@@ -38,7 +39,8 @@ interface AppStore {
 }
 
 function hasNewTransfer(previous: TransferJob[], next: TransferJob[]) {
-  return next.some((job) => !previous.some((existing) => existing.id === job.id));
+  const existingIds = new Set(previous.map((job) => job.id));
+  return next.some((job) => !existingIds.has(job.id));
 }
 
 const restored = loadSession();
@@ -49,6 +51,7 @@ export const useAppStore = create<AppStore>((set) => ({
     ? restored.activeTabId
     : (restored.tabs.at(-1)?.id ?? null),
   transfers: [],
+  transferCompletionVersion: 0,
   transferPanelOpen: true,
   expandTransfersOnNew: true,
   addTab: (tab) =>
@@ -85,6 +88,10 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   setTransfers: (transfers, options) =>
     set((state) => {
+      const previousById = new Map(state.transfers.map((job) => [job.id, job.state]));
+      const completed = transfers.some(
+        (job) => job.state === "completed" && previousById.get(job.id) !== "completed",
+      );
       const shouldExpand =
         options?.expandOnNew !== false &&
         state.expandTransfersOnNew &&
@@ -92,15 +99,21 @@ export const useAppStore = create<AppStore>((set) => ({
         hasNewTransfer(state.transfers, transfers);
       return {
         transfers,
+        ...(completed ? { transferCompletionVersion: state.transferCompletionVersion + 1 } : {}),
         ...(shouldExpand ? { transferPanelOpen: true } : {}),
       };
     }),
   updateTransfer: (progress) =>
-    set((state) => ({
-      transfers: state.transfers.map((job) =>
-        job.id === progress.id ? { ...job, ...progress, updated_at: new Date().toISOString() } : job,
-      ),
-    })),
+    set((state) => {
+      const previous = state.transfers.find((job) => job.id === progress.id);
+      const completed = progress.state === "completed" && previous?.state !== "completed";
+      return {
+        transfers: state.transfers.map((job) =>
+          job.id === progress.id ? { ...job, ...progress, updated_at: new Date().toISOString() } : job,
+        ),
+        ...(completed ? { transferCompletionVersion: state.transferCompletionVersion + 1 } : {}),
+      };
+    }),
   toggleTransfers: () => set((state) => ({ transferPanelOpen: !state.transferPanelOpen })),
   setExpandTransfersOnNew: (value) => set({ expandTransfersOnNew: value }),
 }));

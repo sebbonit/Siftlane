@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -10,7 +14,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Storage {
-    path: std::path::PathBuf,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl Storage {
@@ -19,7 +23,16 @@ impl Storage {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(storage_io_error)?;
         }
-        let storage = Self { path };
+        let connection = Connection::open(path).map_err(storage_error)?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(storage_error)?;
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
+            .map_err(storage_error)?;
+        let storage = Self {
+            connection: Arc::new(Mutex::new(connection)),
+        };
         storage.with_connection(migrate)?;
         Ok(storage)
     }
@@ -28,13 +41,12 @@ impl Storage {
         &self,
         operation: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
     ) -> Result<T, AppError> {
-        let mut connection = Connection::open(&self.path).map_err(storage_error)?;
-        connection
-            .busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(storage_error)?;
-        connection
-            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
-            .map_err(storage_error)?;
+        let mut connection = self.connection.lock().map_err(|_| {
+            AppError::new(
+                ErrorCode::Storage,
+                "The local Siftlane database connection became unavailable",
+            )
+        })?;
         operation(&mut connection).map_err(storage_error)
     }
 
@@ -319,16 +331,61 @@ impl Storage {
         })
     }
 
+    pub fn save_transfers(&self, jobs: &[TransferJob]) -> Result<(), AppError> {
+        if jobs.is_empty() {
+            return Ok(());
+        }
+        let records = jobs
+            .iter()
+            .map(|job| {
+                Ok((
+                    job.id.to_string(),
+                    job.profile_id.to_string(),
+                    format!("{:?}", job.state).to_lowercase(),
+                    serde_json::to_string(job).map_err(serialization_error)?,
+                    job.created_at.to_rfc3339(),
+                    job.updated_at.to_rfc3339(),
+                ))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            {
+                let mut statement = transaction.prepare(
+                    "INSERT INTO transfer_jobs (id, profile_id, state, job_json, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(id) DO UPDATE SET state=excluded.state, job_json=excluded.job_json,
+                     updated_at=excluded.updated_at",
+                )?;
+                for (id, profile_id, state, json, created_at, updated_at) in records {
+                    statement.execute(params![
+                        id,
+                        profile_id,
+                        state,
+                        json,
+                        created_at,
+                        updated_at
+                    ])?;
+                }
+            }
+            transaction.commit()
+        })
+    }
+
     pub fn delete_transfers(&self, ids: &[Uuid]) -> Result<(), AppError> {
         if ids.is_empty() {
             return Ok(());
         }
         self.with_connection(|connection| {
-            let mut statement = connection.prepare("DELETE FROM transfer_jobs WHERE id = ?1")?;
-            for id in ids {
-                statement.execute(params![id.to_string()])?;
+            let transaction = connection.transaction()?;
+            {
+                let mut statement =
+                    transaction.prepare("DELETE FROM transfer_jobs WHERE id = ?1")?;
+                for id in ids {
+                    statement.execute(params![id.to_string()])?;
+                }
             }
-            Ok(())
+            transaction.commit()
         })
     }
 
