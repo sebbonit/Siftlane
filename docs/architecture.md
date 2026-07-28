@@ -33,3 +33,32 @@ verification for larger files. Final promotion uses rename, with a temporary des
 overwrites and rollback if promotion fails.
 
 The queue state machine is deliberately transport-neutral. FTP/FTPS can implement `RemoteFilesystem` later without rewriting UI or scheduling code.
+
+## Diagnostics
+
+Diagnostics are an explicit opt-in preference and are off by default. A shared atomic gate lets the
+file logger react immediately when the setting changes without restarting the app. Only events sent
+to the dedicated diagnostics target can reach disk; dependency logs and ordinary application log
+messages are rejected by the file target.
+
+Diagnostic events describe controlled operation metadata such as app/platform version, transport
+and authentication kinds, success/failure outcomes, retry counts, and `ErrorCode` values. Random
+per-launch session IDs and per-operation IDs correlate connection, search, and transfer stages;
+finished events include elapsed milliseconds. They do not format profiles, paths, user-entered
+strings, `AppError` messages/details, commands, or file contents.
+
+A private lifecycle marker identifies an earlier unclean exit. Clean shutdown removes it, while the
+panic hook records only an allowlisted component, source line, and coarse lifecycle phase—never the
+panic payload or a source path. Retention is capped at four 256 KB files, and Settings exposes
+reveal and clear actions.
+
+Support bundle review snapshots the retained diagnostic files in bounded memory, so the exported
+ZIP contains exactly what the user reviewed even if logging continues afterward. The bundle adds a
+JSON privacy manifest with schema/app/platform metadata, file sizes, and SHA-256 checksums. It does
+not read configuration, SQLite, keychain, arbitrary log-directory entries, or any user files.
+Exports are assembled in a private temporary file and atomically persisted outside the log
+directory.
+
+Startup validates the app-owned log directory and files before the logger opens them, restricts Unix
+permissions, removes unsafe links and stale collision backups, and migrates away the legacy
+unfiltered log. Preference writes are serialized so rapid opt-in changes cannot reorder on disk.

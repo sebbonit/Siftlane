@@ -32,6 +32,9 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+    diagnostics::{
+        DiagnosticConnection, DiagnosticConnectionOutcome, DiagnosticError, SearchScope,
+    },
     secrets::SecretKind,
     state::{AppState, PendingHostKey, SessionRecord, StoredKeyVerifier},
     transfer_plan::{TransferPlan, TransferPlanMode, plan_local_directory, plan_remote_directory},
@@ -180,15 +183,26 @@ pub async fn connect_profile(
     credential: Option<String>,
 ) -> Result<ConnectResult, AppError> {
     let profile = state.storage.get_profile(profile_id)?;
+    let diagnostic_connection = DiagnosticConnection::from_profile(&profile);
+    let protocol = diagnostic_connection.protocol();
+    let diagnostic_operation = state
+        .diagnostics
+        .record_connection_started(diagnostic_connection);
     let preferences = state.preferences.read().await.clone();
-    match profile.protocol {
+    let result = match protocol {
         Protocol::Sftp => {
             connect_sftp(&app, state.inner(), profile, credential, preferences, true).await
         }
         Protocol::Ftp | Protocol::Ftps => {
             connect_ftp(&app, state.inner(), profile, credential, preferences, true).await
         }
-    }
+    };
+    state.diagnostics.record_connection_finished(
+        diagnostic_operation,
+        protocol,
+        DiagnosticConnectionOutcome::from_result(&result),
+    );
+    result
 }
 
 async fn connect_sftp(
@@ -587,13 +601,15 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: Uuid,
 ) -> Result<(), AppError> {
-    let session = state
-        .sessions
-        .write()
-        .await
-        .remove(&session_id)
-        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Session not found"))?;
-    session.client.disconnect().await
+    let session = state.sessions.write().await.remove(&session_id);
+    let result = match session {
+        Some(session) => session.client.disconnect().await,
+        None => Err(AppError::new(ErrorCode::NotFound, "Session not found")),
+    };
+    state
+        .diagnostics
+        .record_session_disconnected(result.as_ref().err().map(DiagnosticError::from_error));
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1806,6 +1822,9 @@ pub async fn save_preferences(
             "Transfer concurrency cannot exceed 12 and retries cannot exceed 10",
         ));
     }
+    let _save_guard = state.preferences_save_guard.lock().await;
+    let diagnostics_changed =
+        state.preferences.read().await.diagnostics_enabled != preferences.diagnostics_enabled;
     let storage = state.storage.clone();
     let persisted = preferences.clone();
     tokio::task::spawn_blocking(move || storage.save_preferences(&persisted))
@@ -1819,6 +1838,11 @@ pub async fn save_preferences(
         preferences.global_parallel_transfers,
         preferences.per_host_parallel_transfers,
     );
+    if diagnostics_changed {
+        state
+            .diagnostics
+            .set_enabled(preferences.diagnostics_enabled);
+    }
     Ok(())
 }
 
@@ -2771,6 +2795,7 @@ pub async fn start_search_local(
     root: String,
     query: String,
 ) -> Result<Uuid, AppError> {
+    let diagnostic_operation = state.diagnostics.record_search_started(SearchScope::Local);
     let search_id = Uuid::new_v4();
     let cancelled = Arc::new(AtomicBool::new(false));
     state
@@ -2789,19 +2814,19 @@ pub async fn start_search_local(
             })
         })
         .await;
-        let failure_message = match walk_result {
-            Ok(Ok(())) => None,
+        let (failure_message, error_code) = match walk_result {
+            Ok(Ok(())) => (None, None),
             Ok(Err(error)) => {
                 tracing::warn!(
                     %search_id,
                     message = error.message.as_str(),
                     "local search failed"
                 );
-                Some(error.message)
+                (Some(error.message), Some(error.code))
             }
             Err(join_error) => {
                 tracing::warn!(%search_id, error = %join_error, "local search task failed");
-                Some("Search failed".into())
+                (Some("Search failed".into()), Some(ErrorCode::Internal))
             }
         };
         if let Some(message) = failure_message {
@@ -2818,6 +2843,11 @@ pub async fn start_search_local(
                 },
             );
         }
+        app_state.diagnostics.record_search_finished(
+            diagnostic_operation,
+            SearchScope::Local,
+            error_code,
+        );
         app_state.searches.lock().await.remove(&search_id);
     });
     Ok(search_id)
@@ -2842,6 +2872,7 @@ pub async fn start_search_remote(
         .insert(search_id, cancelled.clone());
     let query = query.trim().to_string();
     let app_state = state.inner().clone();
+    let diagnostic_operation = state.diagnostics.record_search_started(SearchScope::Remote);
     tauri::async_runtime::spawn(async move {
         let result = crate::search::search_remote(
             client.as_ref(),
@@ -2854,6 +2885,7 @@ pub async fn start_search_remote(
             },
         )
         .await;
+        let error_code = result.as_ref().err().map(|error| error.code);
         if let Err(error) = result {
             tracing::warn!(
                 %search_id,
@@ -2878,6 +2910,11 @@ pub async fn start_search_remote(
                 },
             );
         }
+        app_state.diagnostics.record_search_finished(
+            diagnostic_operation,
+            SearchScope::Remote,
+            error_code,
+        );
         app_state.searches.lock().await.remove(&search_id);
     });
     Ok(search_id)

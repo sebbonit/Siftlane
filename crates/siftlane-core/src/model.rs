@@ -540,6 +540,8 @@ pub struct Preferences {
     pub theme: Theme,
     pub default_layout: LayoutMode,
     pub show_hidden_files: bool,
+    #[serde(default)]
+    pub diagnostics_enabled: bool,
     pub global_parallel_transfers: u8,
     pub per_host_parallel_transfers: u8,
     #[serde(default = "default_expand_transfers_on_new")]
@@ -574,6 +576,7 @@ impl Default for Preferences {
             theme: Theme::System,
             default_layout: LayoutMode::DualPane,
             show_hidden_files: true,
+            diagnostics_enabled: false,
             global_parallel_transfers: 3,
             per_host_parallel_transfers: 2,
             expand_transfers_on_new: true,

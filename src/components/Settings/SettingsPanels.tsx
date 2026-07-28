@@ -1,7 +1,9 @@
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Download, FolderOpen, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { useAppVersion } from "../../hooks/useAppVersion";
-import type { ConnectionProfile, Preferences } from "../../types";
+import { api } from "../../lib/ipc";
+import type { ConnectionProfile, Preferences, SupportBundlePreview } from "../../types";
 import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
 import { ConfigurationPanel } from "./ConfigurationPanel";
 import type { SettingsCategoryId } from "./categories";
@@ -37,6 +39,9 @@ export function SettingsPanel({
   }
   if (category === "trusted_hosts") {
     return <TrustedHostsPanel />;
+  }
+  if (category === "diagnostics") {
+    return <DiagnosticsPanel draft={draft} onChange={onChange} />;
   }
   return <AboutPanel />;
 }
@@ -490,6 +495,247 @@ function ConnectionPanel({
       </SettingsRow>
     </SettingsList>
   );
+}
+
+function DiagnosticsPanel({
+  draft,
+  onChange,
+}: {
+  draft: Preferences;
+  onChange: (next: Preferences) => void;
+}) {
+  const [busy, setBusy] = useState<"reveal" | "clear" | "preview" | "export" | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [bundlePreview, setBundlePreview] = useState<SupportBundlePreview | null>(null);
+
+  async function revealLogs() {
+    setBusy("reveal");
+    setStatus(null);
+    try {
+      const path = await api.getDiagnosticsLogPath();
+      await api.revealInFileManager(path);
+    } catch {
+      setStatus("The diagnostic log could not be shown.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearLogs() {
+    setBusy("clear");
+    setStatus(null);
+    try {
+      await api.clearDiagnosticLogs();
+      setStatus("Saved diagnostic logs were cleared.");
+    } catch {
+      setStatus("The diagnostic logs could not be cleared.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reviewSupportBundle() {
+    setBusy("preview");
+    setStatus(null);
+    try {
+      setBundlePreview(await api.getSupportBundlePreview());
+    } catch {
+      setStatus("The support bundle could not be reviewed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function exportSupportBundle() {
+    setBusy("export");
+    setStatus(null);
+    try {
+      const path = await api.pickSupportBundleExport();
+      if (!path) return;
+      if (!bundlePreview) return;
+      await api.exportSupportBundle(bundlePreview.preview_id, path);
+      setBundlePreview(null);
+      setStatus("The privacy-safe support bundle was saved.");
+    } catch {
+      setStatus("The support bundle could not be saved.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <SettingsList title="Diagnostics">
+      <SettingsRow
+        label="Save diagnostic logs"
+        description="Opt in to metadata-only troubleshooting logs. Turning this off stops new entries but keeps existing files until you clear them."
+        htmlFor="settings-diagnostics-enabled"
+      >
+        <span className="settings-toggle">
+          <input
+            id="settings-diagnostics-enabled"
+            type="checkbox"
+            checked={draft.diagnostics_enabled}
+            onChange={(event) =>
+              onChange({ ...draft, diagnostics_enabled: event.target.checked })
+            }
+          />
+          <span />
+        </span>
+      </SettingsRow>
+      <SettingsRow
+        label="What is recorded"
+        description="App and schema versions, operating system, random session and operation IDs, protocol and authentication method, operation timings and outcomes, retry counts, and non-sensitive error codes."
+      >
+        <span className="diagnostics-safety">Metadata only</span>
+      </SettingsRow>
+      <SettingsRow
+        label="What is excluded"
+        description="Credentials, secret values, hosts, usernames, paths, filenames, commands, file contents, and free-form error messages are never written."
+      >
+        <span className="diagnostics-safety">Private by design</span>
+      </SettingsRow>
+      <SettingsRow
+        label="Saved files"
+        description="Siftlane keeps at most four 256 KB log files. Open their folder to attach the relevant files to a support request, or clear every retained diagnostic log."
+      >
+        <span className="diagnostics-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy !== null}
+            onClick={() => void revealLogs()}
+          >
+            <FolderOpen size={14} />
+            {busy === "reveal" ? "Opening…" : "Show logs folder"}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy !== null}
+            onClick={() => void clearLogs()}
+          >
+            <Trash2 size={14} />
+            {busy === "clear" ? "Clearing…" : "Clear logs"}
+          </button>
+        </span>
+      </SettingsRow>
+      <SettingsRow
+        label="Support bundle"
+        description="Review and export a ZIP containing the retained logs and a privacy manifest with file sizes and SHA-256 checksums."
+      >
+        <button
+          type="button"
+          className="secondary diagnostics-export"
+          disabled={busy !== null}
+          onClick={() => void reviewSupportBundle()}
+        >
+          {busy === "preview" ? (
+            <LoaderCircle className="spin" size={14} />
+          ) : (
+            <Download size={14} />
+          )}
+          {busy === "preview" ? "Reviewing…" : "Review support bundle"}
+        </button>
+      </SettingsRow>
+      {status && <p className="diagnostics-status" role="status">{status}</p>}
+      {bundlePreview && (
+        <SupportBundleDialog
+          preview={bundlePreview}
+          exporting={busy === "export"}
+          onClose={() => setBundlePreview(null)}
+          onExport={() => void exportSupportBundle()}
+        />
+      )}
+    </SettingsList>
+  );
+}
+
+function SupportBundleDialog({
+  preview,
+  exporting,
+  onClose,
+  onExport,
+}: {
+  preview: SupportBundlePreview;
+  exporting: boolean;
+  onClose: () => void;
+  onExport: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section
+        className="dialog support-bundle-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Review support bundle"
+      >
+        <header>
+          <div>
+            <h2>Review support bundle</h2>
+            <p>Only the files and metadata listed below will be exported.</p>
+          </div>
+          <button type="button" aria-label="Close dialog" disabled={exporting} onClick={onClose}>
+            <X size={17} />
+          </button>
+        </header>
+        <div className="support-bundle-body">
+          <section>
+            <h3>Included files</h3>
+            <ul>
+              <li>
+                <span>manifest.json</span>
+                <small>
+                  App {preview.app_version} · {preview.operating_system}/
+                  {preview.architecture} · bundle schema {preview.bundle_schema_version} ·
+                  diagnostics {preview.diagnostics_enabled ? "on" : "off"} ·{" "}
+                  {new Date(preview.created_at_utc).toLocaleString()}
+                </small>
+              </li>
+              {preview.log_files.map((file) => (
+                <li className="support-bundle-file" key={file.name}>
+                  <span>
+                    <span>logs/{file.name}</span>
+                    <code>SHA-256 {file.sha256}</code>
+                  </span>
+                  <small>{formatDiagnosticBytes(file.bytes)}</small>
+                </li>
+              ))}
+            </ul>
+            {preview.log_files.length === 0 && (
+              <p>No retained logs are available; the ZIP will contain only the manifest.</p>
+            )}
+          </section>
+          <section>
+            <h3>Diagnostic metadata</h3>
+            <ul className="support-bundle-data-list">
+              {preview.included_data.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </section>
+          <section className="support-bundle-exclusions">
+            <h3>Explicitly excluded</h3>
+            <ul className="support-bundle-data-list">
+              {preview.excluded_data.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </section>
+        </div>
+        <footer className="dialog-actions">
+          <span>{formatDiagnosticBytes(preview.total_log_bytes)} of logs</span>
+          <button type="button" className="secondary" disabled={exporting} onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="primary" disabled={exporting} onClick={onExport}>
+            {exporting && <LoaderCircle className="spin" size={14} />}
+            {exporting ? "Exporting…" : "Choose save location"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function formatDiagnosticBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 function AboutPanel() {

@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "../../App";
+import { api } from "../../lib/ipc";
 
 describe("Settings", () => {
   it("opens as a main window with category sidebar", async () => {
@@ -76,6 +77,59 @@ describe("Settings", () => {
     await userEvent.click(screen.getByRole("button", { name: /restore defaults/i }));
     expect(screen.getByLabelText(/global parallel transfers/i)).toHaveValue(3);
     expect(screen.getByRole("button", { name: /restore defaults/i })).toBeDisabled();
+  });
+
+  it("offers opt-in privacy-safe diagnostic logs and retention controls", async () => {
+    render(<App />);
+    await screen.findByText("Move files without the noise.");
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+
+    const toggle = screen.getByLabelText("Save diagnostic logs");
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByText(/credentials, secret values, hosts, usernames, paths/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/at most four 256 KB log files/i)).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.getByRole("button", { name: "Show logs folder" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear logs" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/logs were cleared/i);
+
+    await userEvent.click(screen.getByRole("button", { name: "Review support bundle" }));
+    const review = await screen.findByRole("dialog", { name: "Review support bundle" });
+    expect(within(review).getByText("manifest.json")).toBeInTheDocument();
+    expect(within(review).getByText(/logs\/siftlane-diagnostics\.log/i)).toBeInTheDocument();
+    expect(within(review).getByText(/SHA-256 e3b0c44298fc/i)).toBeInTheDocument();
+    expect(within(review).getByText(/random session and operation IDs/i)).toBeInTheDocument();
+    expect(within(review).getByText(/credentials and secret values/i)).toBeInTheDocument();
+    expect(within(review).getByText(/application configuration and database contents/i))
+      .toBeInTheDocument();
+
+    await userEvent.click(
+      within(review).getByRole("button", { name: "Choose save location" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(/support bundle was saved/i);
+  });
+
+  it("reverts the diagnostics toggle when saving fails", async () => {
+    const save = vi
+      .spyOn(api, "savePreferences")
+      .mockRejectedValueOnce(new Error("storage unavailable"));
+    render(<App />);
+    await screen.findByText("Move files without the noise.");
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+
+    const toggle = screen.getByLabelText("Save diagnostic logs");
+    await userEvent.click(toggle);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be saved/i);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    save.mockRestore();
   });
 
   it("offers plain and explicitly encrypted configuration export", async () => {

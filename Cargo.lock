@@ -4828,6 +4828,7 @@ dependencies = [
  "flate2",
  "getrandom 0.3.4",
  "keyring",
+ "libc",
  "rusqlite",
  "russh",
  "secrecy",

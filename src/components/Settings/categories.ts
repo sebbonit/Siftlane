@@ -1,4 +1,5 @@
 import {
+  Bug,
   Cable,
   DatabaseBackup,
   HardDriveDownload,
@@ -14,6 +15,7 @@ export type SettingsCategoryId =
   | "transfers"
   | "connection"
   | "trusted_hosts"
+  | "diagnostics"
   | "about";
 
 export interface SettingsCategory {
@@ -53,6 +55,12 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     label: "Trusted hosts",
     description: "SSH fingerprints and known_hosts import",
     icon: ShieldCheck,
+  },
+  {
+    id: "diagnostics",
+    label: "Diagnostics",
+    description: "Privacy-safe troubleshooting logs",
+    icon: Bug,
   },
   {
     id: "about",

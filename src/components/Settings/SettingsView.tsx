@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RotateCcw } from "lucide-react";
 import { desktop } from "../../lib/ipc";
@@ -11,6 +11,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
   default_layout: "dual_pane",
   show_hidden_files: true,
+  diagnostics_enabled: false,
   global_parallel_transfers: 3,
   per_host_parallel_transfers: 2,
   expand_transfers_on_new: true,
@@ -33,6 +34,7 @@ function preferencesEqual(left: Preferences, right: Preferences) {
     left.theme === right.theme &&
     left.default_layout === right.default_layout &&
     left.show_hidden_files === right.show_hidden_files &&
+    left.diagnostics_enabled === right.diagnostics_enabled &&
     left.global_parallel_transfers === right.global_parallel_transfers &&
     left.per_host_parallel_transfers === right.per_host_parallel_transfers &&
     left.expand_transfers_on_new === right.expand_transfers_on_new &&
@@ -55,21 +57,33 @@ export function SettingsView({
 }: {
   value: Preferences;
   onBack: () => void;
-  onChange: (value: Preferences) => void;
+  onChange: (value: Preferences) => Promise<void>;
   profiles?: ConnectionProfile[];
   onConfigurationImported: () => Promise<void>;
 }) {
   const [category, setCategory] = useState<SettingsCategoryId>("general");
   const [draft, setDraft] = useState(value);
+  const [pendingSaves, setPendingSaves] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveRevision = useRef(0);
   const atDefaults = preferencesEqual(draft, DEFAULT_PREFERENCES);
 
   useEffect(() => {
-    setDraft(value);
-  }, [value]);
+    if (pendingSaves === 0) setDraft(value);
+  }, [pendingSaves, value]);
 
   function commit(next: Preferences) {
+    const revision = ++saveRevision.current;
     setDraft(next);
-    onChange(next);
+    setPendingSaves((count) => count + 1);
+    setSaveError(null);
+    void onChange(next)
+      .catch(() => {
+        if (revision === saveRevision.current) {
+          setSaveError("Settings could not be saved. Your last change was reverted.");
+        }
+      })
+      .finally(() => setPendingSaves((count) => count - 1));
   }
 
   return (
@@ -100,6 +114,11 @@ export function SettingsView({
           </button>
         </header>
         <section className="settings-content" aria-label="Settings">
+          {saveError && (
+            <p className="settings-save-error" role="alert">
+              {saveError}
+            </p>
+          )}
           <SettingsPanel
             category={category}
             draft={draft}

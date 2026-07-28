@@ -1,5 +1,6 @@
 mod commands;
 mod configuration;
+mod diagnostics;
 mod external_edit;
 mod package;
 mod scheduler;
