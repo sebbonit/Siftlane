@@ -33,3 +33,15 @@ verification for larger files. Final promotion uses rename, with a temporary des
 overwrites and rollback if promotion fails.
 
 The queue state machine is deliberately transport-neutral. FTP/FTPS can implement `RemoteFilesystem` later without rewriting UI or scheduling code.
+
+## Diagnostics
+
+Diagnostics are an explicit opt-in preference and are off by default. A shared atomic gate lets the
+file logger react immediately when the setting changes without restarting the app. Only events sent
+to the dedicated diagnostics target can reach disk; dependency logs and ordinary application log
+messages are rejected by the file target.
+
+Diagnostic events describe controlled operation metadata such as app/platform version, transport
+and authentication kinds, success/failure outcomes, retry counts, and `ErrorCode` values. They do
+not format profiles, paths, user-entered strings, `AppError` messages/details, commands, or file
+contents. Retention is capped at four 256 KB files, and Settings exposes reveal and clear actions.

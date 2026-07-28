@@ -1060,6 +1060,7 @@ export const api = {
       theme: "system",
       default_layout: "dual_pane",
       show_hidden_files: true,
+      diagnostics_enabled: false,
       global_parallel_transfers: 3,
       per_host_parallel_transfers: 2,
       expand_transfers_on_new: true,
@@ -1079,6 +1080,14 @@ export const api = {
   },
   savePreferences(preferences: Preferences) {
     return desktop ? call<void>("save_preferences", { preferences }) : Promise.resolve();
+  },
+  async getDiagnosticsLogPath() {
+    return desktop
+      ? call<string>("get_diagnostics_log_path")
+      : "/tmp/siftlane-diagnostics.log";
+  },
+  clearDiagnosticLogs() {
+    return desktop ? call<void>("clear_diagnostic_logs") : Promise.resolve();
   },
   async onTransferProgress(callback: (progress: TransferProgress) => void): Promise<UnlistenFn> {
     if (!desktop) return () => undefined;

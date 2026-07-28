@@ -78,6 +78,27 @@ describe("Settings", () => {
     expect(screen.getByRole("button", { name: /restore defaults/i })).toBeDisabled();
   });
 
+  it("offers opt-in privacy-safe diagnostic logs and retention controls", async () => {
+    render(<App />);
+    await screen.findByText("Move files without the noise.");
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+
+    const toggle = screen.getByLabelText("Save diagnostic logs");
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByText(/credentials, secret values, hosts, usernames, paths/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/at most four 256 KB log files/i)).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.getByRole("button", { name: "Show logs folder" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear logs" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/logs were cleared/i);
+  });
+
   it("offers plain and explicitly encrypted configuration export", async () => {
     render(<App />);
     await screen.findByText("Move files without the noise.");

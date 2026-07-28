@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
@@ -15,6 +18,9 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::{
+    diagnostics::{
+        Diagnostics, LOG_FILE_STEM, LOG_TARGET, MAX_LOG_FILE_BYTES, RETAINED_ARCHIVED_LOG_FILES,
+    },
     external_edit::ExternalEditRecord,
     scheduler::{BandwidthLimiter, TransferScheduler},
     secrets::{SecretKind, SecretStore},
@@ -25,6 +31,7 @@ use crate::{
 pub struct AppState {
     pub storage: Storage,
     pub secrets: SecretStore,
+    pub diagnostics: Diagnostics,
     pub sessions: Arc<RwLock<HashMap<Uuid, SessionRecord>>>,
     pub pending_host_keys: Arc<Mutex<HashMap<Uuid, PendingHostKey>>>,
     pub transfers: Arc<Mutex<TransferQueue>>,
@@ -58,7 +65,10 @@ pub struct PendingHostKey {
 }
 
 impl AppState {
-    fn initialize(app: &tauri::AppHandle) -> Result<Self, AppError> {
+    fn initialize(
+        app: &tauri::AppHandle,
+        diagnostics_enabled: Arc<AtomicBool>,
+    ) -> Result<Self, AppError> {
         let data_dir = app.path().app_data_dir().map_err(|source| {
             AppError::new(
                 ErrorCode::Storage,
@@ -68,6 +78,15 @@ impl AppState {
         })?;
         let storage = Storage::open(data_dir.join("siftlane.sqlite3"))?;
         let preferences = storage.load_preferences()?;
+        let log_dir = app.path().app_log_dir().map_err(|source| {
+            AppError::new(
+                ErrorCode::Storage,
+                "Could not locate the diagnostic log directory",
+            )
+            .with_detail(source.to_string())
+        })?;
+        diagnostics_enabled.store(preferences.diagnostics_enabled, Ordering::Relaxed);
+        let diagnostics = Diagnostics::new(diagnostics_enabled, log_dir);
         let transfers = TransferQueue::restore(storage.load_transfers()?);
         let external_edit_root = tempfile::Builder::new()
             .prefix("siftlane-external-edits-")
@@ -82,6 +101,7 @@ impl AppState {
         Ok(Self {
             storage,
             secrets: SecretStore,
+            diagnostics,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             pending_host_keys: Arc::new(Mutex::new(HashMap::new())),
             transfers: Arc::new(Mutex::new(transfers)),
@@ -131,31 +151,38 @@ impl HostKeyVerifier for StoredKeyVerifier {
     }
 }
 
-fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    use tauri_plugin_log::{Target, TargetKind};
+fn build_log_plugin<R: tauri::Runtime>(
+    diagnostics_enabled: Arc<AtomicBool>,
+) -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_log::{RotationStrategy, Target, TargetKind, log::LevelFilter};
 
     let log_dir = Target::new(TargetKind::LogDir {
-        file_name: Some("siftlane".into()),
+        file_name: Some(LOG_FILE_STEM.into()),
+    })
+    .filter(move |metadata| {
+        diagnostics_enabled.load(Ordering::Relaxed) && metadata.target() == LOG_TARGET
     });
+    let builder = tauri_plugin_log::Builder::new()
+        .clear_targets()
+        .level(LevelFilter::Info)
+        .rotation_strategy(RotationStrategy::KeepSome(RETAINED_ARCHIVED_LOG_FILES))
+        .max_file_size(MAX_LOG_FILE_BYTES);
 
     #[cfg(debug_assertions)]
     {
-        tauri_plugin_log::Builder::new()
+        builder
             .targets([Target::new(TargetKind::Stdout), log_dir])
             .build()
     }
 
     #[cfg(not(debug_assertions))]
     {
-        // Keep release logs in the app log directory only (no stdout).
-        tauri_plugin_log::Builder::new()
-            .clear_targets()
-            .target(log_dir)
-            .build()
+        builder.target(log_dir).build()
     }
 }
 
 pub fn run() {
+    let diagnostics_enabled = Arc::new(AtomicBool::new(false));
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -168,9 +195,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(build_log_plugin())
-        .setup(|app| {
-            let state = AppState::initialize(app.handle())?;
+        .plugin(build_log_plugin(diagnostics_enabled.clone()))
+        .setup(move |app| {
+            let state = AppState::initialize(app.handle(), diagnostics_enabled.clone())?;
+            state
+                .diagnostics
+                .record_app_started(&app.package_info().version.to_string());
             app.manage(state);
             Ok(())
         })
@@ -223,6 +253,8 @@ pub fn run() {
             crate::commands::get_remote_directory_size,
             crate::commands::get_preferences,
             crate::commands::save_preferences,
+            crate::diagnostics::get_diagnostics_log_path,
+            crate::diagnostics::clear_diagnostic_logs,
             crate::commands::list_transfers,
             crate::commands::clear_transfers,
             crate::commands::enqueue_transfer,

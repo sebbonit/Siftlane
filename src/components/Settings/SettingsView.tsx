@@ -11,6 +11,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
   default_layout: "dual_pane",
   show_hidden_files: true,
+  diagnostics_enabled: false,
   global_parallel_transfers: 3,
   per_host_parallel_transfers: 2,
   expand_transfers_on_new: true,
@@ -33,6 +34,7 @@ function preferencesEqual(left: Preferences, right: Preferences) {
     left.theme === right.theme &&
     left.default_layout === right.default_layout &&
     left.show_hidden_files === right.show_hidden_files &&
+    left.diagnostics_enabled === right.diagnostics_enabled &&
     left.global_parallel_transfers === right.global_parallel_transfers &&
     left.per_host_parallel_transfers === right.per_host_parallel_transfers &&
     left.expand_transfers_on_new === right.expand_transfers_on_new &&

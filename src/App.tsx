@@ -1315,6 +1315,7 @@ export default function App() {
               theme: "system" as const,
               default_layout: "dual_pane" as const,
               show_hidden_files: true,
+              diagnostics_enabled: false,
               global_parallel_transfers: 3,
               per_host_parallel_transfers: 2,
               expand_transfers_on_new: true,

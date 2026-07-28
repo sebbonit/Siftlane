@@ -1,6 +1,8 @@
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { FolderOpen, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import appIcon from "../../../src-tauri/icons/128x128.png";
 import { useAppVersion } from "../../hooks/useAppVersion";
+import { api } from "../../lib/ipc";
 import type { ConnectionProfile, Preferences } from "../../types";
 import { UpdateDialog, updatesEnabled, useManualUpdater } from "../Updater";
 import { ConfigurationPanel } from "./ConfigurationPanel";
@@ -37,6 +39,9 @@ export function SettingsPanel({
   }
   if (category === "trusted_hosts") {
     return <TrustedHostsPanel />;
+  }
+  if (category === "diagnostics") {
+    return <DiagnosticsPanel draft={draft} onChange={onChange} />;
   }
   return <AboutPanel />;
 }
@@ -488,6 +493,103 @@ function ConnectionPanel({
           }
         />
       </SettingsRow>
+    </SettingsList>
+  );
+}
+
+function DiagnosticsPanel({
+  draft,
+  onChange,
+}: {
+  draft: Preferences;
+  onChange: (next: Preferences) => void;
+}) {
+  const [busy, setBusy] = useState<"reveal" | "clear" | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function revealLogs() {
+    setBusy("reveal");
+    setStatus(null);
+    try {
+      const path = await api.getDiagnosticsLogPath();
+      await api.revealInFileManager(path);
+    } catch {
+      setStatus("The diagnostic log could not be shown.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearLogs() {
+    setBusy("clear");
+    setStatus(null);
+    try {
+      await api.clearDiagnosticLogs();
+      setStatus("Saved diagnostic logs were cleared.");
+    } catch {
+      setStatus("The diagnostic logs could not be cleared.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <SettingsList title="Diagnostics">
+      <SettingsRow
+        label="Save diagnostic logs"
+        description="Opt in to metadata-only troubleshooting logs. Turning this off stops new entries but keeps existing files until you clear them."
+        htmlFor="settings-diagnostics-enabled"
+      >
+        <span className="settings-toggle">
+          <input
+            id="settings-diagnostics-enabled"
+            type="checkbox"
+            checked={draft.diagnostics_enabled}
+            onChange={(event) =>
+              onChange({ ...draft, diagnostics_enabled: event.target.checked })
+            }
+          />
+          <span />
+        </span>
+      </SettingsRow>
+      <SettingsRow
+        label="What is recorded"
+        description="App version, operating system, protocol and authentication method, operation outcomes, retry counts, and non-sensitive error codes."
+      >
+        <span className="diagnostics-safety">Metadata only</span>
+      </SettingsRow>
+      <SettingsRow
+        label="What is excluded"
+        description="Credentials, secret values, hosts, usernames, paths, filenames, commands, file contents, and free-form error messages are never written."
+      >
+        <span className="diagnostics-safety">Private by design</span>
+      </SettingsRow>
+      <SettingsRow
+        label="Saved files"
+        description="Siftlane keeps at most four 256 KB log files. Open their folder to attach the relevant files to a support request, or clear every retained diagnostic log."
+      >
+        <span className="diagnostics-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy !== null}
+            onClick={() => void revealLogs()}
+          >
+            <FolderOpen size={14} />
+            {busy === "reveal" ? "Opening…" : "Show logs folder"}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy !== null}
+            onClick={() => void clearLogs()}
+          >
+            <Trash2 size={14} />
+            {busy === "clear" ? "Clearing…" : "Clear logs"}
+          </button>
+        </span>
+      </SettingsRow>
+      {status && <p className="diagnostics-status" role="status">{status}</p>}
     </SettingsList>
   );
 }

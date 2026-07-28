@@ -75,6 +75,9 @@ pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
 
 async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppError> {
     let queued_job = job_snapshot(&state, id).await?;
+    state
+        .diagnostics
+        .record_transfer_started(queued_job.direction);
     let profile = state.storage.get_profile(queued_job.profile_id)?;
     let destination_endpoint = format!(
         "{:?}://{}:{}",
@@ -190,6 +193,9 @@ async fn prepare_retry(
         (queue.get(id)?.clone(), delay_seconds)
     };
     persist_transfer(state, &updated).await.ok()?;
+    state
+        .diagnostics
+        .record_transfer_retry(updated.direction, updated.retry_count, limit, error);
     emit(app, &progress_from_job(updated));
     Some(Duration::from_secs(delay_seconds))
 }
@@ -971,6 +977,10 @@ async fn transition(state: &AppState, id: TransferId, next: TransferState) -> Re
 
 async fn complete(app: &AppHandle, state: &AppState, id: TransferId) -> Result<(), AppError> {
     transition(state, id, TransferState::Completed).await?;
+    let job = job_snapshot(state, id).await?;
+    state
+        .diagnostics
+        .record_transfer_completed(job.direction, job.retry_count);
     emit_current(app, state, id).await;
     Ok(())
 }
@@ -1013,6 +1023,9 @@ async fn fail(
         }
         queue.get(id).cloned().expect("transfer exists")
     };
+    state
+        .diagnostics
+        .record_transfer_failed(job.direction, &error);
     persist_transfer(state, &job).await?;
     emit(app, &progress_from_job(job));
     Ok(())

@@ -213,6 +213,7 @@ export interface Preferences {
   theme: Theme;
   default_layout: "dual_pane" | "remote_focused";
   show_hidden_files: boolean;
+  diagnostics_enabled: boolean;
   global_parallel_transfers: number;
   per_host_parallel_transfers: number;
   expand_transfers_on_new: boolean;

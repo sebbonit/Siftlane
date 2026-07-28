@@ -1702,6 +1702,30 @@ body.is-file-pane-dragging .file-row.is-draggable {
   outline: 2px solid color-mix(in srgb, var(--teal) 70%, transparent);
   outline-offset: 2px;
 }
+.diagnostics-safety {
+  padding: 5px 9px;
+  color: var(--teal);
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.settings-row-control:has(> .diagnostics-actions) {
+  width: auto;
+  flex: 0 0 auto;
+}
+.diagnostics-actions { display: flex; gap: 8px; }
+.diagnostics-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.diagnostics-status {
+  margin: 0;
+  padding: 10px 20px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+  font-size: 10px;
+}
 .update-dialog { width: min(460px, 100%); }
 .update-dialog-body { display: grid; gap: 12px; padding: 16px 20px 0; }
 .update-dialog-body > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }

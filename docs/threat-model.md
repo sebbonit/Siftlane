@@ -23,6 +23,12 @@ The operating system, logged-in user account, system keyring, and SSH cryptograp
 - Remote paths are normalized before filesystem commands.
 - Privileged SFTP commands use a separate SSH channel with fixed commands and shell-quoted paths; `sudo -n` is attempted before password fallback.
 - Saved “run remote commands” actions execute user-authored shell strings on an already-authenticated SFTP session (trusted-operator automation). Working directories are shell-quoted; command bodies are not logged.
+- Diagnostic logging is disabled by default and runtime-gated by the persisted opt-in setting. The
+  disk logger accepts only Siftlane's dedicated diagnostics target, whose structured events use
+  allowlisted metadata. Credentials, secret values, hosts, usernames, paths, filenames, commands,
+  file contents, and free-form error messages/details are excluded.
+- Diagnostic retention is bounded to one active 256 KB file plus three rotated files. Disabling
+  diagnostics stops new entries; retained files can be cleared from Settings.
 - Tauri capabilities and the webview CSP restrict exposed native functionality.
 
 ## Known limitations before stable release
