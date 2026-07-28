@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -16,11 +16,8 @@ import {
 } from "lucide-react";
 import { capitalize, formatBytes } from "../lib/format";
 import { api } from "../lib/ipc";
-import {
-  countTransferFilter,
-  matchesTransferFilter,
-  type TransferFilter,
-} from "../lib/transferFilters";
+import { matchesTransferFilter, type TransferFilter } from "../lib/transferFilters";
+import { virtualRange } from "../lib/virtualization";
 import { useAppStore } from "../store";
 import type { TransferJob, TransferPriority } from "../types";
 import { TransferConflictDialog } from "./TransferConflictDialog";
@@ -49,28 +46,70 @@ function transferStatus(job: TransferJob): string {
 }
 
 export function TransferPanel() {
-  const { transfers, transferPanelOpen, toggleTransfers, setTransfers } = useAppStore();
+  const transfers = useAppStore((state) => state.transfers);
+  const transferPanelOpen = useAppStore((state) => state.transferPanelOpen);
+  const toggleTransfers = useAppStore((state) => state.toggleTransfers);
+  const setTransfers = useAppStore((state) => state.setTransfers);
   const [filter, setFilter] = useState<TransferFilter>("all");
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const filtered = transfers.filter((job) => matchesTransferFilter(job, filter));
-  const clearableCount = countTransferFilter(transfers, filter);
-  const conflict = transfers.find((job) => job.state === "waiting_for_conflict") ?? null;
+  const [listScrollTop, setListScrollTop] = useState(0);
+  const filtered = useMemo(
+    () => transfers.filter((job) => matchesTransferFilter(job, filter)),
+    [filter, transfers],
+  );
+  const virtualized = filtered.length > 100;
+  const range = virtualized
+    ? virtualRange({
+        itemCount: filtered.length,
+        itemHeight: 44,
+        scrollTop: listScrollTop,
+        viewportHeight: 44 * 11,
+        overscan: 5,
+        headerHeight: 27,
+      })
+    : { first: 0, last: filtered.length };
+  const firstVisibleIndex = range.first;
+  const lastVisibleIndex = range.last;
+  const renderedTransfers = filtered.slice(firstVisibleIndex, lastVisibleIndex);
+  const summary = useMemo(() => {
+    const counts: Record<TransferFilter, number> = {
+      all: transfers.length,
+      active: 0,
+      completed: 0,
+      failed: 0,
+    };
+    let conflict: TransferJob | null = null;
+    let remainingBytes = 0;
+    let aggregateSpeed = 0;
+    let runningCount = 0;
+    let detailJob: TransferJob | null = null;
+    for (const job of transfers) {
+      if (!["completed", "failed", "cancelled"].includes(job.state)) counts.active += 1;
+      if (job.state === "completed") counts.completed += 1;
+      if (["failed", "cancelled"].includes(job.state)) counts.failed += 1;
+      if (!conflict && job.state === "waiting_for_conflict") conflict = job;
+      remainingBytes += Math.max(
+        0,
+        (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred,
+      );
+      if (job.state === "running") {
+        runningCount += 1;
+        aggregateSpeed += job.speed_bytes_per_second ?? 0;
+      }
+      if (job.id === detailJobId) detailJob = job;
+    }
+    return { counts, conflict, remainingBytes, aggregateSpeed, runningCount, detailJob };
+  }, [detailJobId, transfers]);
+  const clearableCount = summary.counts[filter];
+  const conflict = summary.conflict;
   const batchRemaining =
     conflict?.batch_id == null
       ? 1
       : transfers.filter(
           (job) => job.batch_id === conflict.batch_id && !["completed", "cancelled"].includes(job.state),
         ).length;
-  const remainingBytes = transfers.reduce(
-    (sum, job) => sum + Math.max(0, (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred),
-    0,
-  );
-  const aggregateSpeed = transfers.reduce(
-    (sum, job) => sum + (job.state === "running" ? job.speed_bytes_per_second ?? 0 : 0),
-    0,
-  );
-  const detailJob = transfers.find((job) => job.id === detailJobId) ?? null;
+  const { aggregateSpeed, detailJob, remainingBytes, runningCount } = summary;
 
   async function act(job: TransferJob, action: "pause" | "resume" | "cancel" | "retry") {
     const updated = await api.controlTransfer(job.id, action);
@@ -116,7 +155,7 @@ export function TransferPanel() {
         <button className="transfer-title" onClick={toggleTransfers}>
           {transferPanelOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           <strong>Transfers</strong>
-          <span>{transfers.filter((job) => job.state === "running").length}</span>
+          <span>{runningCount}</span>
         </button>
         <nav aria-label="Transfer filters">
           {FILTERS.map((value) => (
@@ -125,7 +164,7 @@ export function TransferPanel() {
               className={filter === value ? "active" : ""}
               onClick={() => setFilter(value)}
             >
-              {capitalize(value)} <span>{countTransferFilter(transfers, value)}</span>
+              {capitalize(value)} <span>{summary.counts[value]}</span>
             </button>
           ))}
         </nav>
@@ -150,7 +189,10 @@ export function TransferPanel() {
         </button>
       </header>
       {transferPanelOpen && (
-        <div className="transfer-list">
+        <div
+          className="transfer-list"
+          onScroll={(event) => setListScrollTop(event.currentTarget.scrollTop)}
+        >
           <div className="transfer-list-header">
             <span>Name</span>
             <span>Direction</span>
@@ -159,7 +201,10 @@ export function TransferPanel() {
             <span>Status</span>
             <span />
           </div>
-          {filtered.map((job) => {
+          {firstVisibleIndex > 0 && (
+            <div aria-hidden="true" style={{ height: firstVisibleIndex * 44 }} />
+          )}
+          {renderedTransfers.map((job) => {
             const progress = job.bytes_total
               ? Math.min(100, (job.bytes_transferred / job.bytes_total) * 100)
               : 0;
@@ -248,6 +293,9 @@ export function TransferPanel() {
               </div>
             );
           })}
+          {lastVisibleIndex < filtered.length && (
+            <div aria-hidden="true" style={{ height: (filtered.length - lastVisibleIndex) * 44 }} />
+          )}
           {filtered.length === 0 && (
             <div className="empty-transfers">
               {filter === "all" ? "No transfers" : `No ${filter} transfers`}

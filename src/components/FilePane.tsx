@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -23,6 +24,7 @@ import { formatBytes } from "../lib/format";
 import { sortEntries, type SortDir, type SortKey } from "../lib/fileSort";
 import type { PaneSide } from "../lib/filePaneDnD";
 import { parentPath } from "../lib/paths";
+import { scrollTopForIndex, virtualRange } from "../lib/virtualization";
 import { useFilePaneDnD, type PaneDropHandler } from "../hooks/useFilePaneDnD";
 import type { ComparisonStatus, FileEntry } from "../types";
 import { FilePaneContextMenu } from "./FilePaneContextMenu";
@@ -121,16 +123,76 @@ export function FilePane({
     entry: FileEntry | null;
   } | null>(null);
   const anchorPath = useRef<string | null>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const [rowViewport, setRowViewport] = useState({ scrollTop: 0, height: 0 });
 
   const dnd = useFilePaneDnD(side, (entry) => onSelectionChange([entry]), onPaneDrop);
 
   const visible = useMemo(() => {
+    const needle = query.toLowerCase();
     const filtered = entries.filter(
       (entry) =>
-        (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(query.toLowerCase()),
+        (showHidden || !entry.hidden) && entry.name.toLowerCase().includes(needle),
     );
     return sortEntries(filtered, sortKey, sortDir);
   }, [entries, query, showHidden, sortKey, sortDir]);
+  const selectedPaths = useMemo(() => new Set(selected.map((entry) => entry.path)), [selected]);
+  const visibleBytes = useMemo(
+    () => visible.reduce((sum, item) => sum + (item.size ?? 0), 0),
+    [visible],
+  );
+  const selectedBytes = useMemo(
+    () => selected.reduce((sum, item) => sum + (item.size ?? 0), 0),
+    [selected],
+  );
+  const virtualized = visible.length > 200 && rowViewport.height > 0;
+  const range = virtualized
+    ? virtualRange({
+        itemCount: visible.length,
+        itemHeight: 33,
+        scrollTop: rowViewport.scrollTop,
+        viewportHeight: rowViewport.height,
+        overscan: 8,
+      })
+    : { first: 0, last: visible.length };
+  const firstVisibleIndex = range.first;
+  const lastVisibleIndex = range.last;
+  const renderedEntries = visible.slice(firstVisibleIndex, lastVisibleIndex);
+
+  useEffect(() => {
+    const rows = rowsRef.current;
+    if (!rows) return;
+    const updateHeight = () =>
+      setRowViewport((current) => ({ ...current, height: rows.clientHeight }));
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(rows);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const rows = rowsRef.current;
+    if (!rows) return;
+    const maximumScrollTop = Math.max(0, visible.length * 33 - rows.clientHeight);
+    if (rows.scrollTop <= maximumScrollTop) return;
+    rows.scrollTop = maximumScrollTop;
+    setRowViewport((current) => ({ ...current, scrollTop: maximumScrollTop }));
+  }, [visible.length]);
+
+  function revealIndex(index: number) {
+    const rows = rowsRef.current;
+    if (!rows) return;
+    const nextScrollTop = scrollTopForIndex({
+      index,
+      itemHeight: 33,
+      scrollTop: rows.scrollTop,
+      viewportHeight: rows.clientHeight,
+    });
+    if (nextScrollTop === rows.scrollTop) return;
+    rows.scrollTop = nextScrollTop;
+    setRowViewport((current) => ({ ...current, scrollTop: nextScrollTop }));
+  }
 
   function openContextMenu(event: ReactMouseEvent, entry: FileEntry | null) {
     event.preventDefault();
@@ -201,6 +263,7 @@ export function FilePane({
       onSelectionChange([next]);
       anchorPath.current = next.path;
     }
+    revealIndex(nextIndex);
   }
 
   return (
@@ -331,15 +394,29 @@ export function FilePane({
             </button>
           ))}
         </div>
-        <div className="file-rows" tabIndex={0} onKeyDown={handleKeys}>
+        <div
+          className="file-rows"
+          ref={rowsRef}
+          tabIndex={0}
+          onKeyDown={handleKeys}
+          onScroll={(event) =>
+            setRowViewport((current) => ({
+              ...current,
+              scrollTop: event.currentTarget.scrollTop,
+            }))
+          }
+        >
           <FilePaneRows
             loading={loading}
             entriesEmpty={entries.length === 0}
-            visible={visible}
-            selectedPaths={new Set(selected.map((entry) => entry.path))}
+            visible={renderedEntries}
+            selectedPaths={selectedPaths}
             comparisonByName={comparisonByName}
             dragOverFolderPath={dnd.dragOverFolderPath}
             draggingPath={dnd.draggingPath}
+            topPadding={firstVisibleIndex * 33}
+            bottomPadding={(visible.length - lastVisibleIndex) * 33}
+            totalVisible={visible.length}
             onSelect={selectEntry}
             onNavigate={onNavigate}
             onOpenFile={onOpenFile}
@@ -351,12 +428,7 @@ export function FilePane({
       <footer className="pane-footer">
         <span>{selected.length > 0 ? `${selected.length} selected` : `${visible.length} items`}</span>
         <span>
-          {formatBytes(
-            (selected.length > 0 ? selected : visible).reduce(
-              (sum, item) => sum + (item.size ?? 0),
-              0,
-            ),
-          )}
+          {formatBytes(selected.length > 0 ? selectedBytes : visibleBytes)}
         </span>
       </footer>
       {contextMenu && (

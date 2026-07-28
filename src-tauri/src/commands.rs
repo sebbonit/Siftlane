@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -25,7 +25,10 @@ use siftlane_ftp::{FtpClient, FtpConnectOptions, FtpSecurity};
 use siftlane_sftp::{SftpAuth, SftpClient, SftpConnectOptions, SftpProxyJump};
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(unix)]
-use tokio::{io::AsyncWriteExt, process::Command as TokioCommand};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    process::Command as TokioCommand,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -177,7 +180,7 @@ pub async fn connect_profile(
     credential: Option<String>,
 ) -> Result<ConnectResult, AppError> {
     let profile = state.storage.get_profile(profile_id)?;
-    let preferences = state.storage.load_preferences()?;
+    let preferences = state.preferences.read().await.clone();
     match profile.protocol {
         Protocol::Sftp => {
             connect_sftp(&app, state.inner(), profile, credential, preferences, true).await
@@ -396,7 +399,7 @@ pub(crate) async fn reconnect_profile_for_transfer(
     };
 
     let profile = state.storage.get_profile(profile_id)?;
-    let preferences = state.storage.load_preferences()?;
+    let preferences = state.preferences.read().await.clone();
     let result = match profile.protocol {
         Protocol::Sftp => connect_sftp(app, state, profile, None, preferences, false).await?,
         Protocol::Ftp | Protocol::Ftps => {
@@ -769,7 +772,14 @@ fn read_git_head_label(git_dir: &Path) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
+pub async fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
+    run_blocking("The local directory task could not finish", move || {
+        list_local_directory_blocking(path)
+    })
+    .await
+}
+
+fn list_local_directory_blocking(path: String) -> Result<Vec<FileEntry>, AppError> {
     let mut entries = Vec::new();
     for item in std::fs::read_dir(&path).map_err(local_io_error)? {
         let item = item.map_err(local_io_error)?;
@@ -803,12 +813,11 @@ pub fn list_local_directory(path: String) -> Result<Vec<FileEntry>, AppError> {
             hidden: name.starts_with('.'),
         });
     }
-    entries.sort_by(|left, right| {
-        let left_dir = left.kind == EntryKind::Directory;
-        let right_dir = right.kind == EntryKind::Directory;
-        right_dir
-            .cmp(&left_dir)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    entries.sort_by_cached_key(|entry| {
+        (
+            entry.kind != EntryKind::Directory,
+            entry.name.to_lowercase(),
+        )
     });
     Ok(entries)
 }
@@ -824,22 +833,114 @@ pub struct EditableFile {
 }
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const REMOTE_FILE_CHUNK_SIZE: usize = 1024 * 1024;
 
-#[tauri::command]
-pub fn read_local_file(path: String) -> Result<EditableFile, AppError> {
-    let bytes = std::fs::read(&path).map_err(local_io_error)?;
-    editable_file(path, bytes)
+fn read_local_bytes_bounded(
+    path: &str,
+    limit: u64,
+    limit_message: &'static str,
+) -> Result<Vec<u8>, AppError> {
+    let file = fs::File::open(path).map_err(local_io_error)?;
+    let metadata = file.metadata().map_err(local_io_error)?;
+    if !metadata.is_file() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Only regular files can be opened in Siftlane",
+        ));
+    }
+    if metadata.len() > limit {
+        return Err(AppError::new(ErrorCode::InvalidInput, limit_message));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len().min(limit + 1) as usize);
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(local_io_error)?;
+    if bytes.len() as u64 > limit {
+        return Err(AppError::new(ErrorCode::InvalidInput, limit_message));
+    }
+    Ok(bytes)
+}
+
+async fn read_remote_bytes_bounded(
+    client: &dyn RemoteFilesystem,
+    path: &str,
+    reported_size: Option<u64>,
+    limit: u64,
+    limit_message: &'static str,
+) -> Result<Vec<u8>, AppError> {
+    if reported_size.is_some_and(|size| size > limit) {
+        return Err(AppError::new(ErrorCode::InvalidInput, limit_message));
+    }
+    let capacity = reported_size.unwrap_or(0).min(limit) as usize;
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut offset = 0_u64;
+    loop {
+        if reported_size.is_some_and(|size| offset >= size) {
+            break;
+        }
+        let hard_remaining = limit + 1 - bytes.len() as u64;
+        let advertised_remaining = reported_size
+            .map(|size| size.saturating_sub(offset))
+            .unwrap_or(hard_remaining);
+        let requested = hard_remaining
+            .min(advertised_remaining)
+            .min(REMOTE_FILE_CHUNK_SIZE as u64) as u32;
+        if requested == 0 {
+            break;
+        }
+        let chunk = client.read_chunk(path, offset, requested).await?;
+        if chunk.len() > requested as usize {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                "The remote server returned an invalid file chunk",
+            ));
+        }
+        if chunk.is_empty() {
+            if reported_size.is_some_and(|size| offset < size) {
+                return Err(AppError::new(
+                    ErrorCode::Io,
+                    "The remote file ended before its advertised size",
+                ));
+            }
+            break;
+        }
+        offset += chunk.len() as u64;
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() as u64 > limit {
+            return Err(AppError::new(ErrorCode::InvalidInput, limit_message));
+        }
+        if reported_size.is_none() && chunk.len() < requested as usize {
+            break;
+        }
+    }
+    Ok(bytes)
 }
 
 #[tauri::command]
-pub fn save_local_file(path: String, content: String) -> Result<(), AppError> {
+pub async fn read_local_file(path: String) -> Result<EditableFile, AppError> {
+    run_blocking("The local file read task could not finish", move || {
+        let bytes = read_local_bytes_bounded(
+            &path,
+            MAX_EDITABLE_FILE_BYTES,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        )?;
+        editable_file(path, bytes)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn save_local_file(path: String, content: String) -> Result<(), AppError> {
     if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
             "Files larger than 4 MB cannot be edited in Siftlane",
         ));
     }
-    std::fs::write(path, content).map_err(local_io_error)
+    run_blocking("The local file write task could not finish", move || {
+        std::fs::write(path, content).map_err(local_io_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -991,28 +1092,32 @@ async fn run_local_sudo(
     password: Option<&SecretString>,
     content: &[u8],
 ) -> Result<Vec<u8>, AppError> {
-    let mut command = TokioCommand::new("sudo");
-    command
-        .args(["-n", "--"])
-        .args(args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let output = if let Some(password) = password {
+    let mut command = if password.is_some() {
         let _ = TokioCommand::new("sudo")
             .args(["-k"])
             .status()
             .await
             .map_err(local_sudo_spawn_error)?;
         let mut command = TokioCommand::new("sudo");
+        command.args(["-S", "-p", "", "--"]);
         command
-            .args(["-S", "-p", "", "--"])
-            .args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let mut child = command.spawn().map_err(local_sudo_spawn_error)?;
-        if let Some(mut stdin) = child.stdin.take() {
+    } else {
+        let mut command = TokioCommand::new("sudo");
+        command.args(["-n", "--"]);
+        command
+    };
+    command
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().map_err(local_sudo_spawn_error)?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::new(ErrorCode::Internal, "Could not write to sudo"))?;
+    let write_input = async move {
+        if let Some(password) = password {
             stdin
                 .write_all(password.expose_secret().as_bytes())
                 .await
@@ -1024,28 +1129,59 @@ async fn run_local_sudo(
                 AppError::new(ErrorCode::Io, "Could not send the sudo password")
                     .with_detail(error.to_string())
             })?;
-            stdin.write_all(content).await.map_err(|error| {
-                AppError::new(ErrorCode::Io, "Could not send the file to sudo")
-                    .with_detail(error.to_string())
-            })?;
         }
-        child
-            .wait_with_output()
-            .await
-            .map_err(local_sudo_spawn_error)?
-    } else {
-        command.output().await.map_err(local_sudo_spawn_error)?
+        stdin.write_all(content).await.map_err(|error| {
+            AppError::new(ErrorCode::Io, "Could not send the file to sudo")
+                .with_detail(error.to_string())
+        })?;
+        Ok::<(), AppError>(())
     };
-    if !output.status.success() {
-        return Err(local_sudo_error(&output.stderr));
-    }
-    if output.stdout.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+    let stdout = child.stdout.take().ok_or_else(|| {
+        AppError::new(
+            ErrorCode::Internal,
+            "Could not read the sudo command output",
+        )
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        AppError::new(ErrorCode::Internal, "Could not read the sudo command error")
+    })?;
+    let (input, stdout, stderr, status) = tokio::join!(
+        write_input,
+        read_process_output(stdout, MAX_EDITABLE_FILE_BYTES + 1),
+        read_process_output(stderr, 64 * 1024),
+        child.wait()
+    );
+    input?;
+    let stdout = stdout?;
+    let stderr = stderr?;
+    let status = status.map_err(local_sudo_spawn_error)?;
+    if stdout.len() as u64 > MAX_EDITABLE_FILE_BYTES {
         return Err(AppError::new(
             ErrorCode::InvalidInput,
             "Files larger than 4 MB cannot be edited in Siftlane",
         ));
     }
-    Ok(output.stdout)
+    if !status.success() {
+        return Err(local_sudo_error(&stderr));
+    }
+    Ok(stdout)
+}
+
+#[cfg(unix)]
+async fn read_process_output(
+    output: impl AsyncRead + Unpin,
+    limit: u64,
+) -> Result<Vec<u8>, AppError> {
+    let mut bytes = Vec::new();
+    output
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| {
+            AppError::new(ErrorCode::Io, "Could not read the sudo command output")
+                .with_detail(error.to_string())
+        })?;
+    Ok(bytes)
 }
 
 #[cfg(unix)]
@@ -1074,7 +1210,20 @@ fn local_sudo_error(stderr: &[u8]) -> AppError {
 }
 
 #[tauri::command]
-pub fn format_rust(content: String) -> Result<String, AppError> {
+pub async fn format_rust(content: String) -> Result<String, AppError> {
+    if content.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "Files larger than 4 MB cannot be edited in Siftlane",
+        ));
+    }
+    run_blocking("The rustfmt task could not finish", move || {
+        format_rust_blocking(content)
+    })
+    .await
+}
+
+fn format_rust_blocking(content: String) -> Result<String, AppError> {
     let mut child = Command::new("rustfmt")
         .args(["--emit", "stdout", "--edition", "2024"])
         .stdin(Stdio::piped())
@@ -1126,23 +1275,14 @@ pub async fn read_remote_file(
         .metadata(&path)
         .await?
         .ok_or_else(|| AppError::new(ErrorCode::NotFound, "The remote file no longer exists"))?;
-    let size = metadata.size.unwrap_or(0);
-    if size > MAX_EDITABLE_FILE_BYTES {
-        return Err(AppError::new(
-            ErrorCode::InvalidInput,
-            "Files larger than 4 MB cannot be edited in Siftlane",
-        ));
-    }
-    let mut bytes = Vec::with_capacity(size as usize);
-    let mut offset = 0;
-    while offset < size {
-        let chunk = client.read_chunk(&path, offset, 64 * 1024).await?;
-        if chunk.is_empty() {
-            break;
-        }
-        offset += chunk.len() as u64;
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = read_remote_bytes_bounded(
+        client.as_ref(),
+        &path,
+        metadata.size,
+        MAX_EDITABLE_FILE_BYTES,
+        "Files larger than 4 MB cannot be edited in Siftlane",
+    )
+    .await?;
     editable_file(path, bytes)
 }
 
@@ -1207,9 +1347,9 @@ pub(crate) async fn save_remote_bytes_atomic(
     if content.is_empty() {
         client.write_chunk(&temp, 0, &[]).await?;
     } else {
-        for (offset, chunk) in content.chunks(64 * 1024).enumerate() {
+        for (offset, chunk) in content.chunks(REMOTE_FILE_CHUNK_SIZE).enumerate() {
             client
-                .write_chunk(&temp, (offset * 64 * 1024) as u64, chunk)
+                .write_chunk(&temp, (offset * REMOTE_FILE_CHUNK_SIZE) as u64, chunk)
                 .await?;
         }
     }
@@ -1328,9 +1468,16 @@ fn preview_file(path: String, bytes: Vec<u8>) -> Result<PreviewFile, AppError> {
 }
 
 #[tauri::command]
-pub fn read_local_preview(path: String) -> Result<PreviewFile, AppError> {
-    let bytes = std::fs::read(&path).map_err(local_io_error)?;
-    preview_file(path, bytes)
+pub async fn read_local_preview(path: String) -> Result<PreviewFile, AppError> {
+    run_blocking("The local preview task could not finish", move || {
+        let bytes = read_local_bytes_bounded(
+            &path,
+            MAX_PREVIEW_FILE_BYTES,
+            "Images larger than 16 MB cannot be previewed in Siftlane",
+        )?;
+        preview_file(path, bytes)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1345,29 +1492,14 @@ pub async fn read_remote_preview(
         .metadata(&path)
         .await?
         .ok_or_else(|| AppError::new(ErrorCode::NotFound, "The remote file no longer exists"))?;
-    let size = metadata.size.unwrap_or(0);
-    if size > MAX_PREVIEW_FILE_BYTES {
-        return Err(AppError::new(
-            ErrorCode::InvalidInput,
-            "Images larger than 16 MB cannot be previewed in Siftlane",
-        ));
-    }
-    let mut bytes = Vec::with_capacity(size as usize);
-    let mut offset = 0;
-    loop {
-        if size > 0 && offset >= size {
-            break;
-        }
-        let chunk = client.read_chunk(&path, offset, 64 * 1024).await?;
-        if chunk.is_empty() {
-            break;
-        }
-        offset += chunk.len() as u64;
-        bytes.extend_from_slice(&chunk);
-        if size == 0 && chunk.len() < 64 * 1024 {
-            break;
-        }
-    }
+    let bytes = read_remote_bytes_bounded(
+        client.as_ref(),
+        &path,
+        metadata.size,
+        MAX_PREVIEW_FILE_BYTES,
+        "Images larger than 16 MB cannot be previewed in Siftlane",
+    )
+    .await?;
     preview_file(path, bytes)
 }
 
@@ -1650,12 +1782,12 @@ async fn remote_directory_content_size(
 }
 
 #[tauri::command]
-pub fn get_preferences(state: State<'_, AppState>) -> Result<Preferences, AppError> {
-    state.storage.load_preferences()
+pub async fn get_preferences(state: State<'_, AppState>) -> Result<Preferences, AppError> {
+    Ok(state.preferences.read().await.clone())
 }
 
 #[tauri::command]
-pub fn save_preferences(
+pub async fn save_preferences(
     state: State<'_, AppState>,
     preferences: Preferences,
 ) -> Result<(), AppError> {
@@ -1674,7 +1806,15 @@ pub fn save_preferences(
             "Transfer concurrency cannot exceed 12 and retries cannot exceed 10",
         ));
     }
-    state.storage.save_preferences(&preferences)?;
+    let storage = state.storage.clone();
+    let persisted = preferences.clone();
+    tokio::task::spawn_blocking(move || storage.save_preferences(&persisted))
+        .await
+        .map_err(|error| {
+            AppError::new(ErrorCode::Internal, "The preferences task could not finish")
+                .with_detail(error.to_string())
+        })??;
+    *state.preferences.write().await = preferences.clone();
     state.transfer_scheduler.update_limits(
         preferences.global_parallel_transfers,
         preferences.per_host_parallel_transfers,
@@ -1712,10 +1852,17 @@ pub async fn clear_transfers(
     state: State<'_, AppState>,
     filter: TransferFilter,
 ) -> Result<Vec<TransferJob>, AppError> {
-    let mut queue = state.transfers.lock().await;
-    let removed = queue.clear_filter(filter.into());
-    state.storage.delete_transfers(&removed)?;
-    Ok(queue.list())
+    let (removed, remaining) = {
+        let mut queue = state.transfers.lock().await;
+        let removed = queue.clear_filter(filter.into());
+        (removed, queue.list())
+    };
+    let storage = state.storage.clone();
+    run_blocking("The transfer cleanup task could not finish", move || {
+        storage.delete_transfers(&removed)
+    })
+    .await?;
+    Ok(remaining)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1818,9 +1965,8 @@ pub async fn enqueue_transfer(
             );
             job.state = TransferState::Completed;
             job.symlink_policy = SymlinkPolicy::CopyLink;
-            let mut queue = state.transfers.lock().await;
-            queue.enqueue(job.clone());
-            state.storage.save_transfer(&job)?;
+            state.transfers.lock().await.enqueue(job.clone());
+            persist_transfer_jobs(state.inner(), std::slice::from_ref(&job)).await?;
             return Ok(job);
         }
     }
@@ -1837,11 +1983,8 @@ pub async fn enqueue_transfer(
     job.symlink_policy = draft.symlink_policy.unwrap_or_default();
     job.preserve_modified_time = draft.preserve_modified_time.unwrap_or(false);
     job.preserve_permissions = draft.preserve_permissions.unwrap_or(false);
-    {
-        let mut queue = state.transfers.lock().await;
-        queue.enqueue(job.clone());
-        state.storage.save_transfer(&job)?;
-    }
+    state.transfers.lock().await.enqueue(job.clone());
+    persist_transfer_jobs(state.inner(), std::slice::from_ref(&job)).await?;
     crate::transfers::spawn(app, state.inner().clone(), job.id);
     Ok(job)
 }
@@ -1925,11 +2068,8 @@ pub async fn enqueue_remote_transfer(
         bytes_total,
     );
     job.conflict_policy = draft.conflict_policy.unwrap_or(ConflictPolicy::Ask);
-    {
-        let mut queue = state.transfers.lock().await;
-        queue.enqueue(job.clone());
-        state.storage.save_transfer(&job)?;
-    }
+    state.transfers.lock().await.enqueue(job.clone());
+    persist_transfer_jobs(state.inner(), std::slice::from_ref(&job)).await?;
     crate::transfers::spawn(app, state.inner().clone(), job.id);
     Ok(job)
 }
@@ -2079,10 +2219,10 @@ pub async fn enqueue_directory_transfer(
             job.preserve_modified_time = draft.preserve_modified_time.unwrap_or(false);
             job.preserve_permissions = draft.preserve_permissions.unwrap_or(false);
             queue.enqueue(job.clone());
-            state.storage.save_transfer(&job)?;
             jobs.push(job);
         }
     }
+    persist_transfer_jobs(state.inner(), &jobs).await?;
     for job in &jobs {
         crate::transfers::spawn(app.clone(), state.inner().clone(), job.id);
     }
@@ -2185,13 +2325,15 @@ pub async fn set_transfer_priority(
     transfer_id: Uuid,
     priority: TransferPriority,
 ) -> Result<Vec<TransferJob>, AppError> {
-    let jobs = {
+    let (job, jobs) = {
         let mut queue = state.transfers.lock().await;
         queue.set_priority(transfer_id, priority)?;
-        let job = queue.get(transfer_id).expect("transfer exists");
-        state.storage.save_transfer(job)?;
-        queue.list()
+        (
+            queue.get(transfer_id).cloned().expect("transfer exists"),
+            queue.list(),
+        )
     };
+    persist_transfer_jobs(state.inner(), std::slice::from_ref(&job)).await?;
     state
         .transfer_scheduler
         .set_waiting_order(&jobs.iter().map(|job| job.id).collect::<Vec<_>>());
@@ -2222,7 +2364,7 @@ pub async fn control_transfer(
     transfer_id: Uuid,
     action: TransferAction,
 ) -> Result<TransferJob, AppError> {
-    let should_spawn = {
+    let (job, should_spawn) = {
         let mut queue = state.transfers.lock().await;
         let next = match action {
             TransferAction::Pause => TransferState::Paused,
@@ -2232,19 +2374,16 @@ pub async fn control_transfer(
         queue.transition(transfer_id, next)?;
         queue.set_error(transfer_id, None)?;
         let job = queue.get(transfer_id).cloned().expect("transfer exists");
-        state.storage.save_transfer(&job)?;
-        matches!(action, TransferAction::Resume | TransferAction::Retry)
+        (
+            job,
+            matches!(action, TransferAction::Resume | TransferAction::Retry),
+        )
     };
+    persist_transfer_jobs(state.inner(), std::slice::from_ref(&job)).await?;
     if should_spawn {
         crate::transfers::spawn(app, state.inner().clone(), transfer_id);
     }
-    state
-        .transfers
-        .lock()
-        .await
-        .get(transfer_id)
-        .cloned()
-        .ok_or_else(|| AppError::new(ErrorCode::NotFound, "Transfer not found"))
+    Ok(job)
 }
 
 #[tauri::command]
@@ -2297,12 +2436,11 @@ pub async fn resolve_transfer_conflict(
                 queue.transition(id, TransferState::Queued)?;
                 spawn_ids.push(id);
             }
-            let job = queue.get(id).cloned().expect("transfer exists");
-            state.storage.save_transfer(&job)?;
-            updated.push(job);
+            updated.push(queue.get(id).cloned().expect("transfer exists"));
         }
         (updated, spawn_ids)
     };
+    persist_transfer_jobs(state.inner(), &updated).await?;
     for id in spawn_ids {
         crate::transfers::spawn(app.clone(), state.inner().clone(), id);
     }
@@ -2572,8 +2710,16 @@ pub fn delete_saved_action(state: State<'_, AppState>, id: Uuid) -> Result<(), A
 }
 
 #[tauri::command]
-pub fn package_local_directory(path: String, format: ArchiveFormat) -> Result<String, AppError> {
-    crate::package::package_local_directory(&path, format)
+pub async fn package_local_directory(
+    path: String,
+    format: ArchiveFormat,
+) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || crate::package::package_local_directory(&path, format))
+        .await
+        .map_err(|error| {
+            AppError::new(ErrorCode::Internal, "The packaging task could not finish")
+                .with_detail(error.to_string())
+        })?
 }
 
 #[tauri::command]
@@ -2754,6 +2900,26 @@ fn local_io_error(source: std::io::Error) -> AppError {
     AppError::new(code, "The local directory could not be read").with_detail(source.to_string())
 }
 
+async fn run_blocking<T, F>(failure_message: &'static str, task: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|error| {
+        AppError::new(ErrorCode::Internal, failure_message).with_detail(error.to_string())
+    })?
+}
+
+async fn persist_transfer_jobs(state: &AppState, jobs: &[TransferJob]) -> Result<(), AppError> {
+    let storage = state.storage.clone();
+    let jobs = jobs.to_vec();
+    run_blocking(
+        "The transfer persistence task could not finish",
+        move || storage.save_transfers(&jobs),
+    )
+    .await
+}
+
 async fn remove_remote_directory_recursive(
     client: &dyn RemoteFilesystem,
     path: &str,
@@ -2786,7 +2952,7 @@ mod tests {
     use super::{ErrorCode, local_sudo_error};
     use super::{
         normalize_algorithm_policy, normalize_remote_path, parse_known_host_pattern,
-        resolve_local_git_branch,
+        read_local_bytes_bounded, resolve_local_git_branch,
     };
     use siftlane_core::SshAlgorithmPolicy;
     use std::fs;
@@ -2879,5 +3045,21 @@ mod tests {
             resolve_local_git_branch(&worktree).as_deref(),
             Some("abcdef0")
         );
+    }
+
+    #[test]
+    fn local_file_reads_stop_at_the_configured_limit() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("bounded.bin");
+        fs::write(&path, b"12345").expect("write");
+
+        assert_eq!(
+            read_local_bytes_bounded(path.to_str().expect("utf8"), 5, "too large").unwrap(),
+            b"12345"
+        );
+        let error =
+            read_local_bytes_bounded(path.to_str().expect("utf8"), 4, "too large").unwrap_err();
+        assert_eq!(error.code, super::ErrorCode::InvalidInput);
+        assert_eq!(error.message, "too large");
     }
 }

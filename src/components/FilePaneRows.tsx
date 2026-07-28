@@ -19,6 +19,9 @@ export function FilePaneRows({
   comparisonByName,
   dragOverFolderPath,
   draggingPath,
+  topPadding,
+  bottomPadding,
+  totalVisible,
   onSelect,
   onNavigate,
   onOpenFile,
@@ -32,6 +35,9 @@ export function FilePaneRows({
   comparisonByName?: Record<string, ComparisonStatus>;
   dragOverFolderPath: string | null;
   draggingPath: string | null;
+  topPadding: number;
+  bottomPadding: number;
+  totalVisible: number;
   onSelect: (entry: FileEntry, event: ReactMouseEvent) => void;
   onNavigate: (path: string) => void;
   onOpenFile: (entry: FileEntry) => void;
@@ -48,6 +54,7 @@ export function FilePaneRows({
 
   return (
     <>
+      {topPadding > 0 && <div aria-hidden="true" style={{ height: topPadding }} />}
       {visible.map((entry) => {
         const comparison = comparisonByName?.[entry.name];
         const transferable = isTransferableEntry(entry);
@@ -90,7 +97,8 @@ export function FilePaneRows({
           </button>
         );
       })}
-      {!loading && visible.length === 0 && <div className="pane-message">No matching files</div>}
+      {bottomPadding > 0 && <div aria-hidden="true" style={{ height: bottomPadding }} />}
+      {!loading && totalVisible === 0 && <div className="pane-message">No matching files</div>}
     </>
   );
 }

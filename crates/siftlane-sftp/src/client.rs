@@ -897,12 +897,11 @@ impl RemoteFilesystem for SftpClient {
                 symlink_target,
             });
         }
-        result.sort_by(|left, right| {
-            let left_dir = left.kind == EntryKind::Directory;
-            let right_dir = right.kind == EntryKind::Directory;
-            right_dir
-                .cmp(&left_dir)
-                .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+        result.sort_by_cached_key(|entry| {
+            (
+                entry.kind != EntryKind::Directory,
+                entry.name.to_lowercase(),
+            )
         });
         Ok(result)
     }
@@ -978,6 +977,7 @@ impl RemoteFilesystem for SftpClient {
     }
 
     async fn create_symlink(&self, path: &str, target: &str) -> Result<(), AppError> {
+        let _guard = self.io.lock().await;
         self.sftp
             .symlink(path, target)
             .await
