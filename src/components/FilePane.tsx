@@ -399,12 +399,11 @@ export function FilePane({
           ref={rowsRef}
           tabIndex={0}
           onKeyDown={handleKeys}
-          onScroll={(event) =>
-            setRowViewport((current) => ({
-              ...current,
-              scrollTop: event.currentTarget.scrollTop,
-            }))
-          }
+          onScroll={(event) => {
+            // Capture before setState — React nulls currentTarget after the handler.
+            const scrollTop = event.currentTarget.scrollTop;
+            setRowViewport((current) => ({ ...current, scrollTop }));
+          }}
         >
           <FilePaneRows
             loading={loading}
