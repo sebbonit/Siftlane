@@ -196,6 +196,7 @@ export function TransferPanel() {
           <div className="transfer-list-header">
             <span>Name</span>
             <span>Direction</span>
+            <span>Priority</span>
             <span>Progress</span>
             <span>Speed</span>
             <span>Status</span>
@@ -227,7 +228,7 @@ export function TransferPanel() {
                     <small>{route}</small>
                   </span>
                 </span>
-                <span>
+                <span className="transfer-direction">
                   {job.direction === "upload" ? (
                     <ArrowUpFromLine size={14} />
                   ) : job.direction === "remote_to_remote" ? (
@@ -236,6 +237,8 @@ export function TransferPanel() {
                     <ArrowDownToLine size={14} />
                   )}
                   {capitalize(job.direction.replaceAll("_", " "))}
+                </span>
+                <span className="transfer-priority">
                   <select
                     aria-label={`Priority for ${name}`}
                     value={job.priority ?? "normal"}
@@ -246,24 +249,26 @@ export function TransferPanel() {
                     <option value="low">Low</option>
                   </select>
                 </span>
-                <span className="progress-cell">
+                <span
+                  className="progress-cell"
+                  title={`ETA ${formatEta(
+                    Math.max(0, (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred),
+                    job.speed_bytes_per_second ?? 0,
+                  )}`}
+                >
                   <span className="progress-track">
                     <i style={{ width: `${progress}%` }} />
                   </span>
-                  <small>{Math.round(progress)}%</small>
-                  <small>{formatEta(
-                    Math.max(0, (job.bytes_total ?? job.bytes_transferred) - job.bytes_transferred),
-                    job.speed_bytes_per_second ?? 0,
-                  )}</small>
+                  <small className="progress-percent">{Math.round(progress)}%</small>
                 </span>
-                <span>
+                <span className="transfer-speed">
                   {job.speed_bytes_per_second
                     ? `${formatBytes(job.speed_bytes_per_second)}/s`
                     : "—"}
                 </span>
                 <span className={`state ${job.state}`}>
                   <i />
-                  {transferStatus(job)}
+                  <span>{transferStatus(job)}</span>
                 </span>
                 <span className="row-actions">
                   <button title="Details" onClick={() => setDetailJobId(job.id)}>
@@ -340,7 +345,7 @@ export function TransferPanel() {
 }
 
 function formatEta(bytes: number, speed: number): string {
-  if (bytes <= 0) return "0s";
+  if (bytes <= 0) return "—";
   if (speed <= 0) return "—";
   const seconds = Math.ceil(bytes / speed);
   if (seconds < 60) return `${seconds}s`;
