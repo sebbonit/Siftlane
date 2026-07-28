@@ -1727,12 +1727,91 @@ body.is-file-pane-dragging .file-row.is-draggable {
 }
 .diagnostics-actions { display: flex; gap: 8px; }
 .diagnostics-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.diagnostics-export { display: inline-flex; align-items: center; gap: 6px; }
 .diagnostics-status {
   margin: 0;
   padding: 10px 20px;
   color: var(--muted);
   border-top: 1px solid var(--border);
   background: var(--surface-soft);
+  font-size: 10px;
+}
+.support-bundle-dialog { width: min(620px, 100%); }
+.support-bundle-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px 0;
+}
+.support-bundle-body section {
+  display: grid;
+  gap: 7px;
+}
+.support-bundle-body h3 {
+  margin: 0;
+  font-size: 11px;
+}
+.support-bundle-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.support-bundle-body ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.support-bundle-body li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 10px;
+}
+.support-bundle-body li:not(.support-bundle-file) > span {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.support-bundle-file > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.support-bundle-file > span > span {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.support-bundle-file code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 9px;
+}
+.support-bundle-body li > small { flex: 0 0 auto; color: var(--muted); }
+.support-bundle-body .support-bundle-data-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: disc inside;
+}
+.support-bundle-body .support-bundle-data-list li {
+  display: list-item;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.support-bundle-exclusions .support-bundle-data-list {
+  border-color: color-mix(in srgb, var(--teal) 24%, var(--border));
+}
+.support-bundle-dialog > footer > span {
+  margin-right: auto;
+  color: var(--muted);
   font-size: 10px;
 }
 .update-dialog { width: min(460px, 100%); }

@@ -29,6 +29,7 @@ import type {
   SavedAction,
   SearchMatch,
   SearchProgress,
+  SupportBundlePreview,
   TransferDirection,
   TransferJob,
   TransferProgress,
@@ -1088,6 +1089,59 @@ export const api = {
   },
   clearDiagnosticLogs() {
     return desktop ? call<void>("clear_diagnostic_logs") : Promise.resolve();
+  },
+  async getSupportBundlePreview() {
+    if (desktop) return call<SupportBundlePreview>("get_support_bundle_preview");
+    return {
+      preview_id: "browser-support-preview",
+      created_at_utc: "2026-07-28T00:00:00Z",
+      bundle_schema_version: 1,
+      diagnostics_schema_version: 2,
+      app_version: "0.2.1",
+      operating_system: "browser",
+      architecture: "unknown",
+      diagnostics_enabled: false,
+      log_files: [{
+        name: "siftlane-diagnostics.log",
+        bytes: 0,
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      }],
+      total_log_bytes: 0,
+      included_data: [
+        "Diagnostic event logs",
+        "App and diagnostics schema versions",
+        "Operating system and CPU architecture",
+        "Random session and operation IDs with timings",
+        "Bundle creation time and diagnostics status",
+        "Log filenames, sizes, and SHA-256 checksums",
+      ],
+      excluded_data: [
+        "Credentials and secret values",
+        "Hosts and IP addresses",
+        "Usernames",
+        "Local and remote paths",
+        "Filenames transferred by the user",
+        "Commands",
+        "File contents",
+        "Free-form error messages",
+        "Application configuration and database contents",
+      ],
+    } satisfies SupportBundlePreview;
+  },
+  async pickSupportBundleExport() {
+    const filename = `siftlane-support-${new Date().toISOString().slice(0, 10)}.zip`;
+    if (!desktop) return filename;
+    const selected = await saveDialog({
+      title: "Export Siftlane support bundle",
+      defaultPath: filename,
+      filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
+  exportSupportBundle(previewId: UUID, path: string) {
+    return desktop
+      ? call<void>("export_support_bundle", { previewId, path })
+      : Promise.resolve();
   },
   async onTransferProgress(callback: (progress: TransferProgress) => void): Promise<UnlistenFn> {
     if (!desktop) return () => undefined;

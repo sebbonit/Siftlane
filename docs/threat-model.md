@@ -32,6 +32,14 @@ The operating system, logged-in user account, system keyring, and SSH cryptograp
   Unix. The legacy unfiltered `siftlane.log` is removed during migration.
 - Diagnostic retention is bounded to four 256 KB files, including the logger's collision backup.
   Disabling diagnostics stops new entries; retained files can be cleared from Settings.
+- Diagnostic correlation uses random app-session and operation UUIDs rather than profile, transfer,
+  host, or path identifiers. Durations, lifecycle phases, and panic locations are reduced to
+  counters and allowlisted categories; panic messages and source paths are excluded.
+- Support bundles contain an immutable, user-reviewed snapshot of only the strictly matched
+  diagnostic logs plus a generated privacy manifest. Each included log is capped at 256 KB and
+  listed with its size and SHA-256 checksum. Export rejects symbolic/multiple links and destinations
+  inside the log directory; configuration, SQLite, keychain, user files, and unrelated directory
+  entries are never read.
 - Tauri capabilities and the webview CSP restrict exposed native functionality.
 
 ## Known limitations before stable release

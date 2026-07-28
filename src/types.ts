@@ -67,6 +67,27 @@ export interface ConfigurationImportSummary {
   secrets_imported: number;
 }
 
+export interface SupportBundleLogFile {
+  name: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface SupportBundlePreview {
+  preview_id: UUID;
+  created_at_utc: string;
+  bundle_schema_version: number;
+  diagnostics_schema_version: number;
+  app_version: string;
+  operating_system: string;
+  architecture: string;
+  diagnostics_enabled: boolean;
+  log_files: SupportBundleLogFile[];
+  total_log_bytes: number;
+  included_data: string[];
+  excluded_data: string[];
+}
+
 export type EntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface FileEntry {

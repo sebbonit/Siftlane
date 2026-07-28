@@ -88,7 +88,7 @@ impl AppState {
             .with_detail(source.to_string())
         })?;
         diagnostics_enabled.store(preferences.diagnostics_enabled, Ordering::Relaxed);
-        let diagnostics = Diagnostics::new(diagnostics_enabled, log_dir);
+        let diagnostics = Diagnostics::new(diagnostics_enabled, log_dir)?;
         let transfers = TransferQueue::restore(storage.load_transfers()?);
         let external_edit_root = tempfile::Builder::new()
             .prefix("siftlane-external-edits-")
@@ -185,7 +185,7 @@ fn build_log_plugin<R: tauri::Runtime>(
 
 pub fn run() {
     let diagnostics_enabled = Arc::new(AtomicBool::new(false));
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -201,6 +201,12 @@ pub fn run() {
         .plugin(build_log_plugin(diagnostics_enabled.clone()))
         .setup(move |app| {
             let state = AppState::initialize(app.handle(), diagnostics_enabled.clone())?;
+            let panic_diagnostics = state.diagnostics.clone();
+            let previous_panic_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |panic_info| {
+                panic_diagnostics.record_panic(panic_info.location());
+                previous_panic_hook(panic_info);
+            }));
             state.diagnostics.record_app_started();
             app.manage(state);
             Ok(())
@@ -256,6 +262,8 @@ pub fn run() {
             crate::commands::save_preferences,
             crate::diagnostics::get_diagnostics_log_path,
             crate::diagnostics::clear_diagnostic_logs,
+            crate::diagnostics::get_support_bundle_preview,
+            crate::diagnostics::export_support_bundle,
             crate::commands::list_transfers,
             crate::commands::clear_transfers,
             crate::commands::enqueue_transfer,
@@ -279,6 +287,13 @@ pub fn run() {
             crate::commands::start_search_remote,
             crate::commands::cancel_search,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Siftlane");
+        .build(tauri::generate_context!())
+        .expect("failed to build Siftlane");
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit)
+            && let Some(state) = app_handle.try_state::<AppState>()
+        {
+            state.diagnostics.record_clean_shutdown();
+        }
+    });
 }

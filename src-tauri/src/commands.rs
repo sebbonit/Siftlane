@@ -185,7 +185,7 @@ pub async fn connect_profile(
     let profile = state.storage.get_profile(profile_id)?;
     let diagnostic_connection = DiagnosticConnection::from_profile(&profile);
     let protocol = diagnostic_connection.protocol();
-    state
+    let diagnostic_operation = state
         .diagnostics
         .record_connection_started(diagnostic_connection);
     let preferences = state.preferences.read().await.clone();
@@ -197,9 +197,11 @@ pub async fn connect_profile(
             connect_ftp(&app, state.inner(), profile, credential, preferences, true).await
         }
     };
-    state
-        .diagnostics
-        .record_connection_finished(protocol, DiagnosticConnectionOutcome::from_result(&result));
+    state.diagnostics.record_connection_finished(
+        diagnostic_operation,
+        protocol,
+        DiagnosticConnectionOutcome::from_result(&result),
+    );
     result
 }
 
@@ -2793,7 +2795,7 @@ pub async fn start_search_local(
     root: String,
     query: String,
 ) -> Result<Uuid, AppError> {
-    state.diagnostics.record_search_started(SearchScope::Local);
+    let diagnostic_operation = state.diagnostics.record_search_started(SearchScope::Local);
     let search_id = Uuid::new_v4();
     let cancelled = Arc::new(AtomicBool::new(false));
     state
@@ -2841,9 +2843,11 @@ pub async fn start_search_local(
                 },
             );
         }
-        app_state
-            .diagnostics
-            .record_search_finished(SearchScope::Local, error_code);
+        app_state.diagnostics.record_search_finished(
+            diagnostic_operation,
+            SearchScope::Local,
+            error_code,
+        );
         app_state.searches.lock().await.remove(&search_id);
     });
     Ok(search_id)
@@ -2868,7 +2872,7 @@ pub async fn start_search_remote(
         .insert(search_id, cancelled.clone());
     let query = query.trim().to_string();
     let app_state = state.inner().clone();
-    state.diagnostics.record_search_started(SearchScope::Remote);
+    let diagnostic_operation = state.diagnostics.record_search_started(SearchScope::Remote);
     tauri::async_runtime::spawn(async move {
         let result = crate::search::search_remote(
             client.as_ref(),
@@ -2906,9 +2910,11 @@ pub async fn start_search_remote(
                 },
             );
         }
-        app_state
-            .diagnostics
-            .record_search_finished(SearchScope::Remote, error_code);
+        app_state.diagnostics.record_search_finished(
+            diagnostic_operation,
+            SearchScope::Remote,
+            error_code,
+        );
         app_state.searches.lock().await.remove(&search_id);
     });
     Ok(search_id)

@@ -13,7 +13,10 @@ use siftlane_core::{
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::{diagnostics::DiagnosticError, state::AppState};
+use crate::{
+    diagnostics::{DiagnosticError, DiagnosticOperation},
+    state::AppState,
+};
 
 const CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const MIN_THROTTLED_CHUNK_SIZE: usize = 1024;
@@ -40,12 +43,20 @@ impl ProgressCadence {
 
 pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
     tauri::async_runtime::spawn(async move {
+        let diagnostic_operation = state.diagnostics.new_operation();
+        if let Ok(job) = job_snapshot(&state, id).await {
+            state
+                .diagnostics
+                .record_transfer_started(diagnostic_operation, job.direction);
+        }
         loop {
-            match run(app.clone(), state.clone(), id).await {
+            match run(app.clone(), state.clone(), id, diagnostic_operation).await {
                 Ok(()) => break,
                 Err(error) => {
-                    let Some(delay) = prepare_retry(&app, &state, id, &error).await else {
-                        let _ = fail(&app, &state, id, error).await;
+                    let Some(delay) =
+                        prepare_retry(&app, &state, id, diagnostic_operation, &error).await
+                    else {
+                        let _ = fail(&app, &state, id, diagnostic_operation, error).await;
                         break;
                     };
                     tokio::time::sleep(delay).await;
@@ -63,7 +74,8 @@ pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
                             .await
                             && !reconnect_error.retryable
                         {
-                            let _ = fail(&app, &state, id, reconnect_error).await;
+                            let _ =
+                                fail(&app, &state, id, diagnostic_operation, reconnect_error).await;
                             return;
                         }
                     }
@@ -73,11 +85,13 @@ pub fn spawn(app: AppHandle, state: AppState, id: TransferId) {
     });
 }
 
-async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppError> {
+async fn run(
+    app: AppHandle,
+    state: AppState,
+    id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
+) -> Result<(), AppError> {
     let queued_job = job_snapshot(&state, id).await?;
-    state
-        .diagnostics
-        .record_transfer_started(queued_job.direction);
     let profile = state.storage.get_profile(queued_job.profile_id)?;
     let destination_endpoint = format!(
         "{:?}://{}:{}",
@@ -118,11 +132,11 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
     match job.direction {
         TransferDirection::Upload => {
             let remote = session_client(&state, job.destination_session_id, job.profile_id).await?;
-            upload(&app, &state, remote, id).await
+            upload(&app, &state, remote, id, diagnostic_operation).await
         }
         TransferDirection::Download => {
             let remote = session_client(&state, job.source_session_id, job.profile_id).await?;
-            download(&app, &state, remote, id).await
+            download(&app, &state, remote, id, diagnostic_operation).await
         }
         TransferDirection::RemoteToRemote => {
             let source_profile_id = job
@@ -131,7 +145,7 @@ async fn run(app: AppHandle, state: AppState, id: TransferId) -> Result<(), AppE
             let source = session_client(&state, job.source_session_id, source_profile_id).await?;
             let destination =
                 session_client(&state, job.destination_session_id, job.profile_id).await?;
-            remote_to_remote(&app, &state, source, destination, id).await
+            remote_to_remote(&app, &state, source, destination, id, diagnostic_operation).await
         }
     }
 }
@@ -162,6 +176,7 @@ async fn prepare_retry(
     app: &AppHandle,
     state: &AppState,
     id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
     error: &AppError,
 ) -> Option<Duration> {
     if !error.retryable {
@@ -194,6 +209,7 @@ async fn prepare_retry(
     };
     persist_transfer(state, &updated).await.ok()?;
     state.diagnostics.record_transfer_retry(
+        diagnostic_operation,
         updated.direction,
         updated.retry_count,
         limit,
@@ -208,6 +224,7 @@ async fn upload(
     state: &AppState,
     remote: Arc<dyn RemoteFilesystem>,
     id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
 ) -> Result<(), AppError> {
     let job = job_snapshot(state, id).await?;
     let source_metadata = tokio::fs::metadata(&job.source_path)
@@ -259,7 +276,7 @@ async fn upload(
     verify_upload(state, remote.as_ref(), id, source_metadata.len()).await?;
     commit_remote(state, remote.as_ref(), id).await?;
     preserve_upload_metadata(state, remote.as_ref(), id).await?;
-    complete(app, state, id).await
+    complete(app, state, id, diagnostic_operation).await
 }
 
 async fn download(
@@ -267,6 +284,7 @@ async fn download(
     state: &AppState,
     remote: Arc<dyn RemoteFilesystem>,
     id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
 ) -> Result<(), AppError> {
     let job = job_snapshot(state, id).await?;
     let source = remote
@@ -348,7 +366,7 @@ async fn download(
     verify_download(state, remote.as_ref(), id, total).await?;
     commit_local(state, id).await?;
     preserve_download_metadata(state, &source, id).await?;
-    complete(app, state, id).await
+    complete(app, state, id, diagnostic_operation).await
 }
 
 async fn remote_to_remote(
@@ -357,6 +375,7 @@ async fn remote_to_remote(
     source: Arc<dyn RemoteFilesystem>,
     destination: Arc<dyn RemoteFilesystem>,
     id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
 ) -> Result<(), AppError> {
     let job = job_snapshot(state, id).await?;
     let metadata = source
@@ -446,7 +465,7 @@ async fn remote_to_remote(
             .set_permissions(&job.destination_path, permissions)
             .await?;
     }
-    complete(app, state, id).await
+    complete(app, state, id, diagnostic_operation).await
 }
 
 async fn transfer_limits(
@@ -978,12 +997,19 @@ async fn transition(state: &AppState, id: TransferId, next: TransferState) -> Re
     persist_transfer(state, &job).await
 }
 
-async fn complete(app: &AppHandle, state: &AppState, id: TransferId) -> Result<(), AppError> {
+async fn complete(
+    app: &AppHandle,
+    state: &AppState,
+    id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
+) -> Result<(), AppError> {
     transition(state, id, TransferState::Completed).await?;
     let job = job_snapshot(state, id).await?;
-    state
-        .diagnostics
-        .record_transfer_completed(job.direction, job.retry_count);
+    state.diagnostics.record_transfer_completed(
+        diagnostic_operation,
+        job.direction,
+        job.retry_count,
+    );
     emit_current(app, state, id).await;
     Ok(())
 }
@@ -992,6 +1018,7 @@ async fn fail(
     app: &AppHandle,
     state: &AppState,
     id: TransferId,
+    diagnostic_operation: DiagnosticOperation,
     error: AppError,
 ) -> Result<(), AppError> {
     let job = {
@@ -1026,9 +1053,11 @@ async fn fail(
         }
         queue.get(id).cloned().expect("transfer exists")
     };
-    state
-        .diagnostics
-        .record_transfer_failed(job.direction, DiagnosticError::from_error(&error));
+    state.diagnostics.record_transfer_failed(
+        diagnostic_operation,
+        job.direction,
+        DiagnosticError::from_error(&error),
+    );
     persist_transfer(state, &job).await?;
     emit(app, &progress_from_job(job));
     Ok(())

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import App from "../../App";
@@ -98,6 +98,21 @@ describe("Settings", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Clear logs" }));
     expect(await screen.findByRole("status")).toHaveTextContent(/logs were cleared/i);
+
+    await userEvent.click(screen.getByRole("button", { name: "Review support bundle" }));
+    const review = await screen.findByRole("dialog", { name: "Review support bundle" });
+    expect(within(review).getByText("manifest.json")).toBeInTheDocument();
+    expect(within(review).getByText(/logs\/siftlane-diagnostics\.log/i)).toBeInTheDocument();
+    expect(within(review).getByText(/SHA-256 e3b0c44298fc/i)).toBeInTheDocument();
+    expect(within(review).getByText(/random session and operation IDs/i)).toBeInTheDocument();
+    expect(within(review).getByText(/credentials and secret values/i)).toBeInTheDocument();
+    expect(within(review).getByText(/application configuration and database contents/i))
+      .toBeInTheDocument();
+
+    await userEvent.click(
+      within(review).getByRole("button", { name: "Choose save location" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(/support bundle was saved/i);
   });
 
   it("reverts the diagnostics toggle when saving fails", async () => {
