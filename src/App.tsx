@@ -1277,11 +1277,11 @@ export default function App() {
           setSavedActions(nextActions);
         }}
         onBack={() => setSettingsOpen(false)}
-        onChange={(next) => {
+        onChange={async (next) => {
+          await api.savePreferences(next);
           setPreferences(next);
           setExpandTransfersOnNew(next.expand_transfers_on_new);
           applyTheme(next.theme);
-          void api.savePreferences(next);
         }}
       />
     ) : (

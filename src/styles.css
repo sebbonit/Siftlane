@@ -1588,6 +1588,15 @@ body.is-file-pane-dragging .file-row.is-draggable {
   background: var(--surface);
   overflow: hidden;
 }
+.settings-save-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 28%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 7%, var(--surface));
+  font-size: 10px;
+}
 .settings-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

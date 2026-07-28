@@ -13,7 +13,7 @@ use siftlane_core::{
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::state::AppState;
+use crate::{diagnostics::DiagnosticError, state::AppState};
 
 const CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const MIN_THROTTLED_CHUNK_SIZE: usize = 1024;
@@ -193,9 +193,12 @@ async fn prepare_retry(
         (queue.get(id)?.clone(), delay_seconds)
     };
     persist_transfer(state, &updated).await.ok()?;
-    state
-        .diagnostics
-        .record_transfer_retry(updated.direction, updated.retry_count, limit, error);
+    state.diagnostics.record_transfer_retry(
+        updated.direction,
+        updated.retry_count,
+        limit,
+        DiagnosticError::from_error(error),
+    );
     emit(app, &progress_from_job(updated));
     Some(Duration::from_secs(delay_seconds))
 }
@@ -1025,7 +1028,7 @@ async fn fail(
     };
     state
         .diagnostics
-        .record_transfer_failed(job.direction, &error);
+        .record_transfer_failed(job.direction, DiagnosticError::from_error(&error));
     persist_transfer(state, &job).await?;
     emit(app, &progress_from_job(job));
     Ok(())

@@ -45,3 +45,6 @@ Diagnostic events describe controlled operation metadata such as app/platform ve
 and authentication kinds, success/failure outcomes, retry counts, and `ErrorCode` values. They do
 not format profiles, paths, user-entered strings, `AppError` messages/details, commands, or file
 contents. Retention is capped at four 256 KB files, and Settings exposes reveal and clear actions.
+Startup validates the app-owned log directory and files before the logger opens them, restricts
+Unix permissions, removes unsafe links and stale collision backups, and migrates away the legacy
+unfiltered log. Preference writes are serialized so rapid opt-in changes cannot reorder on disk.

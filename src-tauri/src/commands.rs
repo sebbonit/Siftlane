@@ -32,7 +32,9 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
-    diagnostics::SearchScope,
+    diagnostics::{
+        DiagnosticConnection, DiagnosticConnectionOutcome, DiagnosticError, SearchScope,
+    },
     secrets::SecretKind,
     state::{AppState, PendingHostKey, SessionRecord, StoredKeyVerifier},
     transfer_plan::{TransferPlan, TransferPlanMode, plan_local_directory, plan_remote_directory},
@@ -181,8 +183,11 @@ pub async fn connect_profile(
     credential: Option<String>,
 ) -> Result<ConnectResult, AppError> {
     let profile = state.storage.get_profile(profile_id)?;
-    let protocol = profile.protocol;
-    state.diagnostics.record_connection_started(&profile);
+    let diagnostic_connection = DiagnosticConnection::from_profile(&profile);
+    let protocol = diagnostic_connection.protocol();
+    state
+        .diagnostics
+        .record_connection_started(diagnostic_connection);
     let preferences = state.preferences.read().await.clone();
     let result = match protocol {
         Protocol::Sftp => {
@@ -194,7 +199,7 @@ pub async fn connect_profile(
     };
     state
         .diagnostics
-        .record_connection_finished(protocol, &result);
+        .record_connection_finished(protocol, DiagnosticConnectionOutcome::from_result(&result));
     result
 }
 
@@ -599,7 +604,9 @@ pub async fn disconnect_session(
         Some(session) => session.client.disconnect().await,
         None => Err(AppError::new(ErrorCode::NotFound, "Session not found")),
     };
-    state.diagnostics.record_session_disconnected(&result);
+    state
+        .diagnostics
+        .record_session_disconnected(result.as_ref().err().map(DiagnosticError::from_error));
     result
 }
 
@@ -1813,6 +1820,7 @@ pub async fn save_preferences(
             "Transfer concurrency cannot exceed 12 and retries cannot exceed 10",
         ));
     }
+    let _save_guard = state.preferences_save_guard.lock().await;
     let diagnostics_changed =
         state.preferences.read().await.diagnostics_enabled != preferences.diagnostics_enabled;
     let storage = state.storage.clone();

@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "../../App";
+import { api } from "../../lib/ipc";
 
 describe("Settings", () => {
   it("opens as a main window with category sidebar", async () => {
@@ -97,6 +98,23 @@ describe("Settings", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Clear logs" }));
     expect(await screen.findByRole("status")).toHaveTextContent(/logs were cleared/i);
+  });
+
+  it("reverts the diagnostics toggle when saving fails", async () => {
+    const save = vi
+      .spyOn(api, "savePreferences")
+      .mockRejectedValueOnce(new Error("storage unavailable"));
+    render(<App />);
+    await screen.findByText("Move files without the noise.");
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+
+    const toggle = screen.getByLabelText("Save diagnostic logs");
+    await userEvent.click(toggle);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be saved/i);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    save.mockRestore();
   });
 
   it("offers plain and explicitly encrypted configuration export", async () => {

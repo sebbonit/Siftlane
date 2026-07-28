@@ -27,8 +27,11 @@ The operating system, logged-in user account, system keyring, and SSH cryptograp
   disk logger accepts only Siftlane's dedicated diagnostics target, whose structured events use
   allowlisted metadata. Credentials, secret values, hosts, usernames, paths, filenames, commands,
   file contents, and free-form error messages/details are excluded.
-- Diagnostic retention is bounded to one active 256 KB file plus three rotated files. Disabling
-  diagnostics stops new entries; retained files can be cleared from Settings.
+- The diagnostic directory is private on Unix, active and retained files are validated before the
+  logger opens them, symbolic links are not followed, and multiply-linked files are replaced on
+  Unix. The legacy unfiltered `siftlane.log` is removed during migration.
+- Diagnostic retention is bounded to four 256 KB files, including the logger's collision backup.
+  Disabling diagnostics stops new entries; retained files can be cleared from Settings.
 - Tauri capabilities and the webview CSP restrict exposed native functionality.
 
 ## Known limitations before stable release

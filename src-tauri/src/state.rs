@@ -19,7 +19,8 @@ use uuid::Uuid;
 
 use crate::{
     diagnostics::{
-        Diagnostics, LOG_FILE_STEM, LOG_TARGET, MAX_LOG_FILE_BYTES, RETAINED_ARCHIVED_LOG_FILES,
+        Diagnostics, LOG_FILE_STEM, MAX_LOG_FILE_BYTES, RETAINED_ARCHIVED_LOG_FILES,
+        log_metadata_allowed,
     },
     external_edit::ExternalEditRecord,
     scheduler::{BandwidthLimiter, TransferScheduler},
@@ -38,6 +39,7 @@ pub struct AppState {
     pub transfer_scheduler: Arc<TransferScheduler>,
     pub bandwidth_limiter: Arc<BandwidthLimiter>,
     pub preferences: Arc<RwLock<Preferences>>,
+    pub preferences_save_guard: Arc<Mutex<()>>,
     pub reconnect_guard: Arc<Mutex<()>>,
     pub last_reconnect: Arc<Mutex<HashMap<Uuid, Instant>>>,
     pub searches: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
@@ -111,6 +113,7 @@ impl AppState {
             )),
             bandwidth_limiter: Arc::new(BandwidthLimiter::default()),
             preferences: Arc::new(RwLock::new(preferences)),
+            preferences_save_guard: Arc::new(Mutex::new(())),
             reconnect_guard: Arc::new(Mutex::new(())),
             last_reconnect: Arc::new(Mutex::new(HashMap::new())),
             searches: Arc::new(Mutex::new(HashMap::new())),
@@ -156,12 +159,11 @@ fn build_log_plugin<R: tauri::Runtime>(
 ) -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_log::{RotationStrategy, Target, TargetKind, log::LevelFilter};
 
+    let file_enabled = diagnostics_enabled.clone();
     let log_dir = Target::new(TargetKind::LogDir {
         file_name: Some(LOG_FILE_STEM.into()),
     })
-    .filter(move |metadata| {
-        diagnostics_enabled.load(Ordering::Relaxed) && metadata.target() == LOG_TARGET
-    });
+    .filter(move |metadata| log_metadata_allowed(metadata, &file_enabled));
     let builder = tauri_plugin_log::Builder::new()
         .clear_targets()
         .level(LevelFilter::Info)
@@ -170,9 +172,9 @@ fn build_log_plugin<R: tauri::Runtime>(
 
     #[cfg(debug_assertions)]
     {
-        builder
-            .targets([Target::new(TargetKind::Stdout), log_dir])
-            .build()
+        let stdout = Target::new(TargetKind::Stdout)
+            .filter(move |metadata| log_metadata_allowed(metadata, &diagnostics_enabled));
+        builder.targets([stdout, log_dir]).build()
     }
 
     #[cfg(not(debug_assertions))]
@@ -195,12 +197,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(crate::diagnostics::secure_log_storage_plugin())
         .plugin(build_log_plugin(diagnostics_enabled.clone()))
         .setup(move |app| {
             let state = AppState::initialize(app.handle(), diagnostics_enabled.clone())?;
-            state
-                .diagnostics
-                .record_app_started(&app.package_info().version.to_string());
+            state.diagnostics.record_app_started();
             app.manage(state);
             Ok(())
         })
