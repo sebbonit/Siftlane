@@ -990,9 +990,16 @@ impl RemoteFilesystem for SftpClient {
         file.seek(SeekFrom::Start(offset))
             .await
             .map_err(map_io_error)?;
-        let mut bytes = vec![0; length as usize];
-        let read = file.read(&mut bytes).await.map_err(map_io_error)?;
-        bytes.truncate(read);
+        // A single SFTP read is capped by the negotiated packet size (256 KiB
+        // by default), even when the caller asks for a larger chunk. Fill the
+        // requested chunk before closing the handle so large transfers do not
+        // reopen and seek the remote file once per protocol packet.
+        let mut bytes = Vec::with_capacity(length as usize);
+        (&mut file)
+            .take(length as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(map_io_error)?;
         file.shutdown().await.map_err(map_io_error)?;
         Ok(bytes)
     }
@@ -1008,7 +1015,9 @@ impl RemoteFilesystem for SftpClient {
             .await
             .map_err(map_io_error)?;
         file.write_all(data).await.map_err(map_io_error)?;
-        file.flush().await.map_err(map_io_error)?;
+        // `shutdown` drains all pending writes before closing the handle. A
+        // full transfer calls `sync_file` once after the final chunk, so an
+        // fsync for every chunk would needlessly throttle uploads.
         file.shutdown().await.map_err(map_io_error)
     }
 

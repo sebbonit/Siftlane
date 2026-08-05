@@ -493,6 +493,9 @@ async fn throttle(
     bytes: usize,
     (global, profile): (Option<u64>, Option<u64>),
 ) -> Result<(), AppError> {
+    if strictest_limit(global, profile).is_none() {
+        return ensure_running(state, id).await;
+    }
     let acquisition = state.bandwidth_limiter.acquire(
         match job.direction {
             TransferDirection::Upload => "upload",
