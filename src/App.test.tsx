@@ -7,7 +7,7 @@ describe("Siftlane shell", () => {
   it("opens the connection dialog from the empty shell", async () => {
     render(<App />);
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
-    expect(document.querySelector(".session-tabs")).toHaveClass("empty");
+    expect(document.querySelector(".session-tabs")).toHaveClass("no-sessions");
     expect(screen.queryByText("sftp.example.com")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
@@ -62,13 +62,13 @@ describe("Siftlane shell", () => {
     await userEvent.click(closeTab!);
     const favorites = screen.getByRole("button", { name: "Favorites" }).closest("section");
     expect(favorites).not.toBeNull();
-    await userEvent.click(within(favorites!).getByRole("button", { name: "Demo server" }));
+    await userEvent.click(within(favorites!).getByRole("button", { name: "Demo server SFTP" }));
     expect(await screen.findByText(/Secure · SFTP/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: /connect to demo server/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(await screen.findByText("Move files without the noise.")).toBeInTheDocument();
-    expect(document.querySelector(".session-tabs")).toHaveClass("empty");
+    expect(document.querySelector(".session-tabs")).toHaveClass("no-sessions");
   });
 
   it("bookmarks the remote path and opens it from the sidebar", async () => {
@@ -155,9 +155,9 @@ describe("Siftlane shell", () => {
     const connections = screen.getByRole("button", { name: "Connections" }).closest("section");
     expect(connections).not.toBeNull();
     expect(within(connections!).getByText("Clients")).toBeInTheDocument();
-    expect(within(connections!).getByText("analytics")).toBeInTheDocument();
+    expect(within(connections!).getByTitle(/analytics, finance/)).toBeInTheDocument();
 
-    const search = within(connections!).getByRole("textbox", { name: "Search profiles" });
+    const search = screen.getByRole("textbox", { name: "Search profiles" });
     await userEvent.type(search, "finance");
     expect(within(connections!).getByText("Analytics server")).toBeInTheDocument();
     await userEvent.clear(search);

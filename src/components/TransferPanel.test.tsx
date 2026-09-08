@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../lib/ipc";
@@ -28,6 +28,7 @@ const conflict: TransferJob = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useAppStore.setState({ transfers: [], transferPanelOpen: true });
 });
 
@@ -77,5 +78,47 @@ describe("TransferPanel conflicts", () => {
         "Production (prod.example.com:22):/var/www/report.txt → Staging (staging.example.com:22):/srv/staging/report.txt",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+
+describe("TransferPanel compact layout", () => {
+  it("keeps large queues reachable when switching between two and one column", async () => {
+    let resize: ResizeObserverCallback = () => {};
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    useAppStore.setState({
+      transfers: Array.from({ length: 240 }, (_, index) => ({
+        ...conflict,
+        id: `job-${index}`,
+        source_path: `/local/file-${index}.txt`,
+        state: index === 239 ? "failed" : "completed",
+      })),
+      transferPanelOpen: true,
+    });
+    const { container } = render(<TransferPanel />);
+    const list = container.querySelector<HTMLDivElement>(".transfer-list")!;
+    function resizeList(width: number) {
+      act(() => resize([
+        { contentRect: { width, height: 134 } } as ResizeObserverEntry,
+      ], {} as ResizeObserver));
+    }
+    resizeList(1200);
+    expect(list.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    expect(container.querySelectorAll(".transfer-row").length).toBeLessThan(30);
+    fireEvent.scroll(list, { target: { scrollTop: 119 * 96 } });
+    expect(screen.getByText("file-239.txt")).toBeInTheDocument();
+
+    resizeList(800);
+    expect(list.style.gridTemplateColumns).toBe("repeat(1, minmax(0, 1fr))");
+    fireEvent.scroll(list, { target: { scrollTop: 239 * 96 } });
+    expect(screen.getByText("file-239.txt")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Failed 1" }));
+    expect(list.scrollTop).toBe(0);
+    expect(screen.getByText("file-239.txt")).toBeInTheDocument();
+    expect(container.querySelectorAll(".transfer-row")).toHaveLength(1);
   });
 });

@@ -22,7 +22,7 @@ Built with Rust, Tauri 2, TypeScript, and React. Early alpha: meant for developm
 
 Connect a profile and work local and remote side by side. Tabs keep multiple sessions open; the queue tracks every upload and download with speed, ETA, and verification status.
 
-![Profile folders, tags, and dual-pane browser](./docs/images/profile-organization.png)
+![Saved connections, profile folders, and dual-pane browser](./docs/images/profile-organization.png)
 
 ## Directory comparison and sync
 
