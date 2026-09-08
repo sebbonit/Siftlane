@@ -17,13 +17,11 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
-  Clock3,
   Eye,
   EyeOff,
   ExternalLink,
   FileKey2,
   Folder,
-  FolderClock,
   FolderHeart,
   KeyRound,
   LayoutPanelLeft,
@@ -40,6 +38,7 @@ import {
   Settings,
   ShieldAlert,
   Star,
+  SunMoon,
   X,
 } from "lucide-react";
 import { BookmarksSection } from "./components/BookmarksSection";
@@ -1286,15 +1285,37 @@ export default function App() {
       />
     ) : (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <div
-        className="window-drag-region"
-        data-tauri-drag-region
-        onMouseDown={(event) => {
-          if (desktop && event.button === 0) void getCurrentWindow().startDragging();
-        }}
-      >
-        <span data-tauri-drag-region>Siftlane</span>
-      </div>
+      <header className={`app-topbar${desktop ? " desktop" : ""}`}>
+        <div className="topbar-brand" data-tauri-drag-region
+          onMouseDown={(event) => {
+            if (desktop && event.button === 0) void getCurrentWindow().startDragging();
+          }}>
+          <span className="brand-mark">S</span><strong>Siftlane</strong>
+        </div>
+        <SessionTabs
+          tabs={tabs}
+          visible={tabs.length > 0}
+          activeId={activeTabId}
+          actions={savedActions}
+          onSelect={setActiveTab}
+          onClose={closeSession}
+          onNew={() => setConnectionDialog("new")}
+          onRunAction={(action) => void handleRunSavedAction(action)}
+          onAddAction={() => setActionDialogOpen(true)}
+          onDeleteAction={(action) => void handleDeleteSavedAction(action).catch((reason) => setError(errorMessage(reason)))}
+        />
+        <button className="topbar-settings" aria-label="Toggle light and dark theme" onClick={async () => {
+          if (!preferences) return;
+          const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+          const next = { ...preferences, theme: dark ? "light" as const : "dark" as const };
+          try {
+            await api.savePreferences(next);
+            setPreferences(next);
+            applyTheme(next.theme);
+          } catch (reason) { setError(errorMessage(reason)); }
+        }}><SunMoon size={15} /></button>
+        <button className="topbar-settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings size={15} /></button>
+      </header>
       <Sidebar
         profiles={profiles}
         favorites={favorites}
@@ -1345,18 +1366,6 @@ export default function App() {
         onSettings={() => setSettingsOpen(true)}
       />
       <main className="workspace">
-        <SessionTabs
-          tabs={tabs}
-          visible={tabs.length > 0}
-          activeId={activeTabId}
-          actions={savedActions}
-          onSelect={setActiveTab}
-          onClose={closeSession}
-          onNew={() => setConnectionDialog("new")}
-          onRunAction={(action) => void handleRunSavedAction(action)}
-          onAddAction={() => setActionDialogOpen(true)}
-          onDeleteAction={(action) => void handleDeleteSavedAction(action).catch((reason) => setError(errorMessage(reason)))}
-        />
         {error && (
           <div className="error-banner" role="alert">
             <CircleAlert size={16} />
@@ -1366,163 +1375,172 @@ export default function App() {
         )}
         {activeTab ? (
           <>
-            <ConnectionHeader
-              tab={activeTab}
-              onSearch={() => setSearchOpen(true)}
-              onDisconnect={() => void closeSession(activeTab)}
-              onToggleLayout={() => {
-                updateTab(activeTab.id, {
-                  layout: activeTab.layout === "dual_pane" ? "remote_focused" : "dual_pane",
-                });
-              }}
-            />
-            <div className="sync-toolbar">
-              <div className={`sync-toolbar-item${comparisonEnabled ? " active" : ""}`}>
-                <button
-                  type="button"
-                  onClick={() => setComparisonEnabled((value) => !value)}
-                >
-                  {comparisonEnabled ? "Comparison on" : "Compare directories"}
-                </button>
-                <InfoTooltip label="Compare directories">
-                  Highlights differences between the open local and remote directories by
-                  matching names, then comparing type, size, and modification time. Nothing
-                  is changed until you synchronize.
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <button type="button" onClick={() => setSyncReviewOpen(true)}>
-                  Synchronize…
-                </button>
-                <InfoTooltip label="Synchronize">
-                  Opens a review checklist of proposed uploads, downloads, and deletions.
-                  Choose two-way, upload mirror, or download mirror, then exclude any
-                  actions before running them.
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!activeProfile && !!preferences?.sync_roots?.[activeProfile.id]?.enabled}
-                    onChange={(event) => {
-                      if (!activeProfile || !activeTab || !preferences) return;
-                      const next = {
-                        ...preferences,
-                        sync_roots: {
-                          ...preferences.sync_roots,
-                          [activeProfile.id]: {
-                            local_root: activeTab.localPath,
-                            remote_root: activeTab.remotePath,
-                            enabled: event.target.checked,
-                          },
-                        },
-                      };
-                      setPreferences(next);
-                      void api.savePreferences(next);
-                    }}
-                  />
-                  Synchronized browsing
-                </label>
-                <InfoTooltip label="Synchronized browsing">
-                  Saves the current local and remote folders as this profile's root pair.
-                  Navigating below either root follows the same relative path in the other
-                  pane when that path exists.
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <label>
-                  Symlinks
-                  <select
-                    value={symlinkPolicy}
-                    onChange={(event) => setSymlinkPolicy(event.target.value as SymlinkPolicy)}
+            <div className="workspace-toolbar">
+              <ConnectionHeader
+                tab={activeTab}
+                onSearch={() => setSearchOpen(true)}
+                onSettings={() => activeProfile && setConnectionDialog(activeProfile)}
+                onDisconnect={() => void closeSession(activeTab)}
+                onToggleLayout={() => {
+                  updateTab(activeTab.id, {
+                    layout: activeTab.layout === "dual_pane" ? "remote_focused" : "dual_pane",
+                  });
+                }}
+              />
+              <div className="sync-toolbar">
+                <div className={`sync-toolbar-item${comparisonEnabled ? " active" : ""}`}>
+                  <button
+                    type="button"
+                    onClick={() => setComparisonEnabled((value) => !value)}
                   >
-                    <option value="skip">Skip with warning</option>
-                    <option value="copy_link">Copy link</option>
-                    <option value="dereference">Dereference</option>
-                  </select>
-                </label>
-                <InfoTooltip label="Symlinks">
-                  Controls how symbolic links are transferred: skip them with a warning,
-                  copy the link itself when supported, or dereference and transfer the
-                  linked contents.
-                </InfoTooltip>
+                    {comparisonEnabled ? "Comparison on" : "Compare directories"}
+                  </button>
+                  <InfoTooltip label="Compare directories">
+                    Highlights differences between the open local and remote directories by
+                    matching names, then comparing type, size, and modification time. Nothing
+                    is changed until you synchronize.
+                  </InfoTooltip>
+                </div>
+                <div className="sync-toolbar-item">
+                  <button type="button" onClick={() => setSyncReviewOpen(true)}>
+                    Synchronize…
+                  </button>
+                  <InfoTooltip label="Synchronize">
+                    Opens a review checklist of proposed uploads, downloads, and deletions.
+                    Choose two-way, upload mirror, or download mirror, then exclude any
+                    actions before running them.
+                  </InfoTooltip>
+                </div>
+                <WorkspaceOptions>
+                  <div className="sync-toolbar-item">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={!!activeProfile && !!preferences?.sync_roots?.[activeProfile.id]?.enabled}
+                        onChange={(event) => {
+                          if (!activeProfile || !activeTab || !preferences) return;
+                          const next = {
+                            ...preferences,
+                            sync_roots: {
+                              ...preferences.sync_roots,
+                              [activeProfile.id]: {
+                                local_root: activeTab.localPath,
+                                remote_root: activeTab.remotePath,
+                                enabled: event.target.checked,
+                              },
+                            },
+                          };
+                          setPreferences(next);
+                          void api.savePreferences(next);
+                        }}
+                      />
+                      Synchronized browsing
+                    </label>
+                    <InfoTooltip label="Synchronized browsing">
+                      Saves the current local and remote folders as this profile's root pair.
+                      Navigating below either root follows the same relative path in the other
+                      pane when that path exists.
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <label>
+                      Symlinks
+                      <select
+                        value={symlinkPolicy}
+                        onChange={(event) => setSymlinkPolicy(event.target.value as SymlinkPolicy)}
+                      >
+                        <option value="skip">Skip with warning</option>
+                        <option value="copy_link">Copy link</option>
+                        <option value="dereference">Dereference</option>
+                      </select>
+                    </label>
+                    <InfoTooltip label="Symlinks">
+                      Controls how symbolic links are transferred: skip them with a warning,
+                      copy the link itself when supported, or dereference and transfer the
+                      linked contents.
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={preserveMetadata}
+                        onChange={(event) => setPreserveMetadata(event.target.checked)}
+                      />
+                      Preserve metadata
+                    </label>
+                    <InfoTooltip label="Preserve metadata">
+                      Restores modification times and POSIX permissions on download when the
+                      server reports them, and restores permissions on upload when the remote
+                      protocol supports chmod.
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <button
+                      type="button"
+                      disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                      onClick={() => void batchPermissions()}
+                    >
+                      Permissions…
+                    </button>
+                    <InfoTooltip label="Permissions">
+                      Sets an octal permission mode on every selected item in the focused pane
+                      (for example 755 or 644).
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <button
+                      type="button"
+                      disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                      onClick={() => void batchPackage()}
+                    >
+                      Package
+                    </button>
+                    <InfoTooltip label="Package">
+                      Creates a zip archive of each selected folder in the focused pane, next to
+                      that folder.
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <button
+                      type="button"
+                      disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
+                      onClick={() => void removeSelected(focusedPane)}
+                    >
+                      Delete
+                    </button>
+                    <InfoTooltip label="Delete">
+                      Deletes the selected files and folders in the focused pane after
+                      confirmation. This cannot be undone.
+                    </InfoTooltip>
+                  </div>
+                  <div className="sync-toolbar-item">
+                    <button
+                      type="button"
+                      disabled={
+                        selectedRemote.every((entry) => entry.kind !== "file") ||
+                        !tabs.some((tab) => tab.id !== activeTab.id && tab.connected)
+                      }
+                      onClick={() => setRemoteTransferOpen(true)}
+                    >
+                      <ArrowRightLeft size={14} />
+                      Copy to session…
+                    </button>
+                    <InfoTooltip label="Copy to session">
+                      Copies selected remote files to another open connected session. Review the
+                      source and destination routes and conflict handling before the transfer is
+                      queued.
+                    </InfoTooltip>
+                  </div>
+                </WorkspaceOptions>
+                {comparisonEnabled && (
+                  <span>{comparedEntries.filter((item) => item.status !== "same").length} differences</span>
+                )}
               </div>
-              <div className="sync-toolbar-item">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={preserveMetadata}
-                    onChange={(event) => setPreserveMetadata(event.target.checked)}
-                  />
-                  Preserve metadata
-                </label>
-                <InfoTooltip label="Preserve metadata">
-                  Restores modification times and POSIX permissions on download when the
-                  server reports them, and restores permissions on upload when the remote
-                  protocol supports chmod.
-                </InfoTooltip>
+              <div className="toolbar-transfers" aria-label="Transfer selected item">
+                <button title="Upload selected" onClick={() => void addTransfer("upload")} disabled={selectedLocal.length === 0}><ArrowRight size={14} /> Upload</button>
+                <button title="Download selected" onClick={() => void addTransfer("download")} disabled={selectedRemote.length === 0}><ArrowLeft size={14} /> Download</button>
               </div>
-              <div className="sync-toolbar-item">
-                <button
-                  type="button"
-                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                  onClick={() => void batchPermissions()}
-                >
-                  Permissions…
-                </button>
-                <InfoTooltip label="Permissions">
-                  Sets an octal permission mode on every selected item in the focused pane
-                  (for example 755 or 644).
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <button
-                  type="button"
-                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                  onClick={() => void batchPackage()}
-                >
-                  Package
-                </button>
-                <InfoTooltip label="Package">
-                  Creates a zip archive of each selected folder in the focused pane, next to
-                  that folder.
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <button
-                  type="button"
-                  disabled={(focusedPane === "local" ? selectedLocal : selectedRemote).length === 0}
-                  onClick={() => void removeSelected(focusedPane)}
-                >
-                  Delete
-                </button>
-                <InfoTooltip label="Delete">
-                  Deletes the selected files and folders in the focused pane after
-                  confirmation. This cannot be undone.
-                </InfoTooltip>
-              </div>
-              <div className="sync-toolbar-item">
-                <button
-                  type="button"
-                  disabled={
-                    selectedRemote.every((entry) => entry.kind !== "file") ||
-                    !tabs.some((tab) => tab.id !== activeTab.id && tab.connected)
-                  }
-                  onClick={() => setRemoteTransferOpen(true)}
-                >
-                  <ArrowRightLeft size={14} />
-                  Copy to session…
-                </button>
-                <InfoTooltip label="Copy to session">
-                  Copies selected remote files to another open connected session. Review the
-                  source and destination routes and conflict handling before the transfer is
-                  queued.
-                </InfoTooltip>
-              </div>
-              {comparisonEnabled && (
-                <span>{comparedEntries.filter((item) => item.status !== "same").length} differences</span>
-              )}
             </div>
             <section
               className={`browser-grid ${activeTab.layout === "remote_focused" ? "remote-only" : "dual-pane"}`}
@@ -1561,20 +1579,6 @@ export default function App() {
                   bookmarked={!!findBookmark("local", activeTab.localPath, activeTab.profileId)}
                   onToggleBookmark={() => void toggleBookmark("local")}
                 />
-              </div>
-              <div
-                className="browser-slot transfer-slot"
-                aria-hidden={activeTab.layout === "remote_focused"}
-                inert={activeTab.layout === "remote_focused" ? true : undefined}
-              >
-                <div className="transfer-controls" aria-label="Transfer selected item">
-                  <button title="Upload selected" onClick={() => void addTransfer("upload")} disabled={selectedLocal.length === 0}>
-                    <ArrowRight size={17} />
-                  </button>
-                  <button title="Download selected" onClick={() => void addTransfer("download")} disabled={selectedRemote.length === 0}>
-                    <ArrowLeft size={17} />
-                  </button>
-                </div>
               </div>
               <div className="browser-slot remote-slot">
                 <FilePane
@@ -1886,11 +1890,23 @@ function Sidebar({
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      <div className="brand">
-        <img src={appIcon} alt="" />
-        <div><strong>Siftlane</strong><span>Secure file transfer</span></div>
-      </div>
-      <button className="primary-action" title="New connection" onClick={onNew}><Plus size={17} /><span>New Connection</span></button>
+        {profiles.length > 0 && (
+          <label className="profile-search">
+            <Search size={13} />
+            <input
+              aria-label="Search profiles"
+              value={profileQuery}
+              onChange={(event) => setProfileQuery(event.target.value)}
+              placeholder="Search profiles"
+            />
+            {profileQuery && (
+              <button aria-label="Clear profile search" onClick={() => setProfileQuery("")}>
+                <X size={12} />
+              </button>
+            )}
+          </label>
+        )}
+      <button className="primary-action" title="New connection" onClick={onNew}><Plus size={15} /><span>New connection</span></button>
       {collapsed && (
         <CollapsedShortcuts
           favoriteProfiles={profiles.filter((profile) => profile.favorite)}
@@ -1909,22 +1925,6 @@ function Sidebar({
         />
       )}
       <SidebarSection title="Connections" icon={<Server size={14} />}>
-        {profiles.length > 0 && (
-          <label className="profile-search">
-            <Search size={13} />
-            <input
-              aria-label="Search profiles"
-              value={profileQuery}
-              onChange={(event) => setProfileQuery(event.target.value)}
-              placeholder="Search profiles"
-            />
-            {profileQuery && (
-              <button aria-label="Clear profile search" onClick={() => setProfileQuery("")}>
-                <X size={12} />
-              </button>
-            )}
-          </label>
-        )}
         {profiles.length === 0 && <p className="empty-note">No saved connections</p>}
         {profiles.length > 0 && visibleProfiles.length === 0 && (
           <p className="empty-note">No matching profiles</p>
@@ -1962,11 +1962,8 @@ function Sidebar({
         onOpen={onOpenBookmark}
         onRemove={onRemoveBookmark}
       />
-      <SidebarSection title="Recent" icon={<FolderClock size={14} />}>
-        {profiles.slice(0, 3).map((profile) => <button key={profile.id} className="nav-item" onClick={() => onProfileClick(profile)}><Clock3 size={14} /> {profile.label}</button>)}
-      </SidebarSection>
       <div className="sidebar-footer">
-        <button aria-label="Settings" onClick={onSettings}><Settings size={16} /></button>
+        <button className="local-machine" aria-label="Local machine settings" onClick={onSettings}><span className="machine-avatar">S</span><span><strong>Local machine</strong><small>Settings & preferences</small></span></button>
         <button aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onToggleCollapsed}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button>
       </div>
     </aside>
@@ -1985,11 +1982,12 @@ function ConnectionItem({ profile, active, connecting, compact = false, onOpen, 
   return <div
     className={`connection-item ${active ? "active" : ""} ${compact ? "compact" : ""}`}
     style={{ "--profile-color": profile.color ?? "var(--teal)" } as CSSProperties}
-    title={profile.notes || undefined}
+    title={`${profile.username}@${profile.host} · ${profile.protocol.toUpperCase()}${profile.tags.length ? ` · ${profile.tags.join(", ")}` : ""}${profile.notes ? ` — ${profile.notes}` : ""}`}
   >
     <button className="connection-open" onClick={() => onOpen(profile)}>
       <span className="server-icon"><Server size={15} /></span>
-      <span className="connection-copy"><strong>{profile.label}</strong>{!compact && <><small><span className="protocol-badge">{profile.protocol.toUpperCase()}</span>{profile.username}@{profile.host}</small>{profile.tags.length > 0 && <span className="profile-tag-row">{profile.tags.slice(0, 3).map((tag) => <i key={tag}>{tag}</i>)}</span>}</>}</span>
+      <span className="connection-copy"><strong>{profile.label}</strong></span>
+      {!connecting && <small className="connection-protocol">{profile.protocol.toUpperCase()}</small>}
       {connecting && <LoaderCircle className="spin" size={14} />}
     </button>
     {!compact && <button className="profile-edit" aria-label={`Edit ${profile.label}`} title="Edit profile" onClick={() => onEdit(profile)}><Pencil size={13} /></button>}
@@ -2031,7 +2029,7 @@ function SessionTabs({
   onDeleteAction: (action: SavedAction) => void;
 }) {
   return (
-    <div className={`session-tabs ${visible ? "visible" : "empty"}`} aria-hidden={!visible}>
+    <div className={`session-tabs ${visible ? "visible" : "no-sessions"}`}>
       <div className="session-tabs-list">
         {tabs.map((tab) => (
           <button key={tab.id} className={`session-tab ${activeId === tab.id ? "active" : ""}`} onClick={() => onSelect(tab.id)}>
@@ -2040,7 +2038,7 @@ function SessionTabs({
             <X size={13} onClick={(event) => { event.stopPropagation(); void onClose(tab); }} />
           </button>
         ))}
-        <button className="new-tab" aria-label="New connection" onClick={onNew}><Plus size={15} /></button>
+        <button className="new-tab" aria-label="New connection" onClick={onNew}><Plus size={15} /><span>New session</span></button>
       </div>
       {visible && (
         <SessionActionsMenu
@@ -2054,16 +2052,43 @@ function SessionTabs({
   );
 }
 
+function WorkspaceOptions({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function dismiss(event: PointerEvent) {
+      if (ref.current && event.target instanceof Node && !ref.current.contains(event.target)) {
+        ref.current.open = false;
+      }
+    }
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, []);
+  return (
+    <details ref={ref} className="workspace-options" onKeyDown={(event) => {
+      if (event.key === "Escape" && ref.current) {
+        ref.current.open = false;
+        ref.current.querySelector("summary")?.focus();
+        event.stopPropagation();
+      }
+    }}>
+      <summary aria-label="More file actions and transfer options">More <ChevronDown size={13} /></summary>
+      <div className="workspace-options-content">{children}</div>
+    </details>
+  );
+}
+
 function ConnectionHeader({
   tab,
   onSearch,
   onToggleLayout,
   onDisconnect,
+  onSettings,
 }: {
   tab: SessionTab;
   onSearch: () => void;
   onToggleLayout: () => void;
   onDisconnect: () => void;
+  onSettings: () => void;
 }) {
   const encrypted = tab.protocol !== "ftp";
   return (
@@ -2093,7 +2118,7 @@ function ConnectionHeader({
         >
           <LayoutPanelLeft size={15} />
         </button>
-        <button title="Connection settings"><Settings size={15} /></button>
+        <button title="Connection settings" onClick={onSettings}><Settings size={15} /></button>
         <button className="disconnect-action" title="Disconnect this session" onClick={onDisconnect}><LogOut size={14} /><span>Disconnect</span></button>
       </div>
     </header>

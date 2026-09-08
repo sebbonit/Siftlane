@@ -8,6 +8,9 @@
  * Usage:
  *   pnpm exec vite --host 127.0.0.1 --port 5173
  *   pnpm screenshots:readme
+ *
+ * Optional: SIFTLANE_SCREENSHOT_URL overrides the server URL;
+ * SIFTLANE_SCREENSHOT_CHANNEL=chrome uses an installed Google Chrome.
  */
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
@@ -17,12 +20,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const OUT = path.join(ROOT, "docs", "images");
-const BASE = "http://127.0.0.1:5173/?demo=1";
+const BASE = `${process.env.SIFTLANE_SCREENSHOT_URL ?? "http://127.0.0.1:5173/"}?demo=1`;
 const VIEWPORT = { width: 1680, height: 960 };
 // 1x captures keep README previews reliable; width must fit the sync toolbar.
 
 async function shot(page, name, options = {}) {
   const file = path.join(OUT, name);
+  await page.mouse.move(0, 0);
   await page.waitForTimeout(options.settle ?? 250);
   await page.screenshot({
     path: file,
@@ -66,7 +70,10 @@ async function closeSettings(page) {
 
 async function main() {
   await mkdir(OUT, { recursive: true });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.SIFTLANE_SCREENSHOT_CHANNEL ? { channel: process.env.SIFTLANE_SCREENSHOT_CHANNEL } : {}),
+  });
   const context = await browser.newContext({
     viewport: VIEWPORT,
     deviceScaleFactor: 1,
@@ -140,8 +147,10 @@ async function main() {
   await page.waitForTimeout(300);
   const remoteFile2 = page.locator('[data-pane-side="remote"] .file-row').filter({ hasText: "index.html" });
   await remoteFile2.click();
+  await page.locator('summary[aria-label="More file actions and transfer options"]').click();
   await page.getByRole("button", { name: "Copy to session…", exact: true }).click();
   await page.getByRole("dialog", { name: /Copy between remote sessions/i }).waitFor();
+  await page.getByRole("dialog", { name: /Copy between remote sessions/i }).getByRole("heading").click();
   await shot(page, "remote-to-remote-route.jpg");
   await page.getByRole("button", { name: "Start remote copy" }).click();
   await page.waitForTimeout(500);

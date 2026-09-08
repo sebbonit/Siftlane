@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -21,6 +21,8 @@ import { virtualRange } from "../lib/virtualization";
 import { useAppStore } from "../store";
 import type { TransferJob, TransferPriority } from "../types";
 import { TransferConflictDialog } from "./TransferConflictDialog";
+
+const TRANSFER_CARD_HEIGHT = 96;
 
 const FILTERS: TransferFilter[] = ["all", "active", "completed", "failed"];
 
@@ -58,19 +60,35 @@ export function TransferPanel() {
     () => transfers.filter((job) => matchesTransferFilter(job, filter)),
     [filter, transfers],
   );
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listSize, setListSize] = useState({ width: 1200, height: 134 });
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setListSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [transferPanelOpen]);
+  useEffect(() => {
+    setListScrollTop(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [filter]);
+  const columns = listSize.width >= 1000 ? 2 : 1;
+  const rowCount = Math.ceil(filtered.length / columns);
   const virtualized = filtered.length > 100;
   const range = virtualized
     ? virtualRange({
-        itemCount: filtered.length,
-        itemHeight: 44,
+        itemCount: rowCount,
+        itemHeight: TRANSFER_CARD_HEIGHT,
         scrollTop: listScrollTop,
-        viewportHeight: 44 * 11,
-        overscan: 5,
-        headerHeight: 27,
+        viewportHeight: listSize.height,
+        overscan: 3,
       })
-    : { first: 0, last: filtered.length };
-  const firstVisibleIndex = range.first;
-  const lastVisibleIndex = range.last;
+    : { first: 0, last: rowCount };
+  const firstVisibleIndex = range.first * columns;
+  const lastVisibleIndex = Math.min(filtered.length, range.last * columns);
   const renderedTransfers = filtered.slice(firstVisibleIndex, lastVisibleIndex);
   const summary = useMemo(() => {
     const counts: Record<TransferFilter, number> = {
@@ -152,7 +170,7 @@ export function TransferPanel() {
     <>
     <section className={`transfer-panel ${transferPanelOpen ? "open" : "closed"}`}>
       <header className="transfer-heading">
-        <button className="transfer-title" onClick={toggleTransfers}>
+        <button className="transfer-title" aria-expanded={transferPanelOpen} onClick={toggleTransfers}>
           {transferPanelOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           <strong>Transfers</strong>
           <span>{runningCount}</span>
@@ -191,19 +209,12 @@ export function TransferPanel() {
       {transferPanelOpen && (
         <div
           className="transfer-list"
+          ref={listRef}
+          style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
           onScroll={(event) => setListScrollTop(event.currentTarget.scrollTop)}
         >
-          <div className="transfer-list-header">
-            <span>Name</span>
-            <span>Direction</span>
-            <span>Priority</span>
-            <span>Progress</span>
-            <span>Speed</span>
-            <span>Status</span>
-            <span />
-          </div>
           {firstVisibleIndex > 0 && (
-            <div aria-hidden="true" style={{ height: firstVisibleIndex * 44 }} />
+            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: range.first * TRANSFER_CARD_HEIGHT }} />
           )}
           {renderedTransfers.map((job) => {
             const progress = job.bytes_total
@@ -299,7 +310,7 @@ export function TransferPanel() {
             );
           })}
           {lastVisibleIndex < filtered.length && (
-            <div aria-hidden="true" style={{ height: (filtered.length - lastVisibleIndex) * 44 }} />
+            <div aria-hidden="true" style={{ gridColumn: "1 / -1", height: (rowCount - range.last) * TRANSFER_CARD_HEIGHT }} />
           )}
           {filtered.length === 0 && (
             <div className="empty-transfers">
